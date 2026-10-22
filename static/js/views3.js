@@ -1,0 +1,829 @@
+/* ============================================================ PERFORMANCE */
+const perfState = { tab: "goals" };
+
+Views.performance = async function (root) {
+  root.innerHTML = pageHead("Performance", "Loading goals and reviews…") + spinners(3);
+  try {
+    const [goalRes, apprRes, cycRes] = await Promise.all([
+      API.get("/goals", { per_page: 200 }), API.get("/appraisals", { per_page: 200 }),
+      API.get("/appraisal-cycles", { per_page: 50 }),
+    ]);
+    const goals = goalRes.data, appraisals = apprRes.data, cycles = cycRes.data;
+    const canReview = Store.isRole("manager", "super_admin", "hr_admin", "hr_officer");
+    const avg = goals.length ? Math.round(goals.reduce((a, g) => a + Number(g.progress || 0), 0) / goals.length) : 0;
+    const tabs = [["goals", "Goals & OKRs"], ["appraisals", "Appraisals"], ["cycles", "Cycles"]];
+    let body = "";
+
+    if (perfState.tab === "goals") {
+      body = renderTable({
+        columns: [
+          { label: "Goal", render: r => '<b>' + esc(r.title) + '</b><div class="tiny muted">' + esc(Store.employeeName(r.employee_id)) + '</div>' },
+          { label: "Weight", render: r => r.weight + '%' },
+          { label: "Progress", render: r => '<div class="row" style="gap:8px"><div class="progress" style="width:90px"><div class="bar ' + (r.progress >= 80 ? "green" : r.progress < 40 ? "amber" : "") + '" style="width:' + r.progress + '%"></div></div><span class="tiny"><b>' + r.progress + '%</b></span></div>' },
+          { label: "Due", render: r => fmtDate(r.due_date) },
+          { label: "Status", render: r => chip(r.status) },
+          { label: "", class: "right", render: r => '<button class="btn btn-sm btn-ghost" data-goal="' + r.id + '">Update</button>' },
+        ], rows: goals, emptyTitle: "No goals set", emptyText: "Create a goal to track progress.",
+      });
+    } else if (perfState.tab === "appraisals") {
+      body = renderTable({
+        columns: [
+          { label: "Employee", render: r => personCell({ name: r.employee_name }) },
+          { label: "Cycle", render: r => esc(r.cycle_name || "—") },
+          { label: "Self", render: r => r.self_score || "—" },
+          { label: "Manager", render: r => r.manager_score || "—" },
+          { label: "Final", render: r => '<b>' + (r.final_score || "—") + '</b>' },
+          { label: "Status", render: r => chip(r.status) },
+          { label: "", class: "right", render: r => canReview ? '<button class="btn btn-sm btn-soft" data-review="' + r.id + '">Review</button>' : "" },
+        ], rows: appraisals, emptyTitle: "No appraisals",
+      });
+    } else {
+      body = renderTable({
+        columns: [
+          { label: "Cycle", render: r => '<b>' + esc(r.name) + '</b>' },
+          { label: "Opens", render: r => fmtDate(r.start_date) },
+          { label: "Closes", render: r => fmtDate(r.end_date) },
+          { label: "Appraisals", render: r => appraisals.filter(a => a.cycle_id === r.id).length },
+          { label: "Status", render: r => chip(r.status) },
+        ], rows: cycles, emptyTitle: "No appraisal cycles",
+      });
+    }
+
+    root.innerHTML = pageHead("Performance", "Align individual goals with company objectives and drive feedback.",
+      '<button class="btn btn-ghost" id="perf-cycle">' + icon("calendar", 15) + ' New cycle</button><button class="btn btn-accent" id="perf-goal">' + icon("plus", 15) + ' Add goal</button>', "Talent")
+      + '<div class="grid grid-3" style="margin-bottom:18px">'
+      + kpiCard({ label: "Average goal progress", value: avg + "%", icon: "target", tone: "teal", foot: goals.length + " goals tracked" })
+      + kpiCard({ label: "Reviews completed", value: appraisals.filter(a => ["completed", "submitted"].includes(a.status)).length, icon: "checkCircle", tone: "blue", foot: appraisals.length + " appraisals this cycle" })
+      + kpiCard({ label: "Active cycles", value: cycles.filter(c => c.status === "open").length, icon: "calendar", tone: "accent", foot: "Open review windows" })
+      + '</div>'
+      + '<div class="tabs" style="margin-bottom:18px">' + tabs.map(t => '<button class="tab ' + (perfState.tab === t[0] ? "active" : "") + '" data-ftab="' + t[0] + '">' + t[1] + '</button>').join("") + '</div>'
+      + '<div class="page-enter">' + body + '</div>';
+
+    root.querySelectorAll("[data-ftab]").forEach(b => b.onclick = () => { perfState.tab = b.dataset.ftab; Views.performance(root); });
+    const g = root.querySelector("#perf-goal"); if (g) g.onclick = openGoalForm;
+    const c = root.querySelector("#perf-cycle"); if (c) c.onclick = openCycleForm;
+    root.querySelectorAll("[data-goal]").forEach(b => b.onclick = () => {
+      const goal = goals.find(x => x.id === Number(b.dataset.goal));
+      openGoalProgressForm(goal);
+    });
+    root.querySelectorAll("[data-review]").forEach(b => b.onclick = () => {
+      const ap = appraisals.find(x => x.id === Number(b.dataset.review));
+      openAppraisalForm(ap);
+    });
+  } catch (e) {
+    root.innerHTML = pageHead("Performance", "Unavailable") + emptyState("Could not load performance", e.message, "alert");
+  }
+};
+
+function openGoalForm() {
+  formModal({
+    title: "Add goal",
+    fields: [
+      { name: "employee_id", label: "Employee", type: "select", options: employeeOptions(), value: Store.user.employee_id, required: true },
+      { name: "title", label: "Goal", required: true, full: true },
+      { name: "weight", label: "Weight (%)", type: "number", value: 25, min: 1, max: 100 },
+      { name: "due_date", label: "Due date", type: "date" },
+      { name: "description", label: "Description", type: "textarea", full: true },
+    ],
+    onSubmit: async (data) => { data.progress = 0; data.status = "active"; await API.post("/goals", data); navigate(); },
+  });
+}
+
+function openGoalProgressForm(goal) {
+  formModal({
+    title: "Update goal progress",
+    sub: goal.title,
+    fields: [
+      { name: "progress", label: "Progress (%)", type: "number", value: goal.progress, min: 0, max: 100, required: true },
+      { name: "status", label: "Status", type: "select", options: ["active", "completed", "on_hold", "cancelled"], value: goal.status },
+    ],
+    onSubmit: async (data) => { await API.put("/goals/" + goal.id, data); navigate(); },
+  });
+}
+
+function openAppraisalForm(ap) {
+  formModal({
+    title: "Appraisal review",
+    sub: (ap.employee_name || "") + " · " + (ap.cycle_name || ""),
+    wide: true,
+    fields: [
+      { name: "self_score", label: "Self score (1–5)", type: "number", value: ap.self_score, min: 1, max: 5, step: "0.1" },
+      { name: "manager_score", label: "Manager score (1–5)", type: "number", value: ap.manager_score, min: 1, max: 5, step: "0.1" },
+      { name: "final_score", label: "Final score", type: "number", value: ap.final_score, min: 1, max: 5, step: "0.1" },
+      { name: "status", label: "Status", type: "select", options: ["draft", "self_review", "in_review", "completed"], value: ap.status },
+      { name: "self_comments", label: "Employee comments", type: "textarea", value: ap.self_comments, full: true },
+      { name: "manager_comments", label: "Manager comments", type: "textarea", value: ap.manager_comments, full: true },
+    ],
+    onSubmit: async (data) => {
+      if (!data.final_score && data.manager_score) data.final_score = data.manager_score;
+      await API.put("/appraisals/" + ap.id, data);
+      navigate();
+    },
+  });
+}
+
+function openCycleForm() {
+  formModal({
+    title: "New appraisal cycle",
+    fields: [
+      { name: "name", label: "Cycle name", required: true, placeholder: "2027 Annual Review" },
+      { name: "start_date", label: "Opens", type: "date", value: todayISO() },
+      { name: "end_date", label: "Closes", type: "date" },
+    ],
+    onSubmit: async (data) => { data.status = "open"; await API.post("/appraisal-cycles", data); navigate(); },
+  });
+}
+
+/* ============================================================ TRAINING */
+Views.training = async function (root) {
+  root.innerHTML = pageHead("Training", "Loading learning catalogue…") + spinners(3);
+  try {
+    const [trRes, enRes] = await Promise.all([API.get("/trainings", { per_page: 100 }), API.get("/enrolments", { per_page: 200 })]);
+    const trainings = trRes.data, enrolments = enRes.data;
+    const completed = enrolments.filter(e => e.status === "completed").length;
+    const catalogue = trainings.map(t => {
+      const enrolled = enrolments.filter(e => e.training_id === t.id);
+      const mine = enrolled.find(e => e.employee_id === Store.user.employee_id);
+      return '<div class="card card-pad"><div class="row-between"><span class="chip chip-teal chip-plain">' + esc(t.category || "General") + '</span>' + chip(t.status) + '</div>'
+        + '<h4 style="font-family:var(--serif);font-size:19px;font-weight:500;margin-top:10px">' + esc(t.title) + '</h4>'
+        + '<div class="tiny muted" style="margin-top:2px">' + esc(t.provider || "") + '</div>'
+        + '<div class="row wrap tiny muted" style="gap:12px;margin-top:12px">' + icon("calendar", 12) + '<span>' + fmtDate(t.start_date) + '</span>' + icon("users", 12) + '<span>' + enrolled.length + ' / ' + (t.capacity || "∞") + '</span>' + icon("wallet", 12) + '<span>' + (Number(t.cost) ? money(t.cost) : "Free") + '</span></div>'
+        + (t.description ? '<p class="small muted" style="margin-top:10px">' + esc(t.description) + '</p>' : "")
+        + '<div class="row" style="margin-top:14px">' + (mine
+          ? (mine.status === "completed" ? '<span class="chip chip-green">Completed</span>' : '<button class="btn btn-sm btn-soft" data-complete-training="' + mine.id + '">' + icon("check", 12) + ' Mark complete</button>')
+          : '<button class="btn btn-sm btn-accent" data-enrol="' + t.id + '">' + icon("plus", 12) + ' Enrol</button>')
+        + '<span class="tiny muted" style="margin-left:auto">' + esc((t.mode || "").replace("_", " ")) + '</span></div></div>';
+    }).join("");
+
+    root.innerHTML = pageHead("Training", "Plans, delivers and records employee learning.",
+      Store.canManage() ? '<button class="btn btn-accent" id="training-add">' + icon("plus", 15) + ' Add training</button>' : "", "Talent")
+      + '<div class="grid grid-3" style="margin-bottom:18px">'
+      + kpiCard({ label: "Sessions available", value: trainings.length, icon: "graduation", tone: "teal", foot: "Internal, external and online" })
+      + kpiCard({ label: "My enrolments", value: enrolments.filter(e => e.employee_id === Store.user.employee_id).length, icon: "user", tone: "blue", foot: "Learning paths in progress" })
+      + kpiCard({ label: "Completed", value: completed, icon: "checkCircle", tone: "accent", foot: "Across the organisation" })
+      + '</div>'
+      + '<div class="section-title">Training catalogue</div><div class="grid grid-3" style="margin-bottom:22px">' + (catalogue || emptyState("No sessions", "Add a training session to open enrolment.", "graduation")) + '</div>'
+      + '<div class="card"><div class="card-head"><div><h3>Enrolments</h3><div class="sub">Attendance and completion tracking</div></div></div>'
+      + renderTable({ columns: [
+        { label: "Employee", render: r => personCell({ name: r.employee_name }) },
+        { label: "Training", render: r => '<b>' + esc(r.training_title) + '</b>' },
+        { label: "Status", render: r => chip(r.status) },
+        { label: "Score", render: r => r.score || "—" },
+        { label: "Completed", render: r => fmtDate(r.completed_at) },
+      ], rows: enrolments, emptyTitle: "No enrolments" }) + '</div>';
+
+    root.querySelectorAll("[data-enrol]").forEach(b => b.onclick = () => openEnrolForm(Number(b.dataset.enrol)));
+    root.querySelectorAll("[data-complete-training]").forEach(b => b.onclick = async () => {
+      try { await API.put("/enrolments/" + b.dataset.completeTraining, { status: "completed", completed_at: todayISO() }); toast("Training completed", "success"); Views.training(root); }
+      catch (e) { handleErr(e); }
+    });
+    const add = root.querySelector("#training-add");
+    if (add) add.onclick = openTrainingForm;
+  } catch (e) {
+    root.innerHTML = pageHead("Training", "Unavailable") + emptyState("Could not load training", e.message, "alert");
+  }
+};
+
+function openTrainingForm() {
+  formModal({
+    title: "Add training session",
+    wide: true,
+    fields: [
+      { name: "title", label: "Title", required: true, full: true },
+      { name: "provider", label: "Provider", value: "Internal" },
+      { name: "category", label: "Category", type: "select", options: ["compliance", "technical", "leadership", "soft_skills", "health_safety"] },
+      { name: "mode", label: "Mode", type: "select", options: ["internal", "external", "online"], value: "internal" },
+      { name: "cost", label: "Cost (GHS)", type: "number", value: 0, min: 0 },
+      { name: "capacity", label: "Capacity", type: "number", value: 20, min: 1 },
+      { name: "start_date", label: "Start date", type: "date", required: true },
+      { name: "end_date", label: "End date", type: "date" },
+      { name: "description", label: "Description", type: "textarea", full: true },
+    ],
+    onSubmit: async (data) => { data.status = "scheduled"; data.cost = data.cost || 0; await API.post("/trainings", data); navigate(); },
+  });
+}
+
+function openEnrolForm(trainingId) {
+  const canPick = Store.canManage() || Store.isRole("manager");
+  formModal({
+    title: "Enrol in training",
+    fields: [
+      ...(canPick ? [{ name: "employee_id", label: "Employee", type: "select", options: employeeOptions(), value: Store.user.employee_id, required: true }] : []),
+    ],
+    onSubmit: async (data) => {
+      await API.post("/enrolments", { training_id: trainingId, employee_id: Number(data.employee_id || Store.user.employee_id), status: "enrolled" });
+      navigate();
+    },
+  });
+}
+
+/* ============================================================ EXPENSES */
+const claimState = { tab: "claims" };
+
+Views.expenses = async function (root) {
+  root.innerHTML = pageHead("Expenses", "Loading claims…") + spinners(3);
+  try {
+    const [clRes, catRes] = await Promise.all([API.get("/claims", { per_page: 200 }), API.get("/expense-categories", { per_page: 50 })]);
+    const claims = clRes.data, cats = catRes.data;
+    const mine = claims.filter(c => c.employee_id === Store.user.employee_id);
+    const canApprove = Store.isRole("manager", "super_admin", "hr_admin", "payroll");
+    const canPay = Store.isRole("super_admin", "hr_admin", "payroll");
+    const pendingAmt = claims.filter(c => c.status === "pending").reduce((a, c) => a + Number(c.amount), 0);
+    const approvedAmt = claims.filter(c => c.status === "approved").reduce((a, c) => a + Number(c.amount), 0);
+    const paidAmt = claims.filter(c => c.status === "paid").reduce((a, c) => a + Number(c.amount), 0);
+
+    const tbl = renderTable({
+      columns: [
+        ...(Store.isRole("employee") ? [] : [{ label: "Employee", render: r => personCell({ name: r.employee_name }) }]),
+        { label: "Claim", render: r => '<b>' + esc(r.title) + '</b><div class="tiny muted">' + esc(r.category_name || "") + '</div>' },
+        { label: "Date", render: r => fmtDate(r.claim_date) },
+        { label: "Amount", render: r => '<b>' + money(r.amount) + '</b>' },
+        { label: "Status", render: r => chip(r.status) },
+        { label: "", class: "right", render: r => {
+          let b = "";
+          if (canApprove && r.status === "pending") b += '<button class="btn btn-sm btn-soft" data-claim-approve="' + r.id + '">Approve</button> <button class="btn btn-sm btn-danger" data-claim-reject="' + r.id + '">Reject</button>';
+          if (canPay && r.status === "approved") b += '<button class="btn btn-sm btn-accent" data-claim-pay="' + r.id + '">Pay</button>';
+          return b;
+        } },
+      ], rows: canApprove ? claims : mine, emptyTitle: "No expense claims", emptyText: "Submit a claim for reimbursement.",
+    });
+
+    const catTbl = renderTable({
+      columns: [
+        { label: "Category", render: r => '<b>' + esc(r.name) + '</b>' },
+        { label: "Limit", render: r => r.limit_amount ? money(r.limit_amount) : "No limit" },
+        { label: "Receipt", render: r => r.requires_receipt ? "Required" : "Optional" },
+      ], rows: cats, emptyTitle: "No categories",
+    });
+
+    root.innerHTML = pageHead("Expenses", "Reimbursement of work-related costs with approval chains.", '<button class="btn btn-accent" id="claim-add">' + icon("plus", 15) + ' New claim</button>', "Compensation")
+      + '<div class="grid grid-3" style="margin-bottom:18px">'
+      + kpiCard({ label: "Pending reimbursement", value: compactMoney(pendingAmt), icon: "clock", tone: "accent", foot: claims.filter(c => c.status === "pending").length + " claims awaiting approval" })
+      + kpiCard({ label: "Approved, unpaid", value: compactMoney(approvedAmt), icon: "checkCircle", tone: "blue", foot: "Ready for finance" })
+      + kpiCard({ label: "Paid out", value: compactMoney(paidAmt), icon: "wallet", tone: "teal", foot: "Reimbursed to date" })
+      + '</div>'
+      + '<div class="tabs" style="margin-bottom:18px"><button class="tab active" data-etab="claims">Claims</button><button class="tab" data-etab="categories">Categories</button></div>'
+      + '<div class="page-enter">' + (claimState.tab === "categories" ? catTbl : tbl) + '</div>';
+
+    root.querySelectorAll("[data-etab]").forEach(b => b.onclick = () => { claimState.tab = b.dataset.etab; Views.expenses(root); });
+    root.querySelector("#claim-add").onclick = openClaimForm;
+    root.querySelectorAll("[data-claim-approve]").forEach(b => b.onclick = () => claimAction(b.dataset.claimApprove, "approve", root));
+    root.querySelectorAll("[data-claim-reject]").forEach(b => b.onclick = () => claimAction(b.dataset.claimReject, "reject", root));
+    root.querySelectorAll("[data-claim-pay]").forEach(b => b.onclick = () => claimAction(b.dataset.claimPay, "pay", root));
+  } catch (e) {
+    root.innerHTML = pageHead("Expenses", "Unavailable") + emptyState("Could not load expenses", e.message, "alert");
+  }
+};
+
+async function claimAction(id, action, root) {
+  try {
+    await API.post("/claims/" + id + "/" + action);
+    toast("Claim " + (action === "pay" ? "paid" : action + "d"), "success");
+    Views.expenses(root);
+  } catch (e) { handleErr(e); }
+}
+
+function openClaimForm() {
+  formModal({
+    title: "Submit expense claim",
+    sub: "Attach receipts with your manager after submission",
+    fields: [
+      { name: "title", label: "Claim title", required: true, full: true, placeholder: "e.g. Client visit – Kumasi" },
+      { name: "category_id", label: "Category", type: "select", options: (Store.meta.expense_categories || []).map(c => ({ value: c.id, label: c.name })), required: true },
+      { name: "amount", label: "Amount (GHS)", type: "number", required: true, min: 0, step: "0.01" },
+      { name: "claim_date", label: "Expense date", type: "date", value: todayISO(), required: true },
+      { name: "description", label: "Description", type: "textarea", full: true },
+    ],
+    onSubmit: async (data) => { data.status = "pending"; await API.post("/claims", data); navigate(); },
+  });
+}
+
+/* ============================================================ ASSETS */
+const assetState = { tab: "register" };
+
+Views.assets = async function (root) {
+  root.innerHTML = pageHead("Assets", "Loading asset register…") + spinners(3);
+  try {
+    const [assetRes, assignRes] = await Promise.all([API.get("/assets", { per_page: 200 }), API.get("/asset-assignments", { per_page: 100 })]);
+    const assets = assetRes.data, assignments = assignRes.data;
+    const assigned = assets.filter(a => a.status === "assigned");
+    const totalValue = assets.reduce((a, x) => a + Number(x.value || 0), 0);
+    const canManage = Store.canManage();
+    const tabs = [["register", "Asset register"], ["assignments", "Assignments"]];
+    let body = "";
+    if (assetState.tab === "register") {
+      body = renderTable({
+        columns: [
+          { label: "Asset", render: r => '<div class="row">' + '<div class="kpi-icon" style="width:32px;height:32px">' + icon("laptop", 15) + '</div><div><b>' + esc(r.name) + '</b><div class="tiny muted mono">' + esc(r.tag) + '</div></div></div>' },
+          { label: "Category", render: r => '<span class="pill-tag">' + esc(r.category || "—") + '</span>' },
+          { label: "Serial", render: r => '<span class="mono tiny">' + esc(r.serial_no || "—") + '</span>' },
+          { label: "Purchased", render: r => fmtDate(r.purchase_date) },
+          { label: "Value", render: r => money(r.value) },
+          { label: "Status", render: r => chip(r.status) },
+          { label: "", class: "right", render: r => canManage ? (r.status === "assigned" ? '<button class="btn btn-sm btn-ghost" data-return="' + r.id + '">Return</button>' : '<button class="btn btn-sm btn-soft" data-assign="' + r.id + '">Assign</button>') : "" },
+        ], rows: assets, emptyTitle: "No assets registered",
+      });
+    } else {
+      body = renderTable({
+        columns: [
+          { label: "Asset", render: r => '<b>' + esc(r.asset_name) + '</b><div class="tiny muted mono">' + esc(r.asset_tag) + '</div>' },
+          { label: "Employee", render: r => personCell({ name: r.employee_name }) },
+          { label: "Assigned", render: r => fmtDate(r.assigned_at) },
+          { label: "Returned", render: r => r.returned_at ? fmtDate(r.returned_at) : '<span class="chip chip-teal">In use</span>' },
+          { label: "Condition", render: r => esc(r.condition_out || "—") },
+        ], rows: assignments, emptyTitle: "No assignments",
+      });
+    }
+
+    root.innerHTML = pageHead("Assets", "Company equipment issued to staff, tracked end to end.",
+      canManage ? '<button class="btn btn-accent" id="asset-add">' + icon("plus", 15) + ' Register asset</button>' : "", "Operations")
+      + '<div class="grid grid-4" style="margin-bottom:18px">'
+      + kpiCard({ label: "Assets registered", value: assets.length, icon: "laptop", tone: "teal", foot: "Across all categories" })
+      + kpiCard({ label: "Assigned", value: assigned.length, icon: "user", tone: "blue", foot: "In employee hands" })
+      + kpiCard({ label: "Available", value: assets.filter(a => a.status === "available").length, icon: "checkCircle", tone: "accent", foot: "Ready to issue" })
+      + kpiCard({ label: "Book value", value: compactMoney(totalValue), icon: "wallet", tone: "purple", foot: "Purchase value" })
+      + '</div>'
+      + '<div class="tabs" style="margin-bottom:18px">' + tabs.map(t => '<button class="tab ' + (assetState.tab === t[0] ? "active" : "") + '" data-astab="' + t[0] + '">' + t[1] + '</button>').join("") + '</div>'
+      + '<div class="page-enter">' + body + '</div>';
+
+    root.querySelectorAll("[data-astab]").forEach(b => b.onclick = () => { assetState.tab = b.dataset.astab; Views.assets(root); });
+    const add = root.querySelector("#asset-add"); if (add) add.onclick = openAssetForm;
+    root.querySelectorAll("[data-assign]").forEach(b => b.onclick = () => openAssignAssetForm(Number(b.dataset.assign)));
+    root.querySelectorAll("[data-return]").forEach(b => b.onclick = () => confirmDialog("Return asset", "Mark this asset as returned and available?", async () => {
+      await API.post("/assets/" + b.dataset.return + "/return", { condition: "good" }); toast("Asset returned", "success"); Views.assets(root);
+    }, { confirmLabel: "Return asset" }));
+  } catch (e) {
+    root.innerHTML = pageHead("Assets", "Unavailable") + emptyState("Could not load assets", e.message, "alert");
+  }
+};
+
+function openAssetForm() {
+  formModal({
+    title: "Register asset",
+    fields: [
+      { name: "name", label: "Asset name", required: true },
+      { name: "tag", label: "Asset tag", required: true, placeholder: "AST-LTP-0001" },
+      { name: "category", label: "Category", type: "select", options: ["laptop", "monitor", "phone", "furniture", "vehicle", "other"], value: "laptop" },
+      { name: "serial_no", label: "Serial number" },
+      { name: "purchase_date", label: "Purchase date", type: "date", value: todayISO() },
+      { name: "value", label: "Purchase value (GHS)", type: "number", value: 0, min: 0 },
+      { name: "notes", label: "Notes", type: "textarea", full: true },
+    ],
+    onSubmit: async (data) => { data.status = "available"; data.value = data.value || 0; await API.post("/assets", data); navigate(); },
+  });
+}
+
+function openAssignAssetForm(assetId) {
+  formModal({
+    title: "Assign asset",
+    fields: [
+      { name: "employee_id", label: "Assign to", type: "select", options: employeeOptions(), required: true },
+      { name: "condition", label: "Condition at issue", type: "select", options: ["good", "fair", "new"], value: "good" },
+    ],
+    onSubmit: async (data) => { await API.post("/assets/" + assetId + "/assign", data); navigate(); },
+  });
+}
+
+/* ============================================================ HELPDESK */
+const helpState = { tab: "all" };
+
+Views.helpdesk = async function (root) {
+  root.innerHTML = pageHead("Helpdesk", "Loading tickets…") + spinners(3);
+  try {
+    const res = await API.get("/tickets", { per_page: 200 });
+    const tickets = res.data;
+    const filtered = helpState.tab === "all" ? tickets : tickets.filter(t => t.status === helpState.tab);
+    const canManage = Store.canManage();
+    const table = renderTable({
+      columns: [
+        { label: "Ticket", render: r => '<b>' + esc(r.subject) + '</b><div class="tiny muted">#' + r.id + ' · ' + esc(r.category) + '</div>' },
+        ...(Store.isRole("employee") ? [] : [{ label: "Raised by", render: r => personCell({ name: r.employee_name }) }]),
+        { label: "Priority", render: r => '<span class="chip chip-' + (r.priority === "high" ? "red" : r.priority === "low" ? "grey" : "amber") + '">' + esc(r.priority) + '</span>' },
+        { label: "Assignee", render: r => r.assignee_id ? esc(Store.employeeName(r.assignee_id)) : '<span class="muted">Unassigned</span>' },
+        { label: "Opened", render: r => timeAgo(r.created_at) },
+        { label: "Status", render: r => chip(r.status) },
+        { label: "", class: "right", render: r => '<button class="btn btn-sm btn-ghost" data-ticket="' + r.id + '">Open</button>' },
+      ], rows: filtered, emptyTitle: "No tickets", emptyText: "Raise a ticket and HR will respond.",
+    });
+
+    root.innerHTML = pageHead("Helpdesk", "A confidential channel for HR queries and grievances.",
+      '<button class="btn btn-accent" id="ticket-add">' + icon("plus", 15) + ' Raise a ticket</button>', "Operations")
+      + '<div class="grid grid-4" style="margin-bottom:18px">'
+      + kpiCard({ label: "Open tickets", value: tickets.filter(t => t.status === "open").length, icon: "inbox", tone: "accent", foot: "Awaiting first response" })
+      + kpiCard({ label: "In progress", value: tickets.filter(t => t.status === "in_progress").length, icon: "clock", tone: "blue", foot: "Being worked on" })
+      + kpiCard({ label: "Resolved", value: tickets.filter(t => t.status === "resolved").length, icon: "checkCircle", tone: "teal", foot: "Closed successfully" })
+      + kpiCard({ label: "Confidential", value: tickets.filter(t => t.confidential).length, icon: "lock", tone: "purple", foot: "Restricted visibility" })
+      + '</div>'
+      + '<div class="filter-chips" style="margin-bottom:16px">' + [["all", "All"], ["open", "Open"], ["in_progress", "In progress"], ["resolved", "Resolved"], ["closed", "Closed"]].map(t => '<button class="filter-chip ' + (helpState.tab === t[0] ? "active" : "") + '" data-htab="' + t[0] + '">' + t[1] + '</button>').join("") + '</div>'
+      + '<div class="page-enter">' + table + '</div>';
+
+    root.querySelectorAll("[data-htab]").forEach(b => b.onclick = () => { helpState.tab = b.dataset.htab; Views.helpdesk(root); });
+    root.querySelector("#ticket-add").onclick = openTicketForm;
+    root.querySelectorAll("[data-ticket]").forEach(b => b.onclick = () => openTicketDrawer(Number(b.dataset.ticket), root));
+  } catch (e) {
+    root.innerHTML = pageHead("Helpdesk", "Unavailable") + emptyState("Could not load tickets", e.message, "alert");
+  }
+};
+
+function openTicketForm() {
+  formModal({
+    title: "Raise a ticket",
+    fields: [
+      { name: "subject", label: "Subject", required: true, full: true },
+      { name: "category", label: "Category", type: "select", options: ["payroll", "leave", "attendance", "it", "harassment", "general"], value: "general", required: true },
+      { name: "priority", label: "Priority", type: "select", options: ["low", "medium", "high"], value: "medium" },
+      { name: "description", label: "Describe the issue", type: "textarea", rows: 5, required: true, full: true },
+      { name: "confidential", label: "Mark as confidential grievance", type: "checkbox" },
+    ],
+    onSubmit: async (data) => { data.status = "open"; await API.post("/tickets", data); navigate(); },
+  });
+}
+
+async function openTicketDrawer(id, root) {
+  try {
+    const res = await API.get("/tickets/" + id + "/detail");
+    const t = res.data;
+    const canManage = Store.canManage();
+    openDrawer({
+      title: t.subject,
+      head: '<div><div class="tiny muted">Ticket #' + t.id + ' · ' + esc(t.category) + '</div><h3 style="font-family:var(--serif);font-size:22px;font-weight:500;margin-top:2px">' + esc(t.subject) + '</h3><div class="row" style="gap:6px;margin-top:7px">' + chip(t.status) + '<span class="chip chip-' + (t.priority === "high" ? "red" : "amber") + '">' + esc(t.priority) + '</span>' + (t.confidential ? '<span class="chip chip-purple">' + icon("lock", 10) + ' Confidential</span>' : "") + '</div></div>',
+      body: '<div class="ticket-detail">'
+        + '<div class="card card-pad" style="margin-bottom:14px"><dl class="kv">'
+        + '<dt>Raised by</dt><dd>' + esc(t.employee_name) + '</dd><dt>Opened</dt><dd>' + fmtDateTime(t.created_at) + '</dd>'
+        + '<dt>Assignee</dt><dd>' + (t.assignee_id ? esc(Store.employeeName(t.assignee_id)) : "Unassigned") + '</dd></dl>'
+        + '<div class="divider"></div><p class="small" style="line-height:1.65">' + esc(t.description || "No description provided.") + '</p></div>'
+        + '<div class="section-title">Conversation</div>'
+        + (t.comments.length ? t.comments.map(c => '<div class="message"><div class="who">' + esc(c.author_name) + ' · ' + timeAgo(c.created_at) + '</div><p>' + esc(c.body) + '</p></div>').join("") : '<p class="small muted" style="margin-bottom:12px">No replies yet.</p>')
+        + '<div class="field" style="margin-top:12px"><label>Reply</label><textarea class="textarea" id="ticket-reply" rows="3" placeholder="Write a response…"></textarea></div>'
+        + '<div class="row" style="margin-top:10px"><button class="btn btn-accent btn-sm" id="ticket-send">' + icon("send", 13) + ' Send reply</button>'
+        + (canManage ? '<select class="select" id="ticket-status" style="height:29px;width:auto;margin-left:auto">' + ["open", "in_progress", "resolved", "closed"].map(s => '<option value="' + s + '"' + (t.status === s ? " selected" : "") + '>' + s.replace("_", " ") + '</option>').join("") + '</select>' : "")
+        + '</div></div>',
+      onMount(panel) {
+        panel.querySelector("#ticket-send").onclick = async () => {
+          const body = panel.querySelector("#ticket-reply").value.trim();
+          if (!body) return toast("Write a reply first", "error");
+          try { await API.post("/tickets/" + t.id + "/comments", { body }); toast("Reply sent", "success"); openTicketDrawer(t.id, root); }
+          catch (e) { handleErr(e); }
+        };
+        const st = panel.querySelector("#ticket-status");
+        if (st) st.onchange = async () => {
+          try { await API.post("/tickets/" + t.id + "/status", { status: st.value }); toast("Ticket updated", "success"); closeDrawer(); Views.helpdesk(root); }
+          catch (e) { handleErr(e); }
+        };
+      },
+    });
+  } catch (e) { handleErr(e); }
+}
+
+/* ============================================================ ANNOUNCEMENTS */
+Views.announcements = async function (root) {
+  root.innerHTML = pageHead("Announcements", "Loading feed…") + spinners(3);
+  try {
+    const res = await API.get("/announcements", { per_page: 50 });
+    const items = res.data;
+    const canPost = Store.canManage();
+    const feed = items.map(a => '<div class="card card-pad" style="margin-bottom:14px"><div class="row-between"><div class="row" style="gap:10px">' + avatarHTML("HR Team", "avatar-sm") + '<div><b class="small">' + esc(a.audience === "all" ? "Company-wide" : a.audience) + '</b><div class="tiny muted">' + fmtDateTime(a.publish_at || a.created_at) + '</div></div></div>'
+      + '<div class="row">' + (a.pinned ? '<span class="chip chip-amber">Pinned</span>' : "") + (canPost ? '<button class="icon-btn" style="width:28px;height:28px" data-pin="' + a.id + '" data-pinned="' + (a.pinned ? 1 : 0) + '">' + icon("star", 13) + '</button>' : "") + '</div></div>'
+      + '<h3 style="font-family:var(--serif);font-size:21px;font-weight:500;margin-top:12px">' + esc(a.title) + '</h3>'
+      + '<p class="small muted" style="margin-top:6px;line-height:1.65">' + esc(a.body || "") + '</p></div>').join("");
+    root.innerHTML = pageHead("Announcements", "Company news, events and the things everyone needs to know.",
+      canPost ? '<button class="btn btn-accent" id="ann-add">' + icon("plus", 15) + ' New announcement</button>' : "", "Communication")
+      + '<div class="grid grid-2"><div>' + (feed || '<div class="card">' + emptyState("No announcements", "Company updates will appear here.", "megaphone") + '</div>') + '</div>'
+      + '<div><div class="card card-pad" style="margin-bottom:14px"><div class="section-title">This week</div>'
+      + '<div class="list-row">' + icon("sparkle", 16) + '<div class="body"><b>Birthdays</b><span>Celebrate your colleagues</span></div><span class="link" onclick="go(\'dashboard\')">View</span></div>'
+      + '<div class="list-row">' + icon("calendar", 16) + '<div class="body"><b>Company events</b><span>Q4 town hall · 28 Oct</span></div><span class="link" onclick="go(\'leave\')">Calendar</span></div>'
+      + '<div class="list-row">' + icon("shield", 16) + '<div class="body"><b>Policy reminders</b><span>Data protection acknowledgement</span></div><span class="link" onclick="go(\'documents\')">Review</span></div></div>'
+      + '<div class="card card-pad"><div class="section-title">Pinned</div>' + (items.filter(a => a.pinned).map(a => '<div class="list-row"><div class="body"><b>' + esc(a.title) + '</b><span>' + fmtDate(a.publish_at || a.created_at) + '</span></div></div>').join("") || '<p class="small muted">Nothing pinned.</p>') + '</div></div></div>';
+
+    const add = root.querySelector("#ann-add");
+    if (add) add.onclick = openAnnouncementForm;
+    root.querySelectorAll("[data-pin]").forEach(b => b.onclick = async () => {
+      try { await API.put("/announcements/" + b.dataset.pin, { pinned: b.dataset.pinned !== "1" }); toast("Announcement updated", "success"); Views.announcements(root); }
+      catch (e) { handleErr(e); }
+    });
+  } catch (e) {
+    root.innerHTML = pageHead("Announcements", "Unavailable") + emptyState("Could not load announcements", e.message, "alert");
+  }
+};
+
+function openAnnouncementForm() {
+  formModal({
+    title: "New announcement",
+    wide: true,
+    fields: [
+      { name: "title", label: "Title", required: true, full: true },
+      { name: "audience", label: "Audience", type: "select", options: [{ value: "all", label: "Company-wide" }, { value: "department", label: "Specific department" }, { value: "branch", label: "Specific branch" }], value: "all" },
+      { name: "department_id", label: "Department (if targeted)", type: "select", options: deptOptions() },
+      { name: "body", label: "Message", type: "textarea", rows: 6, required: true, full: true },
+      { name: "pinned", label: "Pin to top", type: "checkbox" },
+    ],
+    onSubmit: async (data) => { data.publish_at = new Date().toISOString(); data.author_id = Store.user.id; await API.post("/announcements", data); navigate(); },
+  });
+}
+
+/* ============================================================ DOCUMENTS */
+const docState = { tab: "documents" };
+
+Views.documents = async function (root) {
+  root.innerHTML = pageHead("Documents", "Loading document vault…") + spinners(3);
+  try {
+    const [docRes, polRes] = await Promise.all([API.get("/documents", { per_page: 200 }), API.get("/policies", { per_page: 50 })]);
+    const docs = docRes.data, policies = polRes.data;
+    const canManage = Store.canManage();
+    const today = todayISO();
+    const docsTable = renderTable({
+      columns: [
+        { label: "Document", render: r => '<div class="row">' + icon("file", 16) + '<div><b>' + esc(r.title) + '</b><div class="tiny muted mono">' + esc(r.file_name || "—") + '</div></div></div>' },
+        { label: "Employee", render: r => esc(r.employee_name || "Company") },
+        { label: "Category", render: r => '<span class="pill-tag">' + esc(r.category) + '</span>' },
+        { label: "Expires", render: r => r.expires_at ? fmtDate(r.expires_at) + (r.expires_at < today ? ' <span class="chip chip-red">Expired</span>' : "") : "—" },
+        { label: "Added", render: r => fmtDate(r.created_at) },
+      ], rows: docs, emptyTitle: "No documents", emptyText: "Upload contracts, IDs and certificates.",
+    });
+    const acks = await Promise.all(policies.map(p => API.get("/policies/" + p.id + "/acks").then(r => r.data).catch(() => ({ count: 0, employee_ids: [] }))));
+    const policyCards = policies.map((p, i) => {
+      const ack = acks[i];
+      const mine = ack.employee_ids.includes(Store.user.employee_id);
+      return '<div class="card card-pad"><div class="row-between"><span class="chip chip-teal chip-plain">' + esc(p.category || "policy") + '</span><span class="tiny muted">v' + esc(p.version) + '</span></div>'
+        + '<h4 style="font-family:var(--serif);font-size:20px;font-weight:500;margin-top:10px">' + esc(p.title) + '</h4>'
+        + '<p class="small muted" style="margin-top:6px;line-height:1.6">' + esc((p.content || "").slice(0, 180)) + (p.content && p.content.length > 180 ? "…" : "") + '</p>'
+        + '<div class="divider"></div><div class="row-between"><span class="tiny muted">' + ack.count + ' acknowledgements · published ' + fmtDate(p.published_at) + '</span>'
+        + (mine ? '<span class="chip chip-green">Acknowledged</span>' : '<button class="btn btn-sm btn-soft" data-ack="' + p.id + '">Acknowledge</button>') + '</div></div>';
+    }).join("");
+
+    root.innerHTML = pageHead("Documents", "Secure storage and lifecycle management of HR documents.",
+      canManage ? '<button class="btn btn-accent" id="doc-add">' + icon("plus", 15) + ' Add document</button>' : "", "Core HR")
+      + '<div class="grid grid-4" style="margin-bottom:18px">'
+      + kpiCard({ label: "Documents on file", value: docs.length, icon: "file", tone: "teal", foot: "Employee & company records" })
+      + kpiCard({ label: "Expiring soon", value: docs.filter(d => d.expires_at && d.expires_at >= today).length, icon: "alert", tone: "accent", foot: "Renewal reminders active" })
+      + kpiCard({ label: "Policies", value: policies.length, icon: "shield", tone: "blue", foot: "Versioned policy library" })
+      + kpiCard({ label: "Acknowledged", value: acks.reduce((a, x) => a + x.count, 0), icon: "checkCircle", tone: "purple", foot: "Read receipts" })
+      + '</div>'
+      + '<div class="tabs" style="margin-bottom:18px"><button class="tab ' + (docState.tab === "documents" ? "active" : "") + '" data-dtab="documents">Document vault</button><button class="tab ' + (docState.tab === "policies" ? "active" : "") + '" data-dtab="policies">Policy library</button></div>'
+      + '<div class="page-enter">' + (docState.tab === "policies" ? '<div class="grid grid-2">' + (policyCards || emptyState("No policies", "Publish a policy to collect acknowledgements.", "shield")) + '</div>' : docsTable) + '</div>';
+
+    root.querySelectorAll("[data-dtab]").forEach(b => b.onclick = () => { docState.tab = b.dataset.dtab; Views.documents(root); });
+    const add = root.querySelector("#doc-add"); if (add) add.onclick = () => openDocumentForm();
+    root.querySelectorAll("[data-ack]").forEach(b => b.onclick = async () => {
+      try { await API.post("/policies/" + b.dataset.ack + "/acknowledge"); toast("Policy acknowledged", "success"); Views.documents(root); }
+      catch (e) { handleErr(e); }
+    });
+  } catch (e) {
+    root.innerHTML = pageHead("Documents", "Unavailable") + emptyState("Could not load documents", e.message, "alert");
+  }
+};
+
+function openDocumentForm(employeeId) {
+  formModal({
+    title: "Add document",
+    fields: [
+      { name: "employee_id", label: "Employee", type: "select", options: employeeOptions(), value: employeeId || "" },
+      { name: "category", label: "Category", type: "select", options: ["contract", "id", "certificate", "policy", "medical", "other"], value: "contract" },
+      { name: "title", label: "Document title", required: true, full: true },
+      { name: "file_name", label: "File name", placeholder: "contract.pdf" },
+      { name: "expires_at", label: "Expiry date", type: "date" },
+      { name: "notes", label: "Notes", type: "textarea", full: true },
+    ],
+    onSubmit: async (data) => {
+      if (!data.employee_id) delete data.employee_id;
+      data.uploaded_by = Store.user.id;
+      await API.post("/documents", data);
+      navigate();
+    },
+  });
+}
+
+/* ============================================================ REPORTS */
+Views.reports = async function (root) {
+  root.innerHTML = pageHead("Reports", "Crunching workforce data…") + spinners(4);
+  try {
+    const res = await API.get("/reports/overview");
+    const r = res.data;
+    const att = r.attendance || [];
+    const attChart = lineChart(att.map(a => fmtDateShort(a.date)), [
+      { name: "Present", values: att.map(a => a.present), color: "#0f766e" },
+      { name: "Late", values: att.map(a => a.late), color: "#c2703d" },
+    ]);
+    const payChart = r.payroll.length ? lineChart(r.payroll.map(p => p.period), [
+      { name: "Gross", values: r.payroll.map(p => p.gross), color: "#0f766e" },
+      { name: "Net", values: r.payroll.map(p => p.net), color: "#c2703d" },
+    ]) : '<p class="small muted">No payroll history.</p>';
+    const gender = r.by_gender.map((g, i) => ({ ...g, color: ["#0f766e", "#c2703d", "#6b4a86"][i % 3] }));
+    const contract = r.by_contract.map((g, i) => ({ ...g, color: ["#2c5d8f", "#a97316", "#6b4a86", "#2f7d5d"][i % 4] }));
+
+    root.innerHTML = pageHead("Reports", "Workforce analytics for data-driven people decisions.",
+      '<a class="btn btn-ghost" href="/api/v1/employees/export.csv?token=' + API.token + '">' + icon("download", 15) + ' Export employees</a><button class="btn btn-accent" onclick="window.print()">' + icon("file", 15) + ' Print report</button>', "Insight")
+      + '<div class="grid grid-4" style="margin-bottom:18px">'
+      + kpiCard({ label: "Headcount", value: r.headcount, icon: "users", tone: "teal", foot: "Active employees" })
+      + kpiCard({ label: "Annual turnover", value: r.turnover_rate + "%", icon: "chart", tone: "accent", foot: r.turnover + " leavers this year" })
+      + kpiCard({ label: "Training completion", value: r.training_completion.completed, icon: "graduation", tone: "blue", foot: r.training_completion.enrolled + " currently enrolled" })
+      + kpiCard({ label: "Assets assigned", value: r.assets_assigned, icon: "laptop", tone: "purple", foot: "of " + r.asset_count + " registered" })
+      + '</div>'
+      + '<div class="grid grid-2" style="margin-bottom:18px">'
+      + '<div class="card"><div class="card-head"><div><h3>Attendance trend</h3><div class="sub">Present vs late · last 10 working days</div></div></div><div class="card-body">' + attChart + '</div></div>'
+      + '<div class="card"><div class="card-head"><div><h3>Payroll trend</h3><div class="sub">Gross vs net by period</div></div></div><div class="card-body">' + payChart + '</div></div>'
+      + '</div>'
+      + '<div class="grid grid-3">'
+      + '<div class="card"><div class="card-head"><h3>Headcount by department</h3></div><div class="card-body">' + barList(r.by_department) + '</div></div>'
+      + '<div class="card"><div class="card-head"><h3>Gender distribution</h3></div><div class="card-body"><div class="row" style="gap:18px">' + donut(gender, 120) + '<div>' + gender.map(g => '<div class="row" style="gap:7px;margin-bottom:7px"><span style="width:8px;height:8px;border-radius:2px;background:' + g.color + '"></span><span class="small">' + esc(g.name) + '</span><b class="small" style="margin-left:auto">' + g.count + '</b></div>').join("") + '</div></div></div></div>'
+      + '<div class="card"><div class="card-head"><h3>Contract mix</h3></div><div class="card-body"><div class="row" style="gap:18px">' + donut(contract, 120) + '<div>' + contract.map(g => '<div class="row" style="gap:7px;margin-bottom:7px"><span style="width:8px;height:8px;border-radius:2px;background:' + g.color + '"></span><span class="small">' + esc(g.name) + '</span><b class="small" style="margin-left:auto">' + g.count + '</b></div>').join("") + '</div></div></div></div>'
+      + '</div>'
+      + '<div class="card" style="margin-top:18px"><div class="card-head"><div><h3>Standard reports</h3><div class="sub">Jump into the operational module for full detail</div></div></div><div class="card-body"><div class="grid grid-3">'
+      + [["Employee master", "employees", "Directory with department, grade and contract filters", "users"],
+         ["Leave balances", "leave", "Entitlement, taken and pending by employee", "calendar"],
+         ["Attendance register", "attendance", "Clock records, lateness and overtime", "clock"],
+         ["Payroll register", "payroll", "PAYE, SSNIT, net pay and payslips", "wallet"],
+         ["Asset register", "assets", "Book value and assignment history", "laptop"],
+         ["Training completion", "training", "Enrolment, completion and scores", "graduation"]].map(x =>
+        '<div class="list-row" style="cursor:pointer" onclick="go(\'' + x[1] + '\')"><div class="kpi-icon">' + icon(x[3], 16) + '</div><div class="body"><b>' + x[0] + '</b><span>' + x[2] + '</span></div>' + icon("arrowRight", 14) + '</div>').join("")
+      + '</div></div></div>';
+  } catch (e) {
+    root.innerHTML = pageHead("Reports", "Unavailable") + emptyState("Could not load reports", e.message, "alert");
+  }
+};
+
+/* ============================================================ ADMIN */
+const adminState = { tab: "users" };
+
+Views.admin = async function (root) {
+  if (!Store.canAdmin()) {
+    root.innerHTML = pageHead("Administration", "Restricted area") + emptyState("No access", "Only Super Admin accounts can manage platform settings.", "lock");
+    return;
+  }
+  root.innerHTML = pageHead("Administration", "Loading configuration…") + spinners(3);
+  try {
+    const [userRes, roleRes, setRes, auditRes] = await Promise.all([
+      API.get("/users", { per_page: 100 }), API.get("/roles", { per_page: 50 }),
+      API.get("/settings", { per_page: 100 }), API.get("/audit-logs", { per_page: 60 }),
+    ]);
+    const users = userRes.data, roles = roleRes.data, settings = setRes.data, logs = auditRes.data;
+    const tabs = [["users", "Users"], ["roles", "Roles & permissions"], ["settings", "Settings"], ["audit", "Audit log"]];
+    let body = "";
+
+    if (adminState.tab === "users") {
+      body = renderTable({
+        columns: [
+          { label: "User", render: r => '<div class="person">' + avatarHTML(r.employee_name || r.email, "avatar-sm") + '<div><b>' + esc(r.employee_name || r.email.split("@")[0]) + '</b><span>' + esc(r.email) + '</span></div></div>' },
+          { label: "Role", render: r => '<span class="pill-tag">' + esc(r.role_name || "—") + '</span>' },
+          { label: "Last login", render: r => r.last_login_at ? timeAgo(r.last_login_at) : "Never" },
+          { label: "Status", render: r => chip(r.status) },
+          { label: "", class: "right", render: r => '<button class="btn btn-sm btn-ghost" data-toggle-user="' + r.id + '" data-status="' + r.status + '">' + (r.status === "active" ? "Deactivate" : "Activate") + '</button>' },
+        ], rows: users, emptyTitle: "No users",
+      });
+    } else if (adminState.tab === "roles") {
+      body = '<div class="grid grid-2">' + roles.map(r => '<div class="card card-pad"><div class="row-between"><div><b>' + esc(r.name) + '</b><div class="tiny muted">' + esc(r.description || "") + '</div></div>' + (r.is_system ? '<span class="chip chip-teal">System</span>' : "") + '</div>'
+        + '<div class="divider"></div><div class="row wrap" style="gap:4px">' + (r.permissions === "*" ? '<span class="chip chip-amber">All permissions</span>' : (r.permissions || "ess").split(",").filter(Boolean).map(p => '<span class="pill-tag">' + esc(p) + '</span>').join("")) + '</div>'
+        + '<button class="btn btn-sm btn-ghost" style="margin-top:14px" data-role-edit="' + r.id + '">' + icon("edit", 12) + ' Edit permissions</button></div>').join("") + '</div>';
+    } else if (adminState.tab === "settings") {
+      const groups = {};
+      settings.forEach(s => { (groups[s.group_name] = groups[s.group_name] || []).push(s); });
+      body = Object.keys(groups).map(g => '<div class="card" style="margin-bottom:14px"><div class="card-head"><h3 style="text-transform:capitalize">' + esc(g) + '</h3></div><div class="card-body"><div class="form-grid">'
+        + groups[g].map(s => '<div class="field"><label>' + esc(s.key.replace(/_/g, " ")) + '</label><input class="input" data-setting="' + s.id + '" value="' + esc(s.value || "") + '"></div>').join("")
+        + '</div></div></div>').join("")
+        + '<button class="btn btn-accent" id="save-settings">' + icon("check", 14) + ' Save all settings</button>';
+    } else {
+      body = renderTable({
+        columns: [
+          { label: "When", render: r => fmtDateTime(r.created_at) },
+          { label: "User", render: r => esc(r.user_name || "System") },
+          { label: "Event", render: r => '<span class="pill-tag">' + esc(r.event) + '</span>' },
+          { label: "Entity", render: r => esc(r.entity || "—") + (r.entity_id ? " #" + r.entity_id : "") },
+          { label: "IP", render: r => '<span class="mono tiny">' + esc(r.ip || "—") + '</span>' },
+        ], rows: logs, emptyTitle: "No audit entries",
+      });
+    }
+
+    root.innerHTML = pageHead("Administration", "Roles, permissions, configuration and a complete audit trail.", '<button class="btn btn-accent" id="admin-add">' + icon("plus", 15) + ' ' + (adminState.tab === "users" ? "Add user" : adminState.tab === "roles" ? "Add role" : "Add setting") + '</button>', "System")
+      + '<div class="tabs" style="margin-bottom:18px">' + tabs.map(t => '<button class="tab ' + (adminState.tab === t[0] ? "active" : "") + '" data-atab="' + t[0] + '">' + t[1] + '</button>').join("") + '</div>'
+      + '<div class="page-enter">' + body + '</div>';
+
+    root.querySelectorAll("[data-atab]").forEach(b => b.onclick = () => { adminState.tab = b.dataset.atab; Views.admin(root); });
+    const add = root.querySelector("#admin-add");
+    if (add) add.onclick = () => {
+      if (adminState.tab === "users") openUserForm();
+      else if (adminState.tab === "roles") openRoleForm();
+      else openSettingForm();
+    };
+    root.querySelectorAll("[data-toggle-user]").forEach(b => b.onclick = async () => {
+      try { await API.put("/users/" + b.dataset.toggleUser, { status: b.dataset.status === "active" ? "inactive" : "active" }); toast("User updated", "success"); Views.admin(root); }
+      catch (e) { handleErr(e); }
+    });
+    root.querySelectorAll("[data-role-edit]").forEach(b => b.onclick = () => openRoleForm(roles.find(r => r.id === Number(b.dataset.roleEdit))));
+    const save = root.querySelector("#save-settings");
+    if (save) save.onclick = async () => {
+      try {
+        const inputs = root.querySelectorAll("[data-setting]");
+        for (const input of inputs) await API.put("/settings/" + input.dataset.setting, { value: input.value });
+        toast("Settings saved", "success");
+      } catch (e) { handleErr(e); }
+    };
+  } catch (e) {
+    root.innerHTML = pageHead("Administration", "Unavailable") + emptyState("Could not load administration", e.message, "alert");
+  }
+};
+
+function openUserForm() {
+  formModal({
+    title: "Add user account",
+    sub: "Create a login and link it to an employee record",
+    fields: [
+      { name: "employee_id", label: "Employee", type: "select", options: employeeOptions(), placeholder: "No employee link" },
+      { name: "email", label: "Email", type: "email", required: true },
+      { name: "role_id", label: "Role", type: "select", options: roleOptions(), required: true },
+      { name: "password", label: "Temporary password", type: "password", required: true, hint: "Minimum 8 characters" },
+      { name: "status", label: "Status", type: "select", options: ["active", "inactive"], value: "active" },
+    ],
+    onSubmit: async (data) => {
+      if (!data.employee_id) delete data.employee_id;
+      await API.post("/users", data);
+      navigate();
+    },
+  });
+}
+
+function openRoleForm(existing) {
+  const perms = ["employees", "org", "leave", "attendance", "payroll", "recruitment", "documents", "reports", "settings", "audit", "ess"];
+  const selected = existing && existing.permissions !== "*" ? (existing.permissions || "").split(",") : [];
+  openModal({
+    title: existing ? "Edit role" : "Add role",
+    body: '<div id="role-form-error" class="form-error hidden"></div><div class="form-grid">'
+      + '<div class="field"><label>Role name</label><input class="input" id="role-name" value="' + esc(existing ? existing.name : "") + '"></div>'
+      + '<div class="field"><label>Slug</label><input class="input" id="role-slug" value="' + esc(existing ? existing.slug : "") + '" placeholder="hr_assistant"></div>'
+      + '<div class="field full"><label>Description</label><input class="input" id="role-desc" value="' + esc(existing ? existing.description : "") + '"></div>'
+      + '<div class="field full"><label>Permissions</label><div class="row wrap" style="gap:10px;margin-top:6px">'
+      + perms.map(p => '<label class="row" style="gap:6px;font-size:12px"><input type="checkbox" value="' + p + '" class="role-perm" ' + (selected.includes(p) ? "checked" : "") + '> ' + p + '</label>').join("")
+      + '</div><span class="field-hint">Super Admin implicitly holds every permission.</span></div></div>',
+    footer: '<button class="btn btn-ghost" data-close-modal>Cancel</button><button class="btn btn-accent" id="role-save">Save role</button>',
+    onMount(card) {
+      card.querySelector("#role-save").onclick = async () => {
+        const name = card.querySelector("#role-name").value.trim();
+        const slug = card.querySelector("#role-slug").value.trim();
+        if (!name || !slug) return toast("Name and slug are required", "error");
+        const chosen = Array.from(card.querySelectorAll(".role-perm:checked")).map(i => i.value);
+        const payload = { name, slug, description: card.querySelector("#role-desc").value, permissions: chosen.join(","), is_system: false };
+        try {
+          if (existing) await API.put("/roles/" + existing.id, payload);
+          else await API.post("/roles", payload);
+          closeModal(); toast("Role saved", "success"); await Store.loadMeta(); Views.admin(document.getElementById("view"));
+        } catch (e) { const box = card.querySelector("#role-form-error"); box.textContent = e.message; box.classList.remove("hidden"); }
+      };
+    },
+  });
+}
+
+function openSettingForm() {
+  formModal({
+    title: "Add setting",
+    fields: [
+      { name: "key", label: "Key", required: true },
+      { name: "value", label: "Value" },
+      { name: "group_name", label: "Group", type: "select", options: ["general", "hr", "attendance", "payroll", "branding"], value: "general" },
+    ],
+    onSubmit: async (data) => { await API.post("/settings", data); navigate(); },
+  });
+}
+
+/* ============================================================ PROFILE & SETTINGS */
+Views.profile = async function (root) {
+  if (Store.user.employee_id) return viewEmployeeDetail(root, Store.user.employee_id);
+  root.innerHTML = pageHead("My profile", "Account details") + '<div class="card card-pad"><dl class="kv"><dt>Name</dt><dd>' + esc(Store.user.name) + '</dd><dt>Email</dt><dd>' + esc(Store.user.email) + '</dd><dt>Role</dt><dd>' + esc(Store.user.role) + '</dd></dl></div>';
+};
+
+Views.settings = async function (root) {
+  const u = Store.user;
+  root.innerHTML = pageHead("Preferences", "Account security and notification settings.", "", "Settings")
+    + '<div class="grid grid-2">'
+    + '<div class="card"><div class="card-head"><h3>Account</h3></div><div class="card-body"><dl class="kv">'
+    + '<dt>Name</dt><dd>' + esc(u.name) + '</dd><dt>Email</dt><dd>' + esc(u.email) + '</dd><dt>Role</dt><dd>' + esc(u.role) + '</dd>'
+    + '<dt>Department</dt><dd>' + esc(u.department || "—") + '</dd><dt>Employee no.</dt><dd class="mono">' + esc(u.employee_no || "—") + '</dd>'
+    + '</dl></div></div>'
+    + '<div class="card"><div class="card-head"><h3>Change password</h3></div><div class="card-body"><div id="pwd-error" class="form-error hidden"></div>'
+    + '<div class="field" style="margin-bottom:10px"><label>Current password</label><input class="input" type="password" id="pwd-current"></div>'
+    + '<div class="field" style="margin-bottom:10px"><label>New password</label><input class="input" type="password" id="pwd-new"></div>'
+    + '<div class="field" style="margin-bottom:14px"><label>Confirm new password</label><input class="input" type="password" id="pwd-confirm"></div>'
+    + '<button class="btn btn-accent" id="pwd-save">Update password</button></div></div>'
+    + '<div class="card"><div class="card-head"><h3>Notifications</h3></div><div class="card-body">'
+    + [["leave", "Leave decisions"], ["approvals", "Approval requests"], ["payroll", "Payslip availability"], ["announcements", "Company announcements"]].map(x =>
+      '<div class="row-between" style="padding:8px 0;border-bottom:1px solid var(--line)"><span class="small">' + x[1] + '</span><input type="checkbox" data-pref="' + x[0] + '" ' + (localStorage.getItem("hrms_pref_" + x[0]) !== "0" ? "checked" : "") + '></div>').join("")
+    + '<div class="tiny muted" style="margin-top:10px">Email delivery is configured by your administrator.</div></div></div>'
+    + '<div class="card"><div class="card-head"><h3>Security</h3></div><div class="card-body"><div class="list-row">' + icon("shield", 18) + '<div class="body"><b>Two-factor authentication</b><span>Authenticator app (TOTP)</span></div><span class="chip chip-grey">Not enabled</span></div>'
+    + '<div class="list-row">' + icon("clock", 18) + '<div class="body"><b>Last sign in</b><span>' + fmtDateTime(u.last_login_at) + '</span></div></div>'
+    + '<div class="list-row">' + icon("logout", 18) + '<div class="body"><b>Active session</b><span>This browser</span></div><button class="btn btn-sm btn-danger" id="settings-logout">Sign out</button></div>'
+    + '</div></div></div>';
+
+  root.querySelector("#pwd-save").onclick = async () => {
+    const cur = root.querySelector("#pwd-current").value;
+    const nw = root.querySelector("#pwd-new").value;
+    const conf = root.querySelector("#pwd-confirm").value;
+    const box = root.querySelector("#pwd-error");
+    box.classList.add("hidden");
+    if (nw !== conf) { box.textContent = "New passwords do not match"; box.classList.remove("hidden"); return; }
+    try { await API.post("/auth/change-password", { current_password: cur, new_password: nw }); toast("Password updated", "success"); root.querySelectorAll("#pwd-current,#pwd-new,#pwd-confirm").forEach(i => i.value = ""); }
+    catch (e) { box.textContent = e.message; box.classList.remove("hidden"); }
+  };
+  root.querySelectorAll("[data-pref]").forEach(cb => cb.onchange = () => {
+    localStorage.setItem("hrms_pref_" + cb.dataset.pref, cb.checked ? "1" : "0");
+    toast("Preference saved", "success");
+  });
+  root.querySelector("#settings-logout").onclick = () => logout();
+};

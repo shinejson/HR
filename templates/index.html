@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meridian HR — People Operations</title>
+  <meta name="description" content="Meridian HR: a modern human resource management system for people, payroll and performance.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310201f'/%3E%3Ctext x='32' y='44' font-family='Georgia' font-size='34' fill='%23c2703d' text-anchor='middle'%3EM%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+
+<div id="login-view" class="login-shell hidden">
+  <section class="login-brand">
+    <div class="brand-mark">
+      <div class="glyph">M</div>
+      <div>
+        <div class="name">Meridian HR</div>
+        <div class="sub">People operations</div>
+      </div>
+    </div>
+    <div class="login-copy">
+      <div class="eyebrow">Human capital, thoughtfully managed</div>
+      <h1>Every person.<br>Every process.<br><em>One record.</em></h1>
+      <p>From the first offer letter to the final payslip — Meridian brings hiring, attendance, leave, payroll and performance into a single, auditable system of record.</p>
+      <div class="login-stats">
+        <div class="stat"><b>14</b><span>Team members</span></div>
+        <div class="stat"><b>8</b><span>Departments</span></div>
+        <div class="stat"><b>6</b><span>Core modules</span></div>
+      </div>
+    </div>
+    <div style="font-size:11px;color:rgba(244,241,232,.4)">Ghana Data Protection Act, 2012 (Act 843) aligned &middot; Audit trailing on every change</div>
+  </section>
+  <section class="login-panel">
+    <div class="login-card">
+      <div class="eyebrow">Secure sign in</div>
+      <h2>Welcome back</h2>
+      <p class="hint">Use your work email to access the HR portal.</p>
+      <form id="login-form" autocomplete="on">
+        <div id="login-error" class="form-error hidden"></div>
+        <div class="field" style="margin-bottom:12px">
+          <label for="login-email">Work email</label>
+          <input class="input" id="login-email" type="email" placeholder="you@company.com" autocomplete="username" required>
+        </div>
+        <div class="field" style="margin-bottom:8px">
+          <label for="login-password">Password</label>
+          <input class="input" id="login-password" type="password" placeholder="Your password" autocomplete="current-password" required>
+        </div>
+        <div class="row-between" style="margin:6px 0 18px">
+          <label class="row" style="font-size:11.5px;color:var(--muted);gap:6px">
+            <input type="checkbox" id="login-remember" checked> Remember this device
+          </label>
+          <span class="link" onclick="toast('Contact your HR administrator to reset a password.')">Forgot password?</span>
+        </div>
+        <button class="btn btn-accent" type="submit" id="login-submit" style="width:100%;height:42px">Sign in to Meridian</button>
+      </form>
+      <div class="demo-list">
+        <div class="demo-head">Demo accounts — click to fill</div>
+        <div class="demo-item" data-email="ama.mensah@meridian.gh" data-pass="Admin@123">
+          <div class="avatar avatar-sm" style="background:#c2703d">AM</div>
+          <div><div class="role">Super Admin</div><div class="email">ama.mensah@meridian.gh</div></div>
+          <div class="key">Admin@123</div>
+        </div>
+        <div class="demo-item" data-email="kwame.boateng@meridian.gh" data-pass="Hr@123">
+          <div class="avatar avatar-sm" style="background:#0f766e">KB</div>
+          <div><div class="role">HR Admin</div><div class="email">kwame.boateng@meridian.gh</div></div>
+          <div class="key">Hr@123</div>
+        </div>
+        <div class="demo-item" data-email="kofi.adjei@meridian.gh" data-pass="Manager@123">
+          <div class="avatar avatar-sm" style="background:#2c5d8f">KA</div>
+          <div><div class="role">Manager</div><div class="email">kofi.adjei@meridian.gh</div></div>
+          <div class="key">Manager@123</div>
+        </div>
+        <div class="demo-item" data-email="abena.sarpong@meridian.gh" data-pass="Employee@123">
+          <div class="avatar avatar-sm" style="background:#6b4a86">AS</div>
+          <div><div class="role">Employee</div><div class="email">abena.sarpong@meridian.gh</div></div>
+          <div class="key">Employee@123</div>
+        </div>
+        <div class="demo-item" data-email="akosua.darko@meridian.gh" data-pass="Payroll@123">
+          <div class="avatar avatar-sm" style="background:#a97316">AD</div>
+          <div><div class="role">Payroll</div><div class="email">akosua.darko@meridian.gh</div></div>
+          <div class="key">Payroll@123</div>
+        </div>
+      </div>
+      <div class="login-foot">Meridian HR v1.0 &middot; SQLite-backed demo environment</div>
+    </div>
+  </section>
+</div>
+
+<div id="app-view" class="app-shell hidden">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="glyph">M</div>
+      <div>
+        <div class="name">Meridian HR</div>
+        <div class="sub">People operations</div>
+      </div>
+    </div>
+    <div class="site-pill"><span class="dot"></span> Meridian Ghana Ltd &middot; Accra HQ</div>
+    <nav class="nav-scroll" id="nav"></nav>
+    <div class="sidebar-foot">
+      <div class="side-user" id="side-user">
+        <div class="avatar avatar-sm" id="side-avatar">--</div>
+        <div class="meta">
+          <b id="side-name">Loading</b>
+          <span id="side-role">&nbsp;</span>
+        </div>
+        <button class="out" id="logout-btn" title="Sign out" aria-label="Sign out"></button>
+      </div>
+    </div>
+  </aside>
+  <div class="sidebar-scrim" id="sidebar-scrim"></div>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-btn menu-btn" id="menu-btn" aria-label="Toggle menu"></button>
+      <div class="crumb"><span>Meridian</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg><b id="crumb-current">Dashboard</b></div>
+      <div class="spacer"></div>
+      <div class="global-search">
+        <span id="search-icon"></span>
+        <input id="global-search" placeholder="Search people, pages…" aria-label="Search">
+      </div>
+      <div class="position-rel">
+        <button class="icon-btn" id="notif-btn" aria-label="Notifications">
+          <span id="bell-icon"></span>
+          <span class="dot-badge hidden" id="notif-count">0</span>
+        </button>
+        <div class="dropdown hidden" id="notif-dropdown">
+          <div class="dropdown-head">Notifications <span class="link" id="mark-all-read">Mark all read</span></div>
+          <div id="notif-list"></div>
+        </div>
+      </div>
+      <button class="icon-btn" id="help-btn" aria-label="Help">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 115 0c0 1.5-2.5 2-2.5 3.5"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg>
+      </button>
+      <div class="position-rel">
+        <div class="side-user" id="top-user" style="padding:4px">
+          <div class="avatar" id="top-avatar" style="border-radius:10px;width:32px;height:32px">--</div>
+        </div>
+        <div class="dropdown hidden" id="user-dropdown" style="width:230px">
+          <div style="padding:14px;border-bottom:1px solid var(--line)">
+            <b id="dd-name" style="font-size:13px">—</b>
+            <div id="dd-email" class="tiny muted">—</div>
+            <div id="dd-role" class="tiny" style="margin-top:5px;color:var(--accent)">—</div>
+          </div>
+          <div class="dropdown-item" data-go="profile">My profile</div>
+          <div class="dropdown-item" data-go="settings">Preferences</div>
+          <div class="dropdown-item" id="dd-logout">Sign out</div>
+        </div>
+      </div>
+    </header>
+    <main class="content" id="view"></main>
+  </div>
+</div>
+
+<div class="modal-root" id="modal-root">
+  <div class="modal-backdrop" data-close-modal></div>
+  <div class="modal-card" id="modal-card" role="dialog" aria-modal="true"></div>
+</div>
+<div class="drawer-root" id="drawer-root">
+  <div class="drawer-backdrop" data-close-drawer></div>
+  <div class="drawer-panel" id="drawer-panel"></div>
+</div>
+<div class="toast-root" id="toast-root"></div>
+
+<script src="/static/js/api.js"></script>
+<script src="/static/js/ui.js"></script>
+<script src="/static/js/views.js"></script>
+<script src="/static/js/views2.js"></script>
+<script src="/static/js/views3.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
