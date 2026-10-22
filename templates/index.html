@@ -119,9 +119,10 @@
       <button class="icon-btn menu-btn" id="menu-btn" aria-label="Toggle menu"></button>
       <div class="crumb"><span>Meridian</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg><b id="crumb-current">Dashboard</b></div>
       <div class="spacer"></div>
-      <div class="global-search">
+      <div class="global-search" id="global-search-trigger" title="Quick jump to people, modules & actions (Ctrl+K / ⌘K)">
         <span id="search-icon"></span>
-        <input id="global-search" placeholder="Search people, pages…" aria-label="Search">
+        <input id="global-search" placeholder="Search people, modules, actions…" aria-label="Search" readonly style="cursor:pointer">
+        <kbd class="search-kbd">⌘K</kbd>
       </div>
       <div class="position-rel">
         <button class="icon-btn" id="notif-btn" aria-label="Notifications" title="Notifications">
@@ -174,6 +175,7 @@
 
 <script src="/static/js/api.js"></script>
 <script src="/static/js/ui.js"></script>
+<script src="/static/js/datatable.js"></script>
 <script src="/static/js/views.js"></script>
 <script src="/static/js/views2.js"></script>
 <script src="/static/js/views3.js"></script>

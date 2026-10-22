@@ -772,7 +772,7 @@ def employee_of(user):
 # ---------------------------------------------------------------- resources
 
 RESOURCES = {
-    "employees": dict(model=Employee, order="id", search=["first_name", "last_name", "employee_no", "email"],
+    "employees": dict(model=Employee, order="id", search=["first_name", "last_name", "employee_no", "email", "phone", "work_location", "contract_type"],
                       labels={"employee_name": "full_name", "department_name": "department.name", "designation_title": "designation.title",
                               "branch_name": "branch.name", "manager_name": "manager.full_name",
                               "grade_name": "grade.name"}),
@@ -800,22 +800,27 @@ RESOURCES = {
                        labels={"candidate_name": "application.candidate.full_name",
                                "job_title": "application.job_posting.title"}),
     "onboarding-tasks": dict(model=OnboardingTask, order="id", search=["title"],
-                             labels={"employee_name": "employee.full_name"}),
+                             labels={"employee_name": "employee.full_name",
+                                     "department_name": "employee.department.name"}),
     "onboarding-templates": dict(model=OnboardingTemplate, order="id", search=["name"]),
     "offboardings": dict(model=Offboarding, order="id", search=["reason"],
-                         labels={"employee_name": "employee.full_name"}),
+                         labels={"employee_name": "employee.full_name",
+                                 "department_name": "employee.department.name"}),
     "shifts": dict(model=Shift, order="id", search=["name"]),
     "attendance": dict(model=Attendance, order="work_date", search=["status"],
                        labels={"employee_name": "employee.full_name", "employee_no": "employee.employee_no",
                                "department_name": "employee.department.name"}),
     "corrections": dict(model=AttendanceCorrection, order="id", search=["status", "reason"],
-                        labels={"employee_name": "employee.full_name"}),
+                        labels={"employee_name": "employee.full_name",
+                                "department_name": "employee.department.name"}),
     "leave-types": dict(model=LeaveType, order="id", search=["name"]),
     "leave-balances": dict(model=LeaveBalance, order="id", search=[],
-                           labels={"employee_name": "employee.full_name", "leave_type_name": "leave_type.name"}),
+                           labels={"employee_name": "employee.full_name", "leave_type_name": "leave_type.name",
+                                   "department_name": "employee.department.name"}),
     "leave-requests": dict(model=LeaveRequest, order="start_date", search=["status", "reason"],
                            labels={"employee_name": "employee.full_name", "leave_type_name": "leave_type.name",
-                                   "employee_no": "employee.employee_no"}),
+                                   "employee_no": "employee.employee_no",
+                                   "department_name": "employee.department.name"}),
     "holidays": dict(model=Holiday, order="holiday_date", search=["name"]),
     "salary-components": dict(model=SalaryComponent, order="id", search=["name"]),
     "salary-structures": dict(model=SalaryStructure, order="id", search=[],
@@ -823,21 +828,28 @@ RESOURCES = {
     "payroll-runs": dict(model=PayrollRun, order="id", search=["status"]),
     "payslips": dict(model=Payslip, order="id", search=[],
                      labels={"employee_name": "employee.full_name", "employee_no": "employee.employee_no",
-                             "department_name": "employee.department.name"}),
+                             "department_name": "employee.department.name",
+                             "period_year": "run.period_year", "period_month": "run.period_month",
+                             "run_status": "run.status"}),
     "loans": dict(model=Loan, order="id", search=["status", "reason"],
-                  labels={"employee_name": "employee.full_name"}),
+                  labels={"employee_name": "employee.full_name",
+                          "department_name": "employee.department.name"}),
     "goals": dict(model=Goal, order="id", search=["title", "status"],
-                  labels={"employee_name": "employee.full_name"}),
+                  labels={"employee_name": "employee.full_name",
+                          "department_name": "employee.department.name"}),
     "appraisal-cycles": dict(model=AppraisalCycle, order="id", search=["name"]),
     "appraisals": dict(model=Appraisal, order="id", search=["status"],
                        labels={"employee_name": "employee.full_name", "cycle_name": "cycle.name",
-                               "reviewer_name": "reviewer_id"}),
+                               "reviewer_name": "reviewer_id",
+                               "department_name": "employee.department.name"}),
     "trainings": dict(model=Training, order="id", search=["title", "provider"]),
     "enrolments": dict(model=TrainingEnrolment, order="id", search=["status"],
-                       labels={"employee_name": "employee.full_name", "training_title": "training.title"}),
+                       labels={"employee_name": "employee.full_name", "training_title": "training.title",
+                               "department_name": "employee.department.name"}),
     "expense-categories": dict(model=ExpenseCategory, order="id", search=["name"]),
     "claims": dict(model=ExpenseClaim, order="id", search=["title", "status"],
-                   labels={"employee_name": "employee.full_name", "category_name": "category.name"}),
+                   labels={"employee_name": "employee.full_name", "category_name": "category.name",
+                           "department_name": "employee.department.name"}),
     "assets": dict(model=Asset, order="id", search=["tag", "name", "serial_no"]),
     "asset-assignments": dict(model=AssetAssignment, order="id", search=["condition_out"],
                               labels={"asset_name": "asset.name", "asset_tag": "asset.tag",
@@ -886,20 +898,37 @@ def apply_filters(query, model, cfg):
         if cat:
             query = query.filter(func.lower(Notification.category) == cat.lower())
     for key in request.args:
-        if key in ("page", "per_page", "search", "sort", "order", "token", "from", "to", "unread"):
+        if key in ("page", "per_page", "search", "sort", "order", "token", "from", "to", "date_from", "date_to", "unread"):
             continue
         if model is Notification and key == "category":
             continue
         if hasattr(model, key):
+            val = request.args.get(key)
+            if val is not None and val != "":
+                try:
+                    query = query.filter(getattr(model, key) == parse_value(model, key, val))
+                except Exception:
+                    pass
+    date_from = request.args.get("date_from") or request.args.get("from")
+    date_to = request.args.get("date_to") or request.args.get("to")
+    if date_from or date_to:
+        date_col_name = next((c for c in ("work_date", "start_date", "claim_date", "hire_date", "purchase_date", "due_date", "holiday_date", "created_at") if hasattr(model, c)), None)
+        if date_col_name:
+            dcol = getattr(model, date_col_name)
             try:
-                query = query.filter(getattr(model, key) == parse_value(model, key, request.args.get(key)))
+                if date_from:
+                    if date_col_name == "created_at":
+                        query = query.filter(dcol >= datetime.fromisoformat(date_from))
+                    else:
+                        query = query.filter(dcol >= date.fromisoformat(date_from[:10]))
+                if date_to:
+                    if date_col_name == "created_at":
+                        dt_end = datetime.fromisoformat(date_to[:10] + "T23:59:59") if len(date_to) <= 10 else datetime.fromisoformat(date_to)
+                        query = query.filter(dcol <= dt_end)
+                    else:
+                        query = query.filter(dcol <= date.fromisoformat(date_to[:10]))
             except Exception:
                 pass
-    if hasattr(model, "created_at"):
-        if request.args.get("from"):
-            query = query.filter(model.created_at >= datetime.fromisoformat(request.args["from"]))
-        if request.args.get("to"):
-            query = query.filter(model.created_at <= datetime.fromisoformat(request.args["to"]))
     sort = request.args.get("sort")
     if sort and hasattr(model, sort):
         col = getattr(model, sort)
@@ -1065,7 +1094,7 @@ def list_resource(resource):
     query = scoped(query, model, resource, request.user)
     query = apply_filters(query, model, cfg)
     page = max(int(request.args.get("page", 1)), 1)
-    per_page = min(max(int(request.args.get("per_page", 25)), 1), 200)
+    per_page = min(max(int(request.args.get("per_page", 25)), 1), 500)
     total = query.count()
     rows = query.offset((page - 1) * per_page).limit(per_page).all()
     data = []
@@ -2407,31 +2436,72 @@ def approvals_inbox():
         leave_q = LeaveRequest.query.filter_by(status="pending")
         claim_q = ExpenseClaim.query.filter_by(status="pending")
         loan_q = Loan.query.filter_by(status="pending")
+        corr_q = AttendanceCorrection.query.filter_by(status="pending")
     elif role == "manager":
         leave_q = LeaveRequest.query.filter_by(status="pending", approver_id=user.employee_id)
         claim_q = ExpenseClaim.query.join(Employee, Employee.id == ExpenseClaim.employee_id).filter(
             ExpenseClaim.status == "pending", Employee.manager_id == user.employee_id)
-        loan_q = Loan.query.filter_by(status="pending")
+        loan_q = Loan.query.filter(Loan.id < 0)
+        corr_q = AttendanceCorrection.query.join(Employee, Employee.id == AttendanceCorrection.employee_id).filter(
+            AttendanceCorrection.status == "pending", Employee.manager_id == user.employee_id)
     elif role == "payroll":
         leave_q = LeaveRequest.query.filter(LeaveRequest.id < 0)
         claim_q = ExpenseClaim.query.filter_by(status="pending")
         loan_q = Loan.query.filter_by(status="pending")
+        corr_q = AttendanceCorrection.query.filter(AttendanceCorrection.id < 0)
     else:
         leave_q = LeaveRequest.query.filter(LeaveRequest.id < 0)
         claim_q = ExpenseClaim.query.filter(ExpenseClaim.id < 0)
         loan_q = Loan.query.filter(Loan.id < 0)
+        corr_q = AttendanceCorrection.query.filter(AttendanceCorrection.id < 0)
     for lr in leave_q.all():
-        items.append({"type": "leave", "id": lr.id, "title": f"{lr.employee.full_name} – {lr.leave_type.name}",
-                      "subtitle": f"{lr.days} day(s) from {lr.start_date}", "status": lr.status,
-                      "amount": None, "requested_at": conv(lr.created_at)})
+        emp = lr.employee
+        items.append({
+            "type": "leave", "id": lr.id, "uid": f"leave:{lr.id}",
+            "employee_id": lr.employee_id,
+            "employee_name": emp.full_name if emp else "—",
+            "department_name": emp.department.name if emp and emp.department else "—",
+            "title": f"{emp.full_name if emp else 'Employee'} – {lr.leave_type.name if lr.leave_type else 'Leave'}",
+            "subtitle": f"{lr.days} day(s) · {lr.start_date} to {lr.end_date}",
+            "detail": lr.reason or "Annual / statutory time-off request",
+            "status": lr.status, "amount": None, "requested_at": conv(lr.created_at),
+        })
     for c in claim_q.all():
-        items.append({"type": "expense", "id": c.id, "title": f"{c.employee.full_name} – {c.title}",
-                      "subtitle": c.category.name if c.category else "Expense", "status": c.status,
-                      "amount": float(c.amount), "requested_at": conv(c.created_at)})
+        emp = c.employee
+        items.append({
+            "type": "expense", "id": c.id, "uid": f"expense:{c.id}",
+            "employee_id": c.employee_id,
+            "employee_name": emp.full_name if emp else "—",
+            "department_name": emp.department.name if emp and emp.department else "—",
+            "title": f"{emp.full_name if emp else 'Employee'} – {c.title}",
+            "subtitle": c.category.name if c.category else "Expense reimbursement",
+            "detail": c.description or f"Incurred on {c.claim_date or '—'}",
+            "status": c.status, "amount": float(c.amount), "requested_at": conv(c.created_at),
+        })
     for l in loan_q.all():
-        items.append({"type": "loan", "id": l.id, "title": f"{l.employee.full_name} – {l.loan_type.replace('_', ' ').title()}",
-                      "subtitle": l.reason or "", "status": l.status, "amount": float(l.principal),
-                      "requested_at": conv(l.created_at)})
+        emp = l.employee
+        items.append({
+            "type": "loan", "id": l.id, "uid": f"loan:{l.id}",
+            "employee_id": l.employee_id,
+            "employee_name": emp.full_name if emp else "—",
+            "department_name": emp.department.name if emp and emp.department else "—",
+            "title": f"{emp.full_name if emp else 'Employee'} – {l.loan_type.replace('_', ' ').title()}",
+            "subtitle": f"Instalment GHS {float(l.instalment or 0):,.2f}/mo · {l.reason or 'Staff advance'}",
+            "detail": l.reason or "Staff loan / salary advance",
+            "status": l.status, "amount": float(l.principal), "requested_at": conv(l.created_at),
+        })
+    for corr in corr_q.all():
+        emp = corr.employee
+        items.append({
+            "type": "correction", "id": corr.id, "uid": f"correction:{corr.id}",
+            "employee_id": corr.employee_id,
+            "employee_name": emp.full_name if emp else "—",
+            "department_name": emp.department.name if emp and emp.department else "—",
+            "title": f"{emp.full_name if emp else 'Employee'} – Clock correction",
+            "subtitle": f"{corr.work_date} · {corr.requested_clock_in or '—'} → {corr.requested_clock_out or '—'}",
+            "detail": corr.reason or "Attendance time adjustment",
+            "status": corr.status, "amount": None, "requested_at": conv(corr.created_at),
+        })
     items.sort(key=lambda x: x["requested_at"] or "", reverse=True)
     return jsonify({"data": items})
 
@@ -2444,10 +2514,20 @@ def decide_approval():
     if decision not in ("approved", "rejected"):
         return error("Invalid decision", 422)
     if kind == "leave":
-        resp = decide_leave(int(rid), decision)
-        return resp
+        return decide_leave(int(rid), decision)
     if kind == "expense":
         return decide_claim(int(rid), decision)
+    if kind == "correction":
+        if role_of(request.user) not in ("super_admin", "hr_admin", "hr_officer", "manager"):
+            return error("Forbidden", 403)
+        if decision == "approved":
+            return approve_correction(int(rid))
+        corr = db.session.get(AttendanceCorrection, int(rid))
+        if not corr:
+            return error("Not found", 404)
+        corr.status = "rejected"
+        db.session.commit()
+        return jsonify({"data": serialize(corr, "corrections")})
     if kind == "loan":
         if role_of(request.user) not in ("super_admin", "hr_admin", "payroll"):
             return error("Forbidden", 403)
@@ -2458,6 +2538,114 @@ def decide_approval():
         db.session.commit()
         return jsonify({"data": serialize(loan, "loans")})
     return error("Unknown approval type", 422)
+
+
+@app.post("/api/v1/bulk-action")
+@login_required
+def bulk_action():
+    data = request.get_json(silent=True) or {}
+    entity = (data.get("entity") or "").strip()
+    action = (data.get("action") or "").strip()
+    ids = data.get("ids") or []
+    value = data.get("value")
+    if not entity or not action or not isinstance(ids, list) or not ids:
+        return error("entity, action, and non-empty ids list are required", 422)
+    role = role_of(request.user)
+    processed = 0
+    errors_count = 0
+
+    if entity == "employees":
+        if role not in ("super_admin", "hr_admin", "hr_officer"):
+            return error("Forbidden", 403)
+        for raw_id in ids:
+            emp = db.session.get(Employee, int(raw_id))
+            if not emp or emp.deleted_at is not None:
+                continue
+            if action == "set_work_location" and value in ("office", "hybrid", "remote"):
+                emp.work_location = value
+                processed += 1
+            elif action == "set_status" and value in ("active", "probation", "on_leave", "suspended"):
+                emp.status = value
+                processed += 1
+        audit(request.user, f"bulk_employees_{action}", "employees", None)
+        db.session.commit()
+    elif entity == "leave":
+        if action not in ("approved", "rejected"):
+            return error("Invalid leave bulk action", 422)
+        for raw_id in ids:
+            res = decide_leave(int(raw_id), action)
+            status_code = res[1] if isinstance(res, tuple) else res.status_code
+            if status_code < 400:
+                processed += 1
+            else:
+                errors_count += 1
+    elif entity == "expense":
+        for raw_id in ids:
+            if action in ("approved", "rejected"):
+                res = decide_claim(int(raw_id), action)
+            elif action == "paid":
+                res = pay_claim(int(raw_id))
+            else:
+                return error("Invalid expense bulk action", 422)
+            status_code = res[1] if isinstance(res, tuple) else res.status_code
+            if status_code < 400:
+                processed += 1
+            else:
+                errors_count += 1
+    elif entity == "onboarding":
+        if role not in ("super_admin", "hr_admin", "hr_officer", "manager"):
+            return error("Forbidden", 403)
+        for raw_id in ids:
+            t = db.session.get(OnboardingTask, int(raw_id))
+            if t and action in ("completed", "in_progress", "pending"):
+                t.status = action
+                processed += 1
+        db.session.commit()
+    elif entity == "approvals":
+        if action not in ("approved", "rejected"):
+            return error("Invalid approvals bulk action", 422)
+        for uid in ids:
+            if not isinstance(uid, str) or ":" not in uid:
+                continue
+            kind, rid = uid.split(":", 1)
+            if kind == "leave":
+                res = decide_leave(int(rid), action)
+            elif kind == "expense":
+                res = decide_claim(int(rid), action)
+            elif kind == "correction":
+                if role not in ("super_admin", "hr_admin", "hr_officer", "manager"):
+                    errors_count += 1
+                    continue
+                if action == "approved":
+                    res = approve_correction(int(rid))
+                else:
+                    corr = db.session.get(AttendanceCorrection, int(rid))
+                    if corr:
+                        corr.status = "rejected"
+                        db.session.commit()
+                        processed += 1
+                    continue
+            elif kind == "loan":
+                if role not in ("super_admin", "hr_admin", "payroll"):
+                    errors_count += 1
+                    continue
+                loan = db.session.get(Loan, int(rid))
+                if loan:
+                    loan.status = "active" if action == "approved" else "rejected"
+                    db.session.commit()
+                    processed += 1
+                continue
+            else:
+                continue
+            status_code = res[1] if isinstance(res, tuple) else res.status_code
+            if status_code < 400:
+                processed += 1
+            else:
+                errors_count += 1
+    else:
+        return error("Unsupported entity for bulk action", 422)
+
+    return jsonify({"data": {"processed": processed, "skipped": errors_count}})
 
 
 @app.post("/api/v1/notifications/<int:nid>/read")

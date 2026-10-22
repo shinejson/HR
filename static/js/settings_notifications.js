@@ -11,7 +11,6 @@ function switchHTML(attrs, checked, labelText, disabled) {
 function normalizeAppLink(link) {
   if (!link) return "";
   const clean = link.replace(/^\/app\/?/, "").replace(/^\//, "");
-  if (clean === "approvals") return "leave";
   return clean || "dashboard";
 }
 
@@ -125,6 +124,7 @@ async function renderUserNotifPreferences(container) {
 ============================================================================ */
 Views.notifications = async function (root, params) {
   let tab = (params && params[0] === "preferences") ? "preferences" : (params && params[0] === "deliveries" ? "deliveries" : "inbox");
+  let inboxView = "table";
   let filterMode = "all";
   let categoryFilter = "";
   let searchTerm = "";
@@ -133,17 +133,22 @@ Views.notifications = async function (root, params) {
     root.innerHTML = pageHead("Notifications", "Loading activity & alerts…", "", "Workspace") + spinners(3);
     try {
       const [listRes, unreadRes, statusRes] = await Promise.all([
-        API.get("/notifications", { per_page: 100 }),
+        API.get("/notifications", { per_page: 300 }),
         API.get("/notifications/unread"),
         API.get("/messaging/status"),
       ]);
-      const allItems = listRes.data || [];
+      const allItems = (listRes.data || []).map(n => ({
+        ...n,
+        read_state: n.read_at ? "read" : "unread",
+        category_label: n.category || "General",
+      }));
       const unreadCount = (unreadRes.data && unreadRes.data.count) || 0;
       const gw = statusRes.data || {};
 
-      const categories = [...new Set(allItems.map(i => (i.category || "General")))].sort();
+      const categories = [...new Set(allItems.map(i => i.category_label))].sort();
 
       const headActions = '<div class="row" style="flex-wrap:wrap;gap:8px">'
+        + (tab === "inbox" ? '<div class="segmented"><button type="button" class="seg-btn ' + (inboxView === "table" ? "active" : "") + '" data-nview="table">' + icon("list", 13) + ' Table</button><button type="button" class="seg-btn ' + (inboxView === "feed" ? "active" : "") + '" data-nview="feed">' + icon("inbox", 13) + ' Feed</button></div>' : '')
         + '<button class="btn btn-ghost" id="notif-send-test">' + icon("send", 14) + ' Test alert</button>'
         + (unreadCount > 0 ? '<button class="btn btn-ghost" id="notif-mark-all">' + icon("check", 14) + ' Mark all read</button>' : '')
         + (allItems.some(i => i.read_at) ? '<button class="btn btn-ghost" id="notif-clear-read">' + icon("trash", 14) + ' Clear read</button>' : '')
@@ -172,6 +177,10 @@ Views.notifications = async function (root, params) {
 
       root.querySelectorAll("[data-ntab]").forEach(b => b.onclick = () => {
         tab = b.dataset.ntab;
+        render();
+      });
+      root.querySelectorAll("[data-nview]").forEach(b => b.onclick = () => {
+        inboxView = b.dataset.nview;
         render();
       });
 
@@ -227,6 +236,70 @@ Views.notifications = async function (root, params) {
       }
 
       // INBOX TAB
+      if (inboxView === "table") {
+        stage.innerHTML = renderTable({
+          id: "notifications-inbox-table",
+          exportName: "my-notifications",
+          dateField: "created_at",
+          dateLabel: "Received",
+          filters: [
+            { key: "read_state", label: "State" },
+            { key: "category_label", label: "Category" },
+          ],
+          columns: [
+            {
+              label: "Notification",
+              key: "title",
+              render: n => {
+                const [ic, bg, fg] = notifCategoryIcon(n.category);
+                return '<div class="row" style="gap:10px;align-items:flex-start">'
+                  + '<div class="n-icon" style="width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:' + bg + ';color:' + fg + '">' + icon(ic, 14) + '</div>'
+                  + '<div><b style="' + (n.read_at ? "font-weight:500" : "") + '">' + esc(n.title) + '</b>' + (n.body ? '<div class="tiny muted" style="max-width:440px">' + esc(n.body) + '</div>' : '') + '</div></div>';
+              },
+            },
+            { label: "Category", key: "category_label", render: n => '<span class="pill-tag">' + esc(n.category_label) + '</span>' },
+            { label: "State", key: "read_state", render: n => n.read_at ? '<span class="chip chip-grey">Read</span>' : '<span class="chip chip-teal">Unread</span>' },
+            { label: "Received", key: "created_at", render: n => fmtDateTime(n.created_at) },
+            {
+              label: "",
+              class: "right",
+              sortable: false,
+              render: n => {
+                const dest = normalizeAppLink(n.link);
+                return '<div class="row" style="justify-content:flex-end;gap:4px">'
+                  + (dest ? '<button class="btn btn-sm btn-soft" data-open-n="' + n.id + '" data-dest="' + esc(dest) + '">Open</button>' : '')
+                  + '<button class="btn btn-sm btn-ghost" data-toggle-n="' + n.id + '" data-is-read="' + (n.read_at ? "1" : "0") + '">' + (n.read_at ? "Unread" : "Read") + '</button>'
+                  + '<button class="icon-btn" style="width:28px;height:28px" data-del-n="' + n.id + '">' + icon("trash", 13) + '</button>'
+                  + '</div>';
+              },
+            },
+          ],
+          rows: allItems,
+          emptyIcon: "bell",
+          emptyTitle: "No notifications yet",
+          emptyText: "Alerts for announcements, events and workflows appear here.",
+        });
+        onDelegate(stage, "click", "[data-open-n]", async (el) => {
+          const nid = el.dataset.openN;
+          const dest = el.dataset.dest;
+          try { await API.post("/notifications/" + nid + "/read"); loadNotifications(); } catch (err) {}
+          if (dest) go(dest); else render();
+        });
+        onDelegate(stage, "click", "[data-toggle-n]", async (b, ev) => {
+          ev.stopPropagation();
+          await API.post("/notifications/" + b.dataset.toggleN + (b.dataset.isRead === "1" ? "/unread" : "/read"));
+          loadNotifications();
+          render();
+        });
+        onDelegate(stage, "click", "[data-del-n]", async (b, ev) => {
+          ev.stopPropagation();
+          await API.del("/notifications/" + b.dataset.delN);
+          loadNotifications();
+          render();
+        });
+        return;
+      }
+
       const drawInbox = () => {
         const filtered = allItems.filter(n => {
           if (filterMode === "unread" && n.read_at) return false;
@@ -743,11 +816,8 @@ Views.settings = async function (root, params) {
 
     /* ---------------- TAB: DELIVERY LOG ---------------- */
     if (tab === "deliveries" && isAdmin) {
-      let chFilter = "";
-      let stFilter = "";
-
       const loadLogs = async () => {
-        const res = await API.get("/messaging/deliveries", { channel: chFilter, status: stFilter, per_page: 80 });
+        const res = await API.get("/messaging/deliveries", { per_page: 300 });
         const rows = res.data || [];
         const sum = res.summary || { total: 0, sent: 0, failed: 0, email: 0, sms: 0 };
 
@@ -757,56 +827,66 @@ Views.settings = async function (root, params) {
           + '<div class="kpi"><div class="label">Emails / SMS</div><div class="value">' + fmtNumber(sum.email) + ' / ' + fmtNumber(sum.sms) + '</div></div>'
           + '<div class="kpi"><div class="label">Failed / Blocked</div><div class="value" style="color:' + (sum.failed ? "var(--red)" : "var(--muted)") + '">' + fmtNumber(sum.failed) + '</div></div>'
           + '</div>'
-          + '<div class="toolbar">'
-          + '<select class="select" id="del-ch-filter"><option value="">All channels</option><option value="email"' + (chFilter === "email" ? " selected" : "") + '>Email only</option><option value="sms"' + (chFilter === "sms" ? " selected" : "") + '>SMS only</option></select>'
-          + '<select class="select" id="del-st-filter"><option value="">All statuses</option><option value="sent"' + (stFilter === "sent" ? " selected" : "") + '>Sent (Live)</option><option value="simulated"' + (stFilter === "simulated" ? " selected" : "") + '>Simulated (Sandbox)</option><option value="failed"' + (stFilter === "failed" ? " selected" : "") + '>Failed</option></select>'
-          + '<div class="spacer"></div><button class="btn btn-sm btn-ghost" id="del-refresh">' + icon("refresh", 13) + ' Refresh</button></div>'
           + renderTable({
+              id: "messaging-deliveries-table",
+              title: "Outbound Email & SMS Delivery Log",
+              sub: "Filter by channel, trigger event, status, or sent date.",
+              exportName: "messaging-delivery-log",
+              actions: '<button class="btn btn-sm btn-ghost" id="del-refresh">' + icon("refresh", 13) + ' Refresh</button>',
+              dateField: "sent_at",
+              dateLabel: "Sent",
+              filters: [
+                { key: "channel", label: "Channel" },
+                { key: "event_key", label: "Trigger" },
+                { key: "status", label: "Status" },
+              ],
               columns: [
-                { label: "Time", render: r => '<span class="tiny">' + fmtDateTime(r.sent_at || r.created_at) + '</span>' },
-                { label: "Channel", render: r => '<span class="chip ' + (r.channel === "sms" ? "purple" : "blue") + '">' + esc((r.channel || "").toUpperCase()) + '</span>' },
-                { label: "Trigger", render: r => '<span class="tiny" style="text-transform:capitalize">' + esc((r.event_key || "").replace(/_/g, " ")) + '</span>' },
-                { label: "Recipient", render: r => '<b>' + esc(r.recipient_name || "—") + '</b><div class="mono tiny muted">' + esc(r.recipient || "") + '</div>' },
-                { label: "Subject / Message", render: r => '<b>' + esc(r.subject || "SMS") + '</b>' + (r.error ? '<div class="tiny" style="color:var(--red)">' + esc(r.error) + '</div>' : (r.body ? '<div class="tiny muted" style="max-width:290px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(r.body) + '</div>' : '')) },
-                { label: "Status", render: r => chip(r.status) },
-                { label: "", class: "right", render: r => '<div class="row" style="justify-content:flex-end"><button class="btn btn-sm btn-ghost" data-inspect-del="' + r.id + '">View</button>' + (r.status === "failed" || r.status === "disabled" ? '<button class="btn btn-sm btn-accent" data-retry-del="' + r.id + '">Retry</button>' : '') + '</div>' },
+                { label: "Time", key: "sent_at", render: r => '<span class="tiny">' + fmtDateTime(r.sent_at || r.created_at) + '</span>' },
+                { label: "Channel", key: "channel", render: r => '<span class="chip ' + (r.channel === "sms" ? "purple" : "blue") + '">' + esc((r.channel || "").toUpperCase()) + '</span>' },
+                { label: "Trigger", key: "event_key", render: r => '<span class="tiny" style="text-transform:capitalize">' + esc((r.event_key || "").replace(/_/g, " ")) + '</span>' },
+                { label: "Recipient", sortKey: "recipient_name", render: r => '<b>' + esc(r.recipient_name || "—") + '</b><div class="mono tiny muted">' + esc(r.recipient || "") + '</div>' },
+                { label: "Subject / Message", key: "subject", render: r => '<b>' + esc(r.subject || "SMS") + '</b>' + (r.error ? '<div class="tiny" style="color:var(--red)">' + esc(r.error) + '</div>' : (r.body ? '<div class="tiny muted" style="max-width:290px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(r.body) + '</div>' : '')) },
+                { label: "Status", key: "status", render: r => chip(r.status) },
+                { label: "", class: "right", sortable: false, render: r => '<div class="row" style="justify-content:flex-end"><button class="btn btn-sm btn-ghost" data-inspect-del="' + r.id + '">View</button>' + (r.status === "failed" || r.status === "disabled" ? '<button class="btn btn-sm btn-accent" data-retry-del="' + r.id + '">Retry</button>' : '') + '</div>' },
               ],
               rows,
               emptyTitle: "No outbound Email or SMS logs match",
             });
 
-        stage.querySelector("#del-ch-filter").onchange = (e) => { chFilter = e.target.value; loadLogs(); };
-        stage.querySelector("#del-st-filter").onchange = (e) => { stFilter = e.target.value; loadLogs(); };
-        stage.querySelector("#del-refresh").onclick = loadLogs;
+        const refBtn = stage.querySelector("#del-refresh");
+        if (refBtn) refBtn.onclick = loadLogs;
 
-        stage.querySelectorAll("[data-inspect-del]").forEach(b => b.onclick = () => {
-          const item = rows.find(x => String(x.id) === String(b.dataset.inspectDel));
-          if (!item) return;
-          openModal({
-            title: (item.channel || "").toUpperCase() + " Delivery #" + item.id,
-            sub: (item.recipient_name || item.recipient || "") + " · " + fmtDateTime(item.sent_at || item.created_at),
-            body: '<div class="stack"><dl class="kv">'
-              + '<dt>Channel</dt><dd style="text-transform:uppercase">' + esc(item.channel) + '</dd>'
-              + '<dt>Recipient</dt><dd class="mono">' + esc(item.recipient || "—") + '</dd>'
-              + '<dt>Event Key</dt><dd class="mono">' + esc(item.event_key || "—") + '</dd>'
-              + '<dt>Status</dt><dd>' + chip(item.status) + '</dd>'
-              + '<dt>Provider Ref</dt><dd class="mono">' + esc(item.provider_ref || "—") + '</dd>'
-              + (item.error ? '<dt>Error</dt><dd style="color:var(--red)">' + esc(item.error) + '</dd>' : '')
-              + '</dl>'
-              + (item.subject ? '<div><div class="tiny muted">SUBJECT</div><b>' + esc(item.subject) + '</b></div>' : '')
-              + (item.body ? '<div><div class="tiny muted">MESSAGE BODY</div><div class="channel-box small" style="white-space:pre-wrap;margin-top:4px">' + esc(item.body) + '</div></div>' : '')
-              + '</div>',
-            footer: '<button class="btn btn-accent" data-close-modal>Close</button>',
+        if (!stage._delBound) {
+          stage._delBound = true;
+          onDelegate(stage, "click", "[data-inspect-del]", (b) => {
+            const item = (stage._latestRows || []).find(x => String(x.id) === String(b.dataset.inspectDel));
+            if (!item) return;
+            openModal({
+              title: (item.channel || "").toUpperCase() + " Delivery #" + item.id,
+              sub: (item.recipient_name || item.recipient || "") + " · " + fmtDateTime(item.sent_at || item.created_at),
+              body: '<div class="stack"><dl class="kv">'
+                + '<dt>Channel</dt><dd style="text-transform:uppercase">' + esc(item.channel) + '</dd>'
+                + '<dt>Recipient</dt><dd class="mono">' + esc(item.recipient || "—") + '</dd>'
+                + '<dt>Event Key</dt><dd class="mono">' + esc(item.event_key || "—") + '</dd>'
+                + '<dt>Status</dt><dd>' + chip(item.status) + '</dd>'
+                + '<dt>Provider Ref</dt><dd class="mono">' + esc(item.provider_ref || "—") + '</dd>'
+                + (item.error ? '<dt>Error</dt><dd style="color:var(--red)">' + esc(item.error) + '</dd>' : '')
+                + '</dl>'
+                + (item.subject ? '<div><div class="tiny muted">SUBJECT</div><b>' + esc(item.subject) + '</b></div>' : '')
+                + (item.body ? '<div><div class="tiny muted">MESSAGE BODY</div><div class="channel-box small" style="white-space:pre-wrap;margin-top:4px">' + esc(item.body) + '</div></div>' : '')
+                + '</div>',
+              footer: '<button class="btn btn-accent" data-close-modal>Close</button>',
+            });
           });
-        });
-
-        stage.querySelectorAll("[data-retry-del]").forEach(b => b.onclick = async () => {
-          try {
-            await API.post("/messaging/deliveries/" + b.dataset.retryDel + "/retry");
-            toast("Delivery retried", "success");
-            loadLogs();
-          } catch (err) { handleErr(err); }
-        });
+          onDelegate(stage, "click", "[data-retry-del]", async (b) => {
+            try {
+              await API.post("/messaging/deliveries/" + b.dataset.retryDel + "/retry");
+              toast("Delivery retried", "success");
+              loadLogs();
+            } catch (err) { handleErr(err); }
+          });
+        }
+        stage._latestRows = rows;
       };
 
       await loadLogs();

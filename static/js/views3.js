@@ -62,11 +62,11 @@ Views.performance = async function (root) {
     root.querySelectorAll("[data-ftab]").forEach(b => b.onclick = () => { perfState.tab = b.dataset.ftab; Views.performance(root); });
     const g = root.querySelector("#perf-goal"); if (g) g.onclick = openGoalForm;
     const c = root.querySelector("#perf-cycle"); if (c) c.onclick = openCycleForm;
-    root.querySelectorAll("[data-goal]").forEach(b => b.onclick = () => {
+    onDelegate(root, "click", "[data-goal]", (b) => {
       const goal = goals.find(x => x.id === Number(b.dataset.goal));
       openGoalProgressForm(goal);
     });
-    root.querySelectorAll("[data-review]").forEach(b => b.onclick = () => {
+    onDelegate(root, "click", "[data-review]", (b) => {
       const ap = appraisals.find(x => x.id === Number(b.dataset.review));
       openAppraisalForm(ap);
     });
@@ -163,17 +163,28 @@ Views.training = async function (root) {
       + kpiCard({ label: "Completed", value: completed, icon: "checkCircle", tone: "accent", foot: "Across the organisation" })
       + '</div>'
       + '<div class="section-title">Training catalogue</div><div class="grid grid-3" style="margin-bottom:22px">' + (catalogue || emptyState("No sessions", "Add a training session to open enrolment.", "graduation")) + '</div>'
-      + '<div class="card"><div class="card-head"><div><h3>Enrolments</h3><div class="sub">Attendance and completion tracking</div></div></div>'
-      + renderTable({ columns: [
-        { label: "Employee", render: r => personCell({ name: r.employee_name }) },
-        { label: "Training", render: r => '<b>' + esc(r.training_title) + '</b>' },
-        { label: "Status", render: r => chip(r.status) },
-        { label: "Score", render: r => r.score || "—" },
-        { label: "Completed", render: r => fmtDate(r.completed_at) },
-      ], rows: enrolments, emptyTitle: "No enrolments" }) + '</div>';
+      + renderTable({
+        id: "training-enrolments-table",
+        title: "Enrolments & completion register",
+        sub: "Filter by training session, department or status.",
+        exportName: "training-enrolments",
+        filters: [
+          { key: "training_title", label: "Course" },
+          { key: "department_name", label: "Department" },
+          { key: "status", label: "Status" },
+        ],
+        columns: [
+          { label: "Employee", sortKey: "employee_name", render: r => personCell({ name: r.employee_name }, r.department_name) },
+          { label: "Training", key: "training_title", render: r => '<b>' + esc(r.training_title) + '</b>' },
+          { label: "Status", key: "status", render: r => chip(r.status) },
+          { label: "Score", sortValue: r => Number(r.score || 0), render: r => r.score ? r.score + "%" : "—" },
+          { label: "Completed", key: "completed_at", render: r => fmtDate(r.completed_at) },
+        ],
+        rows: enrolments, emptyTitle: "No enrolments",
+      });
 
     root.querySelectorAll("[data-enrol]").forEach(b => b.onclick = () => openEnrolForm(Number(b.dataset.enrol)));
-    root.querySelectorAll("[data-complete-training]").forEach(b => b.onclick = async () => {
+    onDelegate(root, "click", "[data-complete-training]", async (b) => {
       try { await API.put("/enrolments/" + b.dataset.completeTraining, { status: "completed", completed_at: todayISO() }); toast("Training completed", "success"); Views.training(root); }
       catch (e) { handleErr(e); }
     });
@@ -223,7 +234,7 @@ const claimState = { tab: "claims" };
 Views.expenses = async function (root) {
   root.innerHTML = pageHead("Expenses", "Loading claims…") + spinners(3);
   try {
-    const [clRes, catRes] = await Promise.all([API.get("/claims", { per_page: 200 }), API.get("/expense-categories", { per_page: 50 })]);
+    const [clRes, catRes] = await Promise.all([API.get("/claims", { per_page: 500 }), API.get("/expense-categories", { per_page: 100 })]);
     const claims = clRes.data, cats = catRes.data;
     const mine = claims.filter(c => c.employee_id === Store.user.employee_id);
     const canApprove = Store.isRole("manager", "super_admin", "hr_admin", "payroll");
@@ -233,13 +244,59 @@ Views.expenses = async function (root) {
     const paidAmt = claims.filter(c => c.status === "paid").reduce((a, c) => a + Number(c.amount), 0);
 
     const tbl = renderTable({
+      id: "expense-claims-table",
+      exportName: "expense-claims",
+      selectable: canApprove,
+      dateField: "claim_date",
+      dateLabel: "Expense date",
+      filters: [
+        ...(Store.isRole("employee") ? [] : [{ key: "department_name", label: "Department" }]),
+        { key: "category_name", label: "Category" },
+        { key: "status", label: "Status" },
+      ],
+      bulkActions: [
+        ...(canApprove ? [
+          {
+            label: "Approve selected",
+            icon: "check",
+            className: "btn-accent",
+            onAction: async (ids) => {
+              const r = await API.post("/bulk-action", { entity: "expense", action: "approved", ids });
+              toast("Approved " + r.data.processed + " claim(s)", "success");
+              Views.expenses(root);
+            },
+          },
+          {
+            label: "Reject selected",
+            icon: "x",
+            className: "btn-danger",
+            onAction: async (ids) => {
+              const r = await API.post("/bulk-action", { entity: "expense", action: "rejected", ids });
+              toast("Rejected " + r.data.processed + " claim(s)", "success");
+              Views.expenses(root);
+            },
+          },
+        ] : []),
+        ...(canPay ? [
+          {
+            label: "Mark paid",
+            icon: "wallet",
+            className: "btn-soft",
+            onAction: async (ids) => {
+              const r = await API.post("/bulk-action", { entity: "expense", action: "paid", ids });
+              toast("Marked " + r.data.processed + " claim(s) paid", "success");
+              Views.expenses(root);
+            },
+          },
+        ] : []),
+      ],
       columns: [
-        ...(Store.isRole("employee") ? [] : [{ label: "Employee", render: r => personCell({ name: r.employee_name }) }]),
-        { label: "Claim", render: r => '<b>' + esc(r.title) + '</b><div class="tiny muted">' + esc(r.category_name || "") + '</div>' },
-        { label: "Date", render: r => fmtDate(r.claim_date) },
-        { label: "Amount", render: r => '<b>' + money(r.amount) + '</b>' },
-        { label: "Status", render: r => chip(r.status) },
-        { label: "", class: "right", render: r => {
+        ...(Store.isRole("employee") ? [] : [{ label: "Employee", sortKey: "employee_name", render: r => personCell({ name: r.employee_name }, r.department_name) }]),
+        { label: "Claim", key: "title", render: r => '<b>' + esc(r.title) + '</b><div class="tiny muted">' + esc(r.category_name || "") + '</div>' },
+        { label: "Date", key: "claim_date", render: r => fmtDate(r.claim_date) },
+        { label: "Amount", sortValue: r => Number(r.amount || 0), render: r => '<b>' + money(r.amount) + '</b>' },
+        { label: "Status", key: "status", render: r => chip(r.status) },
+        { label: "", class: "right", sortable: false, render: r => {
           let b = "";
           if (canApprove && r.status === "pending") b += '<button class="btn btn-sm btn-soft" data-claim-approve="' + r.id + '">Approve</button> <button class="btn btn-sm btn-danger" data-claim-reject="' + r.id + '">Reject</button>';
           if (canPay && r.status === "approved") b += '<button class="btn btn-sm btn-accent" data-claim-pay="' + r.id + '">Pay</button>';
@@ -249,10 +306,12 @@ Views.expenses = async function (root) {
     });
 
     const catTbl = renderTable({
+      id: "expense-categories-table",
+      exportName: "expense-categories",
       columns: [
-        { label: "Category", render: r => '<b>' + esc(r.name) + '</b>' },
-        { label: "Limit", render: r => r.limit_amount ? money(r.limit_amount) : "No limit" },
-        { label: "Receipt", render: r => r.requires_receipt ? "Required" : "Optional" },
+        { label: "Category", key: "name", render: r => '<b>' + esc(r.name) + '</b>' },
+        { label: "Limit", sortValue: r => r.limit_amount ? Number(r.limit_amount) : 1e12, render: r => r.limit_amount ? money(r.limit_amount) : "No limit" },
+        { label: "Receipt", sortValue: r => r.requires_receipt ? 1 : 0, render: r => r.requires_receipt ? "Required" : "Optional" },
       ], rows: cats, emptyTitle: "No categories",
     });
 
@@ -262,14 +321,14 @@ Views.expenses = async function (root) {
       + kpiCard({ label: "Approved, unpaid", value: compactMoney(approvedAmt), icon: "checkCircle", tone: "blue", foot: "Ready for finance" })
       + kpiCard({ label: "Paid out", value: compactMoney(paidAmt), icon: "wallet", tone: "teal", foot: "Reimbursed to date" })
       + '</div>'
-      + '<div class="tabs" style="margin-bottom:18px"><button class="tab active" data-etab="claims">Claims</button><button class="tab" data-etab="categories">Categories</button></div>'
+      + '<div class="tabs" style="margin-bottom:18px"><button class="tab ' + (claimState.tab === "claims" ? "active" : "") + '" data-etab="claims">Claims</button><button class="tab ' + (claimState.tab === "categories" ? "active" : "") + '" data-etab="categories">Categories</button></div>'
       + '<div class="page-enter">' + (claimState.tab === "categories" ? catTbl : tbl) + '</div>';
 
     root.querySelectorAll("[data-etab]").forEach(b => b.onclick = () => { claimState.tab = b.dataset.etab; Views.expenses(root); });
     root.querySelector("#claim-add").onclick = openClaimForm;
-    root.querySelectorAll("[data-claim-approve]").forEach(b => b.onclick = () => claimAction(b.dataset.claimApprove, "approve", root));
-    root.querySelectorAll("[data-claim-reject]").forEach(b => b.onclick = () => claimAction(b.dataset.claimReject, "reject", root));
-    root.querySelectorAll("[data-claim-pay]").forEach(b => b.onclick = () => claimAction(b.dataset.claimPay, "pay", root));
+    onDelegate(root, "click", "[data-claim-approve]", (b) => claimAction(b.dataset.claimApprove, "approve", root));
+    onDelegate(root, "click", "[data-claim-reject]", (b) => claimAction(b.dataset.claimReject, "reject", root));
+    onDelegate(root, "click", "[data-claim-pay]", (b) => claimAction(b.dataset.claimPay, "pay", root));
   } catch (e) {
     root.innerHTML = pageHead("Expenses", "Unavailable") + emptyState("Could not load expenses", e.message, "alert");
   }
@@ -348,8 +407,8 @@ Views.assets = async function (root) {
 
     root.querySelectorAll("[data-astab]").forEach(b => b.onclick = () => { assetState.tab = b.dataset.astab; Views.assets(root); });
     const add = root.querySelector("#asset-add"); if (add) add.onclick = openAssetForm;
-    root.querySelectorAll("[data-assign]").forEach(b => b.onclick = () => openAssignAssetForm(Number(b.dataset.assign)));
-    root.querySelectorAll("[data-return]").forEach(b => b.onclick = () => confirmDialog("Return asset", "Mark this asset as returned and available?", async () => {
+    onDelegate(root, "click", "[data-assign]", (b) => openAssignAssetForm(Number(b.dataset.assign)));
+    onDelegate(root, "click", "[data-return]", (b) => confirmDialog("Return asset", "Mark this asset as returned and available?", async () => {
       await API.post("/assets/" + b.dataset.return + "/return", { condition: "good" }); toast("Asset returned", "success"); Views.assets(root);
     }, { confirmLabel: "Return asset" }));
   } catch (e) {
@@ -390,19 +449,27 @@ const helpState = { tab: "all" };
 Views.helpdesk = async function (root) {
   root.innerHTML = pageHead("Helpdesk", "Loading tickets…") + spinners(3);
   try {
-    const res = await API.get("/tickets", { per_page: 200 });
+    const res = await API.get("/tickets", { per_page: 500 });
     const tickets = res.data;
     const filtered = helpState.tab === "all" ? tickets : tickets.filter(t => t.status === helpState.tab);
-    const canManage = Store.canManage();
     const table = renderTable({
+      id: "helpdesk-tickets-table",
+      exportName: "helpdesk-tickets",
+      dateField: "created_at",
+      dateLabel: "Opened",
+      filters: [
+        { key: "category", label: "Category" },
+        { key: "priority", label: "Priority" },
+        { key: "status", label: "Status" },
+      ],
       columns: [
-        { label: "Ticket", render: r => '<b>' + esc(r.subject) + '</b><div class="tiny muted">#' + r.id + ' · ' + esc(r.category) + '</div>' },
-        ...(Store.isRole("employee") ? [] : [{ label: "Raised by", render: r => personCell({ name: r.employee_name }) }]),
-        { label: "Priority", render: r => '<span class="chip chip-' + (r.priority === "high" ? "red" : r.priority === "low" ? "grey" : "amber") + '">' + esc(r.priority) + '</span>' },
-        { label: "Assignee", render: r => r.assignee_id ? esc(Store.employeeName(r.assignee_id)) : '<span class="muted">Unassigned</span>' },
-        { label: "Opened", render: r => timeAgo(r.created_at) },
-        { label: "Status", render: r => chip(r.status) },
-        { label: "", class: "right", render: r => '<button class="btn btn-sm btn-ghost" data-ticket="' + r.id + '">Open</button>' },
+        { label: "Ticket", key: "subject", render: r => '<b>' + esc(r.subject) + '</b><div class="tiny muted">#' + r.id + ' · ' + esc(r.category) + (r.confidential ? ' · <span style="color:var(--purple)">Confidential</span>' : '') + '</div>' },
+        ...(Store.isRole("employee") ? [] : [{ label: "Raised by", sortKey: "employee_name", render: r => personCell({ name: r.employee_name }) }]),
+        { label: "Priority", key: "priority", render: r => '<span class="chip chip-' + (r.priority === "high" ? "red" : r.priority === "low" ? "grey" : "amber") + '">' + esc(r.priority) + '</span>' },
+        { label: "Assignee", sortValue: r => r.assignee_id ? Store.employeeName(r.assignee_id) : "Unassigned", render: r => r.assignee_id ? esc(Store.employeeName(r.assignee_id)) : '<span class="muted">Unassigned</span>' },
+        { label: "Opened", key: "created_at", render: r => timeAgo(r.created_at) },
+        { label: "Status", key: "status", render: r => chip(r.status) },
+        { label: "", class: "right", sortable: false, render: r => '<button class="btn btn-sm btn-ghost" data-ticket="' + r.id + '">Open</button>' },
       ], rows: filtered, emptyTitle: "No tickets", emptyText: "Raise a ticket and HR will respond.",
     });
 
@@ -419,7 +486,7 @@ Views.helpdesk = async function (root) {
 
     root.querySelectorAll("[data-htab]").forEach(b => b.onclick = () => { helpState.tab = b.dataset.htab; Views.helpdesk(root); });
     root.querySelector("#ticket-add").onclick = openTicketForm;
-    root.querySelectorAll("[data-ticket]").forEach(b => b.onclick = () => openTicketDrawer(Number(b.dataset.ticket), root));
+    onDelegate(root, "click", "[data-ticket]", (b) => openTicketDrawer(Number(b.dataset.ticket), root));
   } catch (e) {
     root.innerHTML = pageHead("Helpdesk", "Unavailable") + emptyState("Could not load tickets", e.message, "alert");
   }
@@ -594,11 +661,19 @@ function openDocumentForm(employeeId) {
 }
 
 /* ============================================================ REPORTS */
+const repState = { tab: "dept" };
+
 Views.reports = async function (root) {
   root.innerHTML = pageHead("Reports", "Crunching workforce data…") + spinners(4);
   try {
-    const res = await API.get("/reports/overview");
+    const [res, empRes, balRes] = await Promise.all([
+      API.get("/reports/overview"),
+      API.get("/employees", { per_page: 500 }).catch(() => ({ data: [] })),
+      API.get("/leave-balances", { per_page: 500 }).catch(() => ({ data: [] })),
+    ]);
     const r = res.data;
+    const emps = empRes.data || [];
+    const leaveBals = balRes.data || [];
     const att = r.attendance || [];
     const attChart = lineChart(att.map(a => fmtDateShort(a.date)), [
       { name: "Present", values: att.map(a => a.present), color: "#0f766e" },
@@ -610,6 +685,84 @@ Views.reports = async function (root) {
     ]) : '<p class="small muted">No payroll history.</p>';
     const gender = r.by_gender.map((g, i) => ({ ...g, color: ["#0f766e", "#c2703d", "#6b4a86"][i % 3] }));
     const contract = r.by_contract.map((g, i) => ({ ...g, color: ["#2c5d8f", "#a97316", "#6b4a86", "#2f7d5d"][i % 4] }));
+
+    // Build Department Analytics rows
+    const deptMap = {};
+    emps.forEach(e => {
+      const dn = e.department_name || "Unassigned";
+      if (!deptMap[dn]) deptMap[dn] = { department: dn, headcount: 0, active: 0, flex: 0, totalSalary: 0 };
+      deptMap[dn].headcount++;
+      if (e.status === "active") deptMap[dn].active++;
+      if (e.work_location === "hybrid" || e.work_location === "remote") deptMap[dn].flex++;
+      deptMap[dn].totalSalary += Number(e.basic_salary || 0);
+    });
+    const deptRows = Object.values(deptMap).map(d => ({
+      ...d,
+      avgSalary: d.headcount ? d.totalSalary / d.headcount : 0,
+      flexPct: d.headcount ? Math.round((d.flex / d.headcount) * 100) : 0,
+    }));
+
+    let explorerTable = "";
+    if (repState.tab === "dept") {
+      explorerTable = renderTable({
+        id: "reports-dept-analytics",
+        title: "Department headcount & compensation benchmark",
+        sub: "Exportable breakdown of staffing, flexible work adoption, and monthly basic payroll per cost centre.",
+        exportName: "department-analytics",
+        columns: [
+          { label: "Department", key: "department", render: d => '<b>' + esc(d.department) + '</b>' },
+          { label: "Headcount", key: "headcount", render: d => '<b>' + d.headcount + '</b>' },
+          { label: "Active", key: "active" },
+          { label: "Hybrid / Remote", sortKey: "flexPct", render: d => d.flex + ' <span class="tiny muted">(' + d.flexPct + '%)</span>' },
+          { label: "Avg basic salary", sortKey: "avgSalary", render: d => money(d.avgSalary) },
+          { label: "Monthly basic total", sortKey: "totalSalary", render: d => '<b>' + money(d.totalSalary) + '</b>' },
+        ],
+        rows: deptRows,
+        emptyTitle: "No department data",
+      });
+    } else if (repState.tab === "leave") {
+      const lbRows = leaveBals.map(b => ({
+        ...b,
+        remaining: Number(b.entitled || 0) - Number(b.taken || 0) - Number(b.pending || 0),
+      }));
+      explorerTable = renderTable({
+        id: "reports-leave-liability",
+        title: "Leave entitlement & liability register",
+        sub: "Filter by department or leave type to audit unused leave balances.",
+        exportName: "leave-liability-report",
+        filters: [
+          { key: "department_name", label: "Department" },
+          { key: "leave_type_name", label: "Leave type" },
+          { key: "year", label: "Year" },
+        ],
+        columns: [
+          { label: "Employee", sortKey: "employee_name", render: b => personCell({ name: b.employee_name }, b.department_name) },
+          { label: "Leave type", key: "leave_type_name", render: b => '<b>' + esc(b.leave_type_name) + '</b>' },
+          { label: "Year", key: "year" },
+          { label: "Entitled", sortValue: b => Number(b.entitled || 0), render: b => b.entitled + " d" },
+          { label: "Taken", sortValue: b => Number(b.taken || 0), render: b => b.taken + " d" },
+          { label: "Pending", sortValue: b => Number(b.pending || 0), render: b => b.pending + " d" },
+          { label: "Remaining", sortKey: "remaining", render: b => '<b>' + b.remaining + ' d</b>' },
+        ],
+        rows: lbRows,
+        emptyTitle: "No leave balance records",
+      });
+    } else {
+      explorerTable = renderTable({
+        id: "reports-payroll-history",
+        title: "Payroll period register",
+        sub: "Historical gross, statutory PAYE, and net disbursements.",
+        exportName: "payroll-trend-report",
+        columns: [
+          { label: "Pay period", key: "period", render: p => '<b>' + esc(p.period) + '</b>' },
+          { label: "Gross payroll", sortValue: p => Number(p.gross || 0), render: p => money(p.gross) },
+          { label: "Net disbursed", sortValue: p => Number(p.net || 0), render: p => '<b>' + money(p.net) + '</b>' },
+          { label: "Deductions & tax", sortValue: p => Number(p.gross || 0) - Number(p.net || 0), render: p => money(Number(p.gross || 0) - Number(p.net || 0)) },
+        ],
+        rows: r.payroll || [],
+        emptyTitle: "No payroll runs",
+      });
+    }
 
     root.innerHTML = pageHead("Reports", "Workforce analytics for data-driven people decisions.",
       '<a class="btn btn-ghost" href="/api/v1/employees/export.csv?token=' + API.token + '">' + icon("download", 15) + ' Export employees</a><button class="btn btn-accent" onclick="window.print()">' + icon("file", 15) + ' Print report</button>', "Insight")
@@ -623,12 +776,19 @@ Views.reports = async function (root) {
       + '<div class="card"><div class="card-head"><div><h3>Attendance trend</h3><div class="sub">Present vs late · last 10 working days</div></div></div><div class="card-body">' + attChart + '</div></div>'
       + '<div class="card"><div class="card-head"><div><h3>Payroll trend</h3><div class="sub">Gross vs net by period</div></div></div><div class="card-body">' + payChart + '</div></div>'
       + '</div>'
-      + '<div class="grid grid-3">'
+      + '<div class="grid grid-3" style="margin-bottom:20px">'
       + '<div class="card"><div class="card-head"><h3>Headcount by department</h3></div><div class="card-body">' + barList(r.by_department) + '</div></div>'
       + '<div class="card"><div class="card-head"><h3>Gender distribution</h3></div><div class="card-body"><div class="row" style="gap:18px">' + donut(gender, 120) + '<div>' + gender.map(g => '<div class="row" style="gap:7px;margin-bottom:7px"><span style="width:8px;height:8px;border-radius:2px;background:' + g.color + '"></span><span class="small">' + esc(g.name) + '</span><b class="small" style="margin-left:auto">' + g.count + '</b></div>').join("") + '</div></div></div></div>'
       + '<div class="card"><div class="card-head"><h3>Contract mix</h3></div><div class="card-body"><div class="row" style="gap:18px">' + donut(contract, 120) + '<div>' + contract.map(g => '<div class="row" style="gap:7px;margin-bottom:7px"><span style="width:8px;height:8px;border-radius:2px;background:' + g.color + '"></span><span class="small">' + esc(g.name) + '</span><b class="small" style="margin-left:auto">' + g.count + '</b></div>').join("") + '</div></div></div></div>'
       + '</div>'
-      + '<div class="card" style="margin-top:18px"><div class="card-head"><div><h3>Standard reports</h3><div class="sub">Jump into the operational module for full detail</div></div></div><div class="card-body"><div class="grid grid-3">'
+      + '<div class="section-title">Interactive analytics explorer</div>'
+      + '<div class="tabs" style="margin-bottom:14px">'
+      + '<button class="tab ' + (repState.tab === "dept" ? "active" : "") + '" data-reptab="dept">Department benchmark</button>'
+      + '<button class="tab ' + (repState.tab === "leave" ? "active" : "") + '" data-reptab="leave">Leave liability (' + leaveBals.length + ')</button>'
+      + '<button class="tab ' + (repState.tab === "payroll" ? "active" : "") + '" data-reptab="payroll">Payroll history</button>'
+      + '</div>'
+      + explorerTable
+      + '<div class="card" style="margin-top:18px"><div class="card-head"><div><h3>Operational registers</h3><div class="sub">Jump into the operational module for full detail</div></div></div><div class="card-body"><div class="grid grid-3">'
       + [["Employee master", "employees", "Directory with department, grade and contract filters", "users"],
          ["Leave balances", "leave", "Entitlement, taken and pending by employee", "calendar"],
          ["Attendance register", "attendance", "Clock records, lateness and overtime", "clock"],
@@ -637,6 +797,8 @@ Views.reports = async function (root) {
          ["Training completion", "training", "Enrolment, completion and scores", "graduation"]].map(x =>
         '<div class="list-row" style="cursor:pointer" onclick="go(\'' + x[1] + '\')"><div class="kpi-icon">' + icon(x[3], 16) + '</div><div class="body"><b>' + x[0] + '</b><span>' + x[2] + '</span></div>' + icon("arrowRight", 14) + '</div>').join("")
       + '</div></div></div>';
+
+    root.querySelectorAll("[data-reptab]").forEach(b => b.onclick = () => { repState.tab = b.dataset.reptab; Views.reports(root); });
   } catch (e) {
     root.innerHTML = pageHead("Reports", "Unavailable") + emptyState("Could not load reports", e.message, "alert");
   }
@@ -653,8 +815,8 @@ Views.admin = async function (root) {
   root.innerHTML = pageHead("Administration", "Loading configuration…") + spinners(3);
   try {
     const [userRes, roleRes, setRes, auditRes] = await Promise.all([
-      API.get("/users", { per_page: 100 }), API.get("/roles", { per_page: 50 }),
-      API.get("/settings", { per_page: 100 }), API.get("/audit-logs", { per_page: 60 }),
+      API.get("/users", { per_page: 300 }), API.get("/roles", { per_page: 100 }),
+      API.get("/settings", { per_page: 200 }), API.get("/audit-logs", { per_page: 400 }),
     ]);
     const users = userRes.data, roles = roleRes.data, settings = setRes.data, logs = auditRes.data;
     const tabs = [["users", "Users"], ["roles", "Roles & permissions"], ["settings", "Settings"], ["audit", "Audit log"]];
@@ -662,12 +824,18 @@ Views.admin = async function (root) {
 
     if (adminState.tab === "users") {
       body = renderTable({
+        id: "admin-users-table",
+        exportName: "platform-users",
+        filters: [
+          { key: "role_name", label: "Role" },
+          { key: "status", label: "Status" },
+        ],
         columns: [
-          { label: "User", render: r => '<div class="person">' + avatarHTML(r.employee_name || r.email, "avatar-sm") + '<div><b>' + esc(r.employee_name || r.email.split("@")[0]) + '</b><span>' + esc(r.email) + '</span></div></div>' },
-          { label: "Role", render: r => '<span class="pill-tag">' + esc(r.role_name || "—") + '</span>' },
-          { label: "Last login", render: r => r.last_login_at ? timeAgo(r.last_login_at) : "Never" },
-          { label: "Status", render: r => chip(r.status) },
-          { label: "", class: "right", render: r => '<button class="btn btn-sm btn-ghost" data-toggle-user="' + r.id + '" data-status="' + r.status + '">' + (r.status === "active" ? "Deactivate" : "Activate") + '</button>' },
+          { label: "User", sortKey: "email", render: r => '<div class="person">' + avatarHTML(r.employee_name || r.email, "avatar-sm") + '<div><b>' + esc(r.employee_name || r.email.split("@")[0]) + '</b><span>' + esc(r.email) + '</span></div></div>' },
+          { label: "Role", key: "role_name", render: r => '<span class="pill-tag">' + esc(r.role_name || "—") + '</span>' },
+          { label: "Last login", sortKey: "last_login_at", render: r => r.last_login_at ? timeAgo(r.last_login_at) : "Never" },
+          { label: "Status", key: "status", render: r => chip(r.status) },
+          { label: "", class: "right", sortable: false, render: r => '<button class="btn btn-sm btn-ghost" data-toggle-user="' + r.id + '" data-status="' + r.status + '">' + (r.status === "active" ? "Deactivate" : "Activate") + '</button>' },
         ], rows: users, emptyTitle: "No users",
       });
     } else if (adminState.tab === "roles") {
@@ -683,12 +851,21 @@ Views.admin = async function (root) {
         + '<button class="btn btn-accent" id="save-settings">' + icon("check", 14) + ' Save all settings</button>';
     } else {
       body = renderTable({
+        id: "admin-audit-logs",
+        exportName: "security-audit-log",
+        dateField: "created_at",
+        dateLabel: "Timestamp",
+        filters: [
+          { key: "event", label: "Event" },
+          { key: "entity", label: "Entity" },
+          { key: "user_name", label: "Actor" },
+        ],
         columns: [
-          { label: "When", render: r => fmtDateTime(r.created_at) },
-          { label: "User", render: r => esc(r.user_name || "System") },
-          { label: "Event", render: r => '<span class="pill-tag">' + esc(r.event) + '</span>' },
-          { label: "Entity", render: r => esc(r.entity || "—") + (r.entity_id ? " #" + r.entity_id : "") },
-          { label: "IP", render: r => '<span class="mono tiny">' + esc(r.ip || "—") + '</span>' },
+          { label: "When", key: "created_at", render: r => fmtDateTime(r.created_at) },
+          { label: "User", key: "user_name", render: r => esc(r.user_name || "System") },
+          { label: "Event", key: "event", render: r => '<span class="pill-tag">' + esc(r.event) + '</span>' },
+          { label: "Entity", key: "entity", render: r => esc(r.entity || "—") + (r.entity_id ? " #" + r.entity_id : "") },
+          { label: "IP", key: "ip", render: r => '<span class="mono tiny">' + esc(r.ip || "—") + '</span>' },
         ], rows: logs, emptyTitle: "No audit entries",
       });
     }
@@ -704,7 +881,7 @@ Views.admin = async function (root) {
       else if (adminState.tab === "roles") openRoleForm();
       else openSettingForm();
     };
-    root.querySelectorAll("[data-toggle-user]").forEach(b => b.onclick = async () => {
+    onDelegate(root, "click", "[data-toggle-user]", async (b) => {
       try { await API.put("/users/" + b.dataset.toggleUser, { status: b.dataset.status === "active" ? "inactive" : "active" }); toast("User updated", "success"); Views.admin(root); }
       catch (e) { handleErr(e); }
     });

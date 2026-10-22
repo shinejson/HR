@@ -533,7 +533,7 @@ async function viewEmployeeDetail(root, id, initialTab) {
                 { label: "Overtime", class: "right mono", render: r => r.overtime_minutes ? r.overtime_minutes + "m" : "—" },
                 { label: "Status", render: r => chip(r.status) },
               ],
-              rows: (e.attendance || []).slice(0, 12),
+              rows: e.attendance || [],
               emptyTitle: "No attendance records",
             }) + '</div></div>';
       }
@@ -886,8 +886,9 @@ async function viewEmployeeDetail(root, id, initialTab) {
         await API.del("/bank-accounts/" + b.dataset.delBank); toast("Removed", "success"); loadAndRender();
       }, { danger: true }));
 
-      // View Payslip Modal
-      root.querySelectorAll("[data-view-slip]").forEach(b => b.onclick = () => {
+      const pWrap = root.firstElementChild || root;
+      // View Payslip Modal (delegated for multi-page DataTables)
+      onDelegate(pWrap, "click", "[data-view-slip]", (b) => {
         if (typeof openPayslipModal === "function") {
           openPayslipModal(Number(b.dataset.viewSlip));
           return;
@@ -935,7 +936,7 @@ async function viewEmployeeDetail(root, id, initialTab) {
       };
 
       // Policy Acknowledge
-      root.querySelectorAll("[data-ack-policy]").forEach(b => b.onclick = async () => {
+      onDelegate(pWrap, "click", "[data-ack-policy]", async (b) => {
         try {
           await API.post("/policies/" + b.dataset.ackPolicy + "/acknowledge");
           toast("Policy acknowledged", "success");
@@ -943,8 +944,8 @@ async function viewEmployeeDetail(root, id, initialTab) {
         } catch (err) { handleErr(err); }
       });
 
-      // Toggle Onboarding Task
-      root.querySelectorAll("[data-toggle-task]").forEach(cb => cb.onchange = async () => {
+      // Toggle Onboarding Task (delegated for multi-page DataTables)
+      onDelegate(pWrap, "change", "[data-toggle-task]", async (cb) => {
         try {
           await API.put("/onboarding-tasks/" + cb.dataset.toggleTask, {
             status: cb.checked ? "completed" : "pending",
@@ -960,6 +961,11 @@ async function viewEmployeeDetail(root, id, initialTab) {
   }
 
   await loadAndRender();
+}
+
+function openEmployeeProfile(id) {
+  if (!id) return;
+  go("employees/" + id);
 }
 
 Views.profile = async function (root, params) {

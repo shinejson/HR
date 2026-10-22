@@ -2,6 +2,7 @@ const NAV = [
   {
     label: "Workspace", items: [
       { id: "dashboard", label: "Overview", icon: "dashboard" },
+      { id: "approvals", label: "Approvals", icon: "inbox", roles: ["super_admin", "hr_admin", "hr_officer", "manager", "payroll"] },
       { id: "profile", label: "My Profile", icon: "user" },
       { id: "notifications", label: "Notifications", icon: "bell" },
     ],
@@ -50,7 +51,7 @@ const NAV = [
 ];
 
 const PAGES = {
-  dashboard: "Overview", employees: "Employees", organisation: "Organisation", recruitment: "Recruitment",
+  dashboard: "Overview", approvals: "Approvals Inbox", employees: "Employees", organisation: "Organisation", recruitment: "Recruitment",
   onboarding: "Onboarding", documents: "Documents", attendance: "Attendance", leave: "Leave",
   payroll: "Payroll", expenses: "Expenses", performance: "Performance", training: "Training",
   assets: "Assets", helpdesk: "Helpdesk", announcements: "Announcements & Events", reports: "Reports",
@@ -67,6 +68,7 @@ function renderNav() {
     if (!items.length) return "";
     return '<div class="nav-group"><div class="nav-label">' + group.label + '</div>'
       + items.map(i => '<button class="nav-item" data-nav="' + i.id + '">' + icon(i.icon, 17) + '<span>' + i.label + '</span>'
+        + (i.id === "approvals" ? '<span class="badge hidden" id="nav-approvals-badge"></span>' : "")
         + (i.id === "leave" ? '<span class="badge hidden" id="nav-leave-badge"></span>' : "")
         + (i.id === "notifications" ? '<span class="badge hidden" id="nav-notif-badge"></span>' : "")
         + '</button>').join("")
@@ -91,9 +93,9 @@ function parseHash() {
 async function renderRoute() {
   if (!Store.user) return;
   const parts = parseHash();
-  let section = parts[0] || "dashboard";
-  if (section === "approvals") section = "leave";
+  const section = parts[0] || "dashboard";
   const params = parts.slice(1);
+  Store.route = section;
   const view = document.getElementById("view");
   if (!PAGES[section]) {
     view.innerHTML = pageHead("Not found", "That page does not exist.") + emptyState("404", "Use the navigation to get back on track.", "alert");
@@ -181,12 +183,20 @@ async function loadNotifications() {
       loadNotifications();
       if (rawLink) {
         let dest = rawLink.replace(/^\/app\/?/, "").replace(/^\//, "") || "dashboard";
-        if (dest === "approvals") dest = "leave";
         go(dest);
       } else {
         go("notifications");
       }
     });
+    // Update live Approvals sidebar badge if applicable
+    const appBadge = document.getElementById("nav-approvals-badge");
+    if (appBadge && Store.isRole("super_admin", "hr_admin", "hr_officer", "manager", "payroll")) {
+      API.get("/approvals/inbox").then(ib => {
+        const ac = (ib.data || []).length;
+        appBadge.textContent = ac;
+        appBadge.classList.toggle("hidden", ac === 0);
+      }).catch(() => {});
+    }
   } catch (e) { /* silent */ }
 }
 
@@ -231,16 +241,12 @@ function bindChrome() {
     if (!e.target.closest("#notif-btn") && !e.target.closest("#notif-dropdown")) document.getElementById("notif-dropdown").classList.add("hidden");
     if (!e.target.closest("#top-user") && !e.target.closest("#user-dropdown")) document.getElementById("user-dropdown").classList.add("hidden");
   });
-  const search = document.getElementById("global-search");
-  search.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      empState.search = search.value.trim();
-      empState.page = 1;
-      if (parseHash()[0] === "employees") renderRoute();
-      else go("employees");
-      search.blur();
-    }
-  });
+  const searchTrigger = document.getElementById("global-search-trigger") || document.getElementById("global-search");
+  if (searchTrigger) {
+    searchTrigger.addEventListener("click", () => {
+      if (typeof openCommandPalette === "function") openCommandPalette("");
+    });
+  }
   document.addEventListener("auth:expired", () => {
     Store.user = null;
     document.getElementById("app-view").classList.add("hidden");

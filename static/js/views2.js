@@ -219,29 +219,70 @@ function openInterviewForm(appId) {
 Views.onboarding = async function (root) {
   root.innerHTML = pageHead("Onboarding & offboarding", "Loading transition checklists…") + spinners(3);
   try {
-    const [taskRes, offRes] = await Promise.all([API.get("/onboarding-tasks", { per_page: 100 }), API.get("/offboardings", { per_page: 50 })]);
+    const [taskRes, offRes] = await Promise.all([API.get("/onboarding-tasks", { per_page: 300 }), API.get("/offboardings", { per_page: 200 })]);
     const tasks = taskRes.data, offs = offRes.data;
     const done = tasks.filter(t => t.status === "completed").length;
     const pct = tasks.length ? Math.round(done / tasks.length * 100) : 0;
     const canManage = Store.canManage();
     const taskBody = renderTable({
+      id: "onboarding-tasks",
+      exportName: "onboarding-tasks",
+      selectable: canManage,
+      dateField: "due_date",
+      dateLabel: "Due",
+      filters: [
+        { key: "department_name", label: "Department" },
+        { key: "owner_role", label: "Owner" },
+        { key: "status", label: "Status" },
+      ],
+      bulkActions: canManage ? [
+        {
+          label: "Mark completed",
+          icon: "checkCircle",
+          className: "btn-accent",
+          onAction: async (ids) => {
+            await API.post("/bulk-action", { entity: "onboarding", action: "completed", ids });
+            toast("Marked " + ids.length + " task(s) completed", "success");
+            Views.onboarding(root);
+          },
+        },
+        {
+          label: "Set in progress",
+          icon: "clock",
+          className: "btn-soft",
+          onAction: async (ids) => {
+            await API.post("/bulk-action", { entity: "onboarding", action: "in_progress", ids });
+            toast("Updated " + ids.length + " task(s)", "success");
+            Views.onboarding(root);
+          },
+        },
+      ] : [],
       columns: [
-        { label: "Task", render: r => '<b>' + esc(r.title) + '</b>' },
-        { label: "Employee", render: r => personCell({ name: r.employee_name }) },
-        { label: "Owner", render: r => '<span class="pill-tag">' + esc(r.owner_role || "HR") + '</span>' },
-        { label: "Due", render: r => fmtDate(r.due_date) },
-        { label: "Status", render: r => canManage ? '<select class="select" style="height:29px;min-width:120px;font-size:11.5px" data-task-status="' + r.id + '">' + ["pending", "in_progress", "completed"].map(s => '<option value="' + s + '"' + (r.status === s ? " selected" : "") + '>' + s.replace("_", " ") + '</option>').join("") + '</select>' : chip(r.status) },
+        { label: "Task", key: "title", render: r => '<b>' + esc(r.title) + '</b>' + (r.notes ? '<div class="tiny muted">' + esc(r.notes) + '</div>' : '') },
+        { label: "Employee", sortKey: "employee_name", render: r => personCell({ name: r.employee_name }, r.department_name) },
+        { label: "Owner", key: "owner_role", render: r => '<span class="pill-tag">' + esc(r.owner_role || "HR") + '</span>' },
+        { label: "Due", key: "due_date", render: r => fmtDate(r.due_date) },
+        { label: "Status", key: "status", render: r => canManage ? '<select class="select" style="height:29px;min-width:120px;font-size:11.5px" data-task-status="' + r.id + '">' + ["pending", "in_progress", "completed"].map(s => '<option value="' + s + '"' + (r.status === s ? " selected" : "") + '>' + s.replace("_", " ") + '</option>').join("") + '</select>' : chip(r.status) },
       ],
       rows: tasks, emptyTitle: "No onboarding tasks", emptyText: "Add a task to start a checklist.",
     });
     const offBody = renderTable({
+      id: "offboarding-cases",
+      exportName: "offboarding-cases",
+      dateField: "last_day",
+      dateLabel: "Last day",
+      filters: [
+        { key: "department_name", label: "Department" },
+        { key: "reason", label: "Reason" },
+        { key: "status", label: "Status" },
+      ],
       columns: [
-        { label: "Employee", render: r => personCell({ name: r.employee_name }) },
-        { label: "Reason", render: r => '<span style="text-transform:capitalize">' + esc((r.reason || "").replace("_", " ")) + '</span>' },
-        { label: "Last day", render: r => fmtDate(r.last_day) },
-        { label: "Notice", render: r => (r.notice_period_days || 0) + " days" },
-        { label: "Status", render: r => chip(r.status) },
-        { label: "", class: "right", render: r => canManage && r.status !== "completed" ? '<button class="btn btn-sm btn-soft" data-complete-off="' + r.id + '" data-emp="' + r.employee_id + '">Complete</button>' : "" },
+        { label: "Employee", sortKey: "employee_name", render: r => personCell({ name: r.employee_name }, r.department_name) },
+        { label: "Reason", key: "reason", render: r => '<span style="text-transform:capitalize">' + esc((r.reason || "").replace(/_/g, " ")) + '</span>' },
+        { label: "Last day", key: "last_day", render: r => fmtDate(r.last_day) },
+        { label: "Notice", sortValue: r => Number(r.notice_period_days || 0), render: r => (r.notice_period_days || 0) + " days" },
+        { label: "Status", key: "status", render: r => chip(r.status) },
+        { label: "", class: "right", sortable: false, render: r => canManage && r.status !== "completed" ? '<button class="btn btn-sm btn-soft" data-complete-off="' + r.id + '" data-emp="' + r.employee_id + '">Complete</button>' : "" },
       ],
       rows: offs, emptyTitle: "No offboarding cases",
     });
@@ -257,11 +298,11 @@ Views.onboarding = async function (root) {
       + '<div class="section-title">Onboarding tasks</div>' + taskBody
       + '<div class="section-title" style="margin-top:22px">Offboarding</div>' + offBody;
 
-    root.querySelectorAll("[data-task-status]").forEach(sel => sel.onchange = async () => {
+    onDelegate(root, "change", "[data-task-status]", async (sel) => {
       try { await API.put("/onboarding-tasks/" + sel.dataset.taskStatus, { status: sel.value }); toast("Task updated", "success"); Views.onboarding(root); }
       catch (e) { handleErr(e); }
     });
-    root.querySelectorAll("[data-complete-off]").forEach(b => b.onclick = () => confirmDialog("Complete offboarding", "This marks the offboarding case complete and sets the employee status to resigned.", async () => {
+    onDelegate(root, "click", "[data-complete-off]", (b) => confirmDialog("Complete offboarding", "This marks the offboarding case complete and sets the employee status to resigned.", async () => {
       await API.put("/offboardings/" + b.dataset.completeOff, { status: "completed" });
       await API.put("/employees/" + b.dataset.emp, { status: "resigned" });
       toast("Offboarding completed", "success"); await Store.loadMeta(); Views.onboarding(root);
@@ -302,18 +343,17 @@ function openOffboardingForm() {
 }
 
 /* ============================================================ ATTENDANCE */
-const attState = { tab: "records", status: "" };
+const attState = { tab: "records" };
 
 Views.attendance = async function (root) {
   root.innerHTML = pageHead("Attendance", "Loading time records…") + spinners(3);
   try {
     const [attRes, corrRes] = await Promise.all([
-      API.get("/attendance", { per_page: 200, status: attState.status }),
-      API.get("/corrections", { per_page: 50 }),
+      API.get("/attendance", { per_page: 500 }),
+      API.get("/corrections", { per_page: 200 }),
     ]);
     const rows = attRes.data, corrections = corrRes.data;
     const today = todayRecord(rows);
-    const mine = Store.user.employee_id;
     const isEmployee = Store.isRole("employee");
     const canManage = Store.canManage() || Store.isRole("manager");
     const monthRows = rows.filter(r => (r.work_date || "").slice(0, 7) === todayISO().slice(0, 7));
@@ -323,31 +363,50 @@ Views.attendance = async function (root) {
       leave: monthRows.filter(r => r.status === "leave").length,
       overtime: monthRows.reduce((a, r) => a + Number(r.overtime_minutes || 0), 0),
     };
-    const statuses = ["present", "late", "leave", "absent", "remote"];
-    const filtered = attState.status ? rows.filter(r => r.status === attState.status) : rows;
 
     const recordsTable = renderTable({
-      columns: [
-        ...(isEmployee ? [] : [{ label: "Employee", render: r => personCell({ name: r.employee_name, employee_no: r.employee_no }) }]),
-        { label: "Date", render: r => fmtDate(r.work_date) },
-        { label: "Clock in", render: r => r.clock_in ? fmtTime(r.clock_in) : "—" },
-        { label: "Clock out", render: r => r.clock_out ? fmtTime(r.clock_out) : "—" },
-        { label: "Source", render: r => '<span class="pill-tag">' + esc(r.source || "web") + '</span>' },
-        { label: "Overtime", render: r => r.overtime_minutes ? r.overtime_minutes + " min" : "—" },
-        { label: "Status", render: r => chip(r.status) },
+      id: "attendance-records",
+      exportName: "attendance-register",
+      defaultPageSize: 10,
+      dateField: "work_date",
+      dateLabel: "Work date",
+      filters: [
+        ...(isEmployee ? [] : [{ key: "department_name", label: "Department" }]),
+        { key: "status", label: "Status" },
+        { key: "source", label: "Source" },
       ],
-      rows: filtered.slice(0, 60), emptyTitle: "No attendance records",
+      columns: [
+        ...(isEmployee ? [] : [
+          { label: "Employee", sortKey: "employee_name", render: r => personCell({ name: r.employee_name, employee_no: r.employee_no }) },
+          { label: "Department", key: "department_name", render: r => esc(r.department_name || "—") },
+        ]),
+        { label: "Date", key: "work_date", render: r => fmtDate(r.work_date) },
+        { label: "Clock in", sortKey: "clock_in", render: r => r.clock_in ? fmtTime(r.clock_in) : "—" },
+        { label: "Clock out", sortKey: "clock_out", render: r => r.clock_out ? fmtTime(r.clock_out) : "—" },
+        { label: "Source", key: "source", render: r => '<span class="pill-tag">' + esc(r.source || "web") + '</span>' },
+        { label: "Overtime", sortValue: r => Number(r.overtime_minutes || 0), render: r => r.overtime_minutes ? r.overtime_minutes + " min" : "—" },
+        { label: "Status", key: "status", render: r => chip(r.status) },
+      ],
+      rows: rows, emptyTitle: "No attendance records",
     });
 
     const corrTable = renderTable({
+      id: "attendance-corrections",
+      exportName: "attendance-corrections",
+      dateField: "work_date",
+      dateLabel: "Work date",
+      filters: [
+        ...(isEmployee ? [] : [{ key: "department_name", label: "Department" }]),
+        { key: "status", label: "Status" },
+      ],
       columns: [
-        { label: "Employee", render: r => personCell({ name: r.employee_name }) },
-        { label: "Date", render: r => fmtDate(r.work_date) },
-        { label: "Requested in", render: r => esc(r.requested_clock_in || "—") },
-        { label: "Requested out", render: r => esc(r.requested_clock_out || "—") },
-        { label: "Reason", render: r => '<span class="small">' + esc(r.reason || "—") + '</span>' },
-        { label: "Status", render: r => chip(r.status) },
-        { label: "", class: "right", render: r => canManage && r.status === "pending" ? '<button class="btn btn-sm btn-soft" data-approve-corr="' + r.id + '">Approve</button>' : "" },
+        { label: "Employee", sortKey: "employee_name", render: r => personCell({ name: r.employee_name }, r.department_name) },
+        { label: "Date", key: "work_date", render: r => fmtDate(r.work_date) },
+        { label: "Requested in", key: "requested_clock_in", render: r => esc(r.requested_clock_in || "—") },
+        { label: "Requested out", key: "requested_clock_out", render: r => esc(r.requested_clock_out || "—") },
+        { label: "Reason", key: "reason", render: r => '<span class="small">' + esc(r.reason || "—") + '</span>' },
+        { label: "Status", key: "status", render: r => chip(r.status) },
+        { label: "", class: "right", sortable: false, render: r => canManage && r.status === "pending" ? '<button class="btn btn-sm btn-soft" data-approve-corr="' + r.id + '">Approve</button>' : "" },
       ],
       rows: corrections, emptyTitle: "No correction requests",
     });
@@ -361,10 +420,8 @@ Views.attendance = async function (root) {
       + '<div class="card span-2"><div class="card-head"><div><h3>This month</h3><div class="sub">' + new Date().toLocaleString("en-GB", { month: "long", year: "numeric" }) + '</div></div><div class="right">' + chip(today ? today.status : "not clocked in", today ? today.status : "no record") + '</div></div><div class="card-body"><div class="stat-strip" style="border:0"><div class="item"><span>Present</span><b>' + stats.present + '</b></div><div class="item"><span>Late</span><b>' + stats.late + '</b></div><div class="item"><span>On leave</span><b>' + stats.leave + '</b></div><div class="item"><span>Overtime</span><b>' + Math.round(stats.overtime / 60) + 'h</b></div></div>'
       + '<div style="margin-top:18px"><div class="row-between"><span class="small muted">Attendance rate</span><b class="small">' + Math.round((stats.present + stats.late) / Math.max(monthRows.length, 1) * 100) + '%</b></div><div class="progress" style="margin-top:6px"><div class="bar" style="width:' + Math.round((stats.present + stats.late) / Math.max(monthRows.length, 1) * 100) + '%"></div></div></div>'
       + '</div></div></div>'
-      + '<div class="tabs" style="margin-bottom:18px"><button class="tab ' + (attState.tab === "records" ? "active" : "") + '" data-atab="records">Time records</button><button class="tab ' + (attState.tab === "corrections" ? "active" : "") + '" data-atab="corrections">Corrections <span class="tab-count">' + corrections.filter(c => c.status === "pending").length + '</span></button></div>'
-      + '<div class="page-enter">' + (attState.tab === "records"
-        ? '<div class="toolbar"><select class="select" id="att-filter"><option value="">All statuses</option>' + statuses.map(s => '<option value="' + s + '"' + (attState.status === s ? " selected" : "") + '>' + s[0].toUpperCase() + s.slice(1) + '</option>').join("") + '</select><div class="spacer"></div><span class="tiny muted">Showing latest 60 records</span></div>' + recordsTable
-        : corrTable) + '</div>';
+      + '<div class="tabs" style="margin-bottom:18px"><button class="tab ' + (attState.tab === "records" ? "active" : "") + '" data-atab="records">Time records <span class="tab-count">' + rows.length + '</span></button><button class="tab ' + (attState.tab === "corrections" ? "active" : "") + '" data-atab="corrections">Corrections <span class="tab-count">' + corrections.filter(c => c.status === "pending").length + '</span></button></div>'
+      + '<div class="page-enter">' + (attState.tab === "records" ? recordsTable : corrTable) + '</div>';
 
     if (window.__clockTimer) clearInterval(window.__clockTimer);
     window.__clockTimer = setInterval(() => {
@@ -381,9 +438,7 @@ Views.attendance = async function (root) {
     };
     root.querySelector("#corr-btn").onclick = () => openCorrectionForm();
     root.querySelectorAll("[data-atab]").forEach(b => b.onclick = () => { attState.tab = b.dataset.atab; Views.attendance(root); });
-    const f = root.querySelector("#att-filter");
-    if (f) f.onchange = () => { attState.status = f.value; Views.attendance(root); };
-    root.querySelectorAll("[data-approve-corr]").forEach(b => b.onclick = async () => {
+    onDelegate(root, "click", "[data-approve-corr]", async (b) => {
       try { await API.post("/corrections/" + b.dataset.approveCorr + "/approve"); toast("Correction applied", "success"); Views.attendance(root); } catch (e) { handleErr(e); }
     });
   } catch (e) {
@@ -413,8 +468,8 @@ Views.leave = async function (root) {
   root.innerHTML = pageHead("Leave", "Loading leave position…") + spinners(3);
   try {
     const [reqRes, typeRes, holRes, inboxRes, balRes] = await Promise.all([
-      API.get("/leave-requests", { per_page: 200 }),
-      API.get("/leave-types", { per_page: 50 }),
+      API.get("/leave-requests", { per_page: 500 }),
+      API.get("/leave-types", { per_page: 100 }),
       API.get("/holidays", { per_page: 100 }),
       API.get("/approvals/inbox"),
       API.get("/leave/summary"),
@@ -424,7 +479,7 @@ Views.leave = async function (root) {
     const balances = balRes.data;
     const canManage = Store.canManage();
     const canApprove = Store.isRole("super_admin", "hr_admin", "hr_officer", "manager");
-    const myRequests = requests;
+    const isEmployee = Store.isRole("employee");
     let body = "";
 
     if (leaveState.tab === "overview") {
@@ -434,40 +489,136 @@ Views.leave = async function (root) {
           const pct = Number(b.entitled) ? Math.round(left / Number(b.entitled) * 100) : 0;
           return '<div class="card card-pad"><div class="row-between"><div><div class="tiny muted">' + esc(b.leave_type_name) + '</div><div style="font-family:var(--serif);font-size:30px;line-height:1.2">' + left + '<span class="tiny muted" style="font-family:var(--sans)"> / ' + b.entitled + ' days</span></div></div><div class="kpi-icon teal">' + icon("calendar", 16) + '</div></div><div class="progress" style="margin-top:12px"><div class="bar" style="width:' + Math.max(0, Math.min(100, pct)) + '%"></div></div><div class="tiny muted" style="margin-top:6px">' + b.taken + ' taken · ' + b.pending + ' pending</div></div>';
         }).join("") + '</div>'
-        + '<div class="card">' + renderTable({
-          columns: [
-            { label: "Type", render: r => '<b>' + esc(r.leave_type_name) + '</b>' },
-            { label: "From", render: r => fmtDate(r.start_date) },
-            { label: "To", render: r => fmtDate(r.end_date) },
-            { label: "Days", key: "days" },
-            { label: "Approver", render: r => esc(Store.employeeName(r.approver_id)) },
-            { label: "Status", render: r => chip(r.status) },
-            { label: "", class: "right", render: r => r.status === "pending" ? '<button class="btn btn-sm btn-ghost" data-cancel-leave="' + r.id + '">Cancel</button>' : "" },
+        + renderTable({
+          id: "leave-requests-table",
+          title: "Leave requests register",
+          sub: "Filter by leave type, department, status or date range.",
+          exportName: "leave-requests",
+          selectable: canApprove,
+          dateField: "start_date",
+          dateLabel: "Start date",
+          filters: [
+            ...(isEmployee ? [] : [{ key: "department_name", label: "Department" }]),
+            { key: "leave_type_name", label: "Leave type" },
+            { key: "status", label: "Status" },
           ],
-          rows: myRequests, emptyTitle: "No leave requests", emptyText: "Apply for leave to see it here.",
-        }) + '</div>';
+          bulkActions: canApprove ? [
+            {
+              label: "Approve selected",
+              icon: "check",
+              className: "btn-accent",
+              onAction: async (ids) => {
+                const r = await API.post("/bulk-action", { entity: "leave", action: "approved", ids });
+                toast("Approved " + r.data.processed + " leave request(s)", "success");
+                Views.leave(root);
+              },
+            },
+            {
+              label: "Reject selected",
+              icon: "x",
+              className: "btn-danger",
+              onAction: async (ids) => {
+                const r = await API.post("/bulk-action", { entity: "leave", action: "rejected", ids });
+                toast("Rejected " + r.data.processed + " leave request(s)", "success");
+                Views.leave(root);
+              },
+            },
+          ] : [],
+          columns: [
+            ...(isEmployee ? [] : [{ label: "Employee", sortKey: "employee_name", render: r => personCell({ name: r.employee_name, employee_no: r.employee_no }, r.department_name) }]),
+            { label: "Type", key: "leave_type_name", render: r => '<b>' + esc(r.leave_type_name) + '</b>' + (r.reason ? '<div class="tiny muted">' + esc(r.reason.slice(0, 60)) + '</div>' : '') },
+            { label: "From", key: "start_date", render: r => fmtDate(r.start_date) },
+            { label: "To", key: "end_date", render: r => fmtDate(r.end_date) },
+            { label: "Days", key: "days", sortValue: r => Number(r.days || 0) },
+            { label: "Approver", sortValue: r => Store.employeeName(r.approver_id), render: r => esc(Store.employeeName(r.approver_id)) },
+            { label: "Status", key: "status", render: r => chip(r.status) },
+            { label: "", class: "right", sortable: false, render: r => {
+              if (r.status !== "pending") return "";
+              let btns = "";
+              if (canApprove && r.employee_id !== Store.user.employee_id) {
+                btns += '<button class="btn btn-sm btn-soft" data-approve="leave" data-id="' + r.id + '">Approve</button> ';
+              }
+              if (r.employee_id === Store.user.employee_id || canManage) {
+                btns += '<button class="btn btn-sm btn-ghost" data-cancel-leave="' + r.id + '">Cancel</button>';
+              }
+              return btns;
+            } },
+          ],
+          rows: requests, emptyTitle: "No leave requests", emptyText: "Apply for leave to see it here.",
+        });
     } else if (leaveState.tab === "calendar") {
       body = monthCalendar(leaveState.month, requests.filter(r => r.status !== "rejected"), holidays, types);
     } else if (leaveState.tab === "approvals") {
-      body = inbox.length ? '<div class="grid grid-2">' + inbox.map(a =>
-        '<div class="card card-pad"><div class="row-between"><div class="row">' + avatarHTML(a.title, "avatar-sm") + '<div><b class="small">' + esc(a.title) + '</b><div class="tiny muted">' + esc(a.subtitle) + '</div></div></div>' + '<span class="chip chip-amber">Pending</span></div>'
-        + '<div class="row" style="gap:8px;margin-top:14px"><button class="btn btn-soft btn-sm" data-approve="' + a.type + '" data-id="' + a.id + '">' + icon("check", 13) + ' Approve</button>'
-        + '<button class="btn btn-danger btn-sm" data-reject="' + a.type + '" data-id="' + a.id + '">' + icon("x", 13) + ' Reject</button>'
-        + '<span class="tiny muted" style="margin-left:auto">' + timeAgo(a.requested_at) + '</span></div></div>').join("") + '</div>'
-        : '<div class="card">' + emptyState("Inbox clear", "No leave requests are waiting for your decision.", "checkCircle") + '</div>';
+      body = renderTable({
+        id: "leave-approvals-table",
+        title: "Pending leave approvals",
+        sub: "Select rows for bulk approval or decide individually.",
+        selectable: true,
+        rowId: r => r.id,
+        filters: [{ key: "department_name", label: "Department" }],
+        bulkActions: [
+          {
+            label: "Approve selected",
+            icon: "check",
+            className: "btn-accent",
+            onAction: async (ids) => {
+              const r = await API.post("/bulk-action", { entity: "leave", action: "approved", ids });
+              toast("Approved " + r.data.processed + " request(s)", "success");
+              Views.leave(root);
+            },
+          },
+          {
+            label: "Reject selected",
+            icon: "x",
+            className: "btn-danger",
+            onAction: async (ids) => {
+              const r = await API.post("/bulk-action", { entity: "leave", action: "rejected", ids });
+              toast("Rejected " + r.data.processed + " request(s)", "success");
+              Views.leave(root);
+            },
+          },
+        ],
+        columns: [
+          { label: "Employee", sortKey: "employee_name", render: r => personCell({ name: r.employee_name || r.title }, r.department_name) },
+          { label: "Request", render: r => '<b>' + esc(r.title) + '</b><div class="tiny muted">' + esc(r.subtitle) + '</div>' },
+          { label: "Reason", render: r => esc(r.detail || "—") },
+          { label: "Submitted", sortKey: "requested_at", render: r => timeAgo(r.requested_at) },
+          { label: "", class: "right", sortable: false, render: r => '<button class="btn btn-soft btn-sm" data-approve="leave" data-id="' + r.id + '">' + icon("check", 13) + ' Approve</button> <button class="btn btn-danger btn-sm" data-reject="leave" data-id="' + r.id + '">' + icon("x", 13) + ' Reject</button>' },
+        ],
+        rows: inbox,
+        emptyIcon: "checkCircle",
+        emptyTitle: "Inbox clear",
+        emptyText: "No leave requests are waiting for your decision.",
+      });
     } else {
-      body = '<div class="grid grid-2"><div class="card"><div class="card-head"><div><h3>Leave types</h3><div class="sub">Policy rules per type</div></div>' + (canManage ? '<div class="right"><button class="btn btn-sm btn-accent" id="add-leave-type">' + icon("plus", 13) + ' Add</button></div>' : "") + '</div>'
-        + renderTable({ columns: [
-          { label: "Type", render: r => '<span class="row" style="gap:7px"><span style="width:8px;height:8px;border-radius:2px;background:' + esc(r.color || "#0f766e") + '"></span><b>' + esc(r.name) + '</b></span>' },
-          { label: "Days/yr", key: "days_per_year" }, { label: "Paid", render: r => r.paid ? "Yes" : "No" },
-          { label: "Carry forward", key: "carry_forward" },
-        ], rows: types, emptyTitle: "No leave types" }) + '</div>'
-        + '<div class="card"><div class="card-head"><div><h3>Public holidays</h3><div class="sub">Applied to working-day calculations</div></div>' + (canManage ? '<div class="right"><button class="btn btn-sm btn-accent" id="add-holiday">' + icon("plus", 13) + ' Add</button></div>' : "") + '</div>'
-        + renderTable({ columns: [
-          { label: "Holiday", render: r => '<b>' + esc(r.name) + '</b>' },
-          { label: "Date", render: r => fmtDate(r.holiday_date) },
-          { label: "Country", render: r => esc(r.country || "—") },
-        ], rows: holidays, emptyTitle: "No holidays" }) + '</div></div>';
+      body = '<div class="grid grid-2">'
+        + renderTable({
+          id: "leave-types-table",
+          title: "Leave types",
+          sub: "Statutory & company policy rules",
+          actions: canManage ? '<button class="btn btn-sm btn-accent" id="add-leave-type">' + icon("plus", 13) + ' Add</button>' : "",
+          columns: [
+            { label: "Type", key: "name", render: r => '<span class="row" style="gap:7px"><span style="width:8px;height:8px;border-radius:2px;background:' + esc(r.color || "#0f766e") + '"></span><b>' + esc(r.name) + '</b></span>' },
+            { label: "Days/yr", key: "days_per_year" },
+            { label: "Paid", sortValue: r => r.paid ? 1 : 0, render: r => r.paid ? "Yes" : "No" },
+            { label: "Carry forward", key: "carry_forward" },
+          ],
+          rows: types, emptyTitle: "No leave types",
+        })
+        + renderTable({
+          id: "holidays-table",
+          title: "Public holidays",
+          sub: "Applied to working-day calculations",
+          dateField: "holiday_date",
+          actions: canManage ? '<button class="btn btn-sm btn-accent" id="add-holiday">' + icon("plus", 13) + ' Add</button>' : "",
+          columns: [
+            { label: "Holiday", key: "name", render: r => '<b>' + esc(r.name) + '</b>' },
+            { label: "Date", key: "holiday_date", render: r => fmtDate(r.holiday_date) },
+            { label: "Country", key: "country", render: r => esc(r.country || "—") },
+          ],
+          rows: holidays, emptyTitle: "No holidays",
+        })
+        + '</div>';
     }
 
     root.innerHTML = pageHead("Leave", "Policy-driven leave requests, approvals and balances.",
@@ -484,7 +635,7 @@ Views.leave = async function (root) {
     root.querySelectorAll("[data-ltab]").forEach(b => b.onclick = () => { leaveState.tab = b.dataset.ltab; Views.leave(root); });
     root.querySelector("#leave-apply").onclick = () => openLeaveForm();
     root.querySelector("#leave-team").onclick = () => { leaveState.tab = "calendar"; Views.leave(root); };
-    root.querySelectorAll("[data-cancel-leave]").forEach(b => b.onclick = () => confirmDialog("Cancel leave request", "This will withdraw your pending request.", async () => {
+    onDelegate(root, "click", "[data-cancel-leave]", (b) => confirmDialog("Cancel leave request", "This will withdraw your pending request.", async () => {
       await API.post("/leave-requests/" + b.dataset.cancelLeave + "/cancel"); toast("Request cancelled", "success"); Views.leave(root);
     }, { confirmLabel: "Cancel request", danger: true }));
     bindApprovalButtons(root);
@@ -583,32 +734,48 @@ Views.payroll = async function (root) {
     const isSelfService = Store.isRole("employee", "manager");
     if (isSelfService) {
       const [slipRes, loanRes] = await Promise.all([
-        API.get("/payslips", { per_page: 200 }), API.get("/loans", { per_page: 100 }),
+        API.get("/payslips", { per_page: 300 }), API.get("/loans", { per_page: 200 }),
       ]);
-      const slips = slipRes.data, loans = loanRes.data;
+      const slips = (slipRes.data || []).map(r => ({
+        ...r,
+        period_label: r.period_month && r.period_year ? monthName(r.period_month) + " " + r.period_year : ("Run #" + r.run_id),
+      }));
+      const loans = loanRes.data;
       root.innerHTML = pageHead("Payroll", "Your payslips and salary details.", "", "Compensation")
         + '<div class="grid grid-3" style="margin-bottom:18px">'
-        + kpiCard({ label: "Latest net pay", value: money(slips[0] ? slips[0].net : 0), icon: "wallet", tone: "teal", foot: "Most recent payslip" })
+        + kpiCard({ label: "Latest net pay", value: money(slips[0] ? slips[0].net : 0), icon: "wallet", tone: "teal", foot: slips[0] ? slips[0].period_label : "Most recent payslip" })
         + kpiCard({ label: "Payslips available", value: slips.length, icon: "file", tone: "blue", foot: "Secure ESS downloads" })
         + kpiCard({ label: "Active advances", value: loans.filter(l => l.status === "active").length, icon: "receipt", tone: "accent", foot: "Salary advances on record" })
         + '</div>'
-        + '<div class="card">' + renderTable({
+        + renderTable({
+          id: "my-payslips",
+          title: "My payslips",
+          exportName: "my-payslips",
+          filters: [{ key: "period_label", label: "Pay period" }],
           columns: [
-            { label: "Payslip", render: r => '<b>#' + r.id + '</b>' },
-            { label: "Gross", render: r => money(r.gross) }, { label: "Tax", render: r => money(r.tax) },
-            { label: "SSNIT", render: r => money(r.ssnit) }, { label: "Net", render: r => '<b>' + money(r.net) + '</b>' },
-            { label: "", class: "right", render: r => '<button class="btn btn-sm btn-ghost" data-payslip="' + r.id + '">' + icon("eye", 13) + ' View</button>' },
+            { label: "Payslip", key: "id", render: r => '<b>#' + r.id + '</b>' },
+            { label: "Pay period", key: "period_label", render: r => '<b>' + esc(r.period_label) + '</b>' },
+            { label: "Gross", sortValue: r => Number(r.gross || 0), render: r => money(r.gross) },
+            { label: "PAYE Tax", sortValue: r => Number(r.tax || 0), render: r => money(r.tax) },
+            { label: "SSNIT", sortValue: r => Number(r.ssnit || 0), render: r => money(r.ssnit) },
+            { label: "Net pay", sortValue: r => Number(r.net || 0), render: r => '<b>' + money(r.net) + '</b>' },
+            { label: "", class: "right", sortable: false, render: r => '<button class="btn btn-sm btn-ghost" data-payslip="' + r.id + '">' + icon("eye", 13) + ' View</button>' },
           ], rows: slips, emptyTitle: "No payslips yet",
-        }) + '</div>';
-      root.querySelectorAll("[data-payslip]").forEach(b => b.onclick = () => openPayslipModal(Number(b.dataset.payslip)));
+        });
+      onDelegate(root, "click", "[data-payslip]", (b) => openPayslipModal(Number(b.dataset.payslip)));
       return;
     }
 
     const [runRes, slipRes, loanRes, compRes] = await Promise.all([
-      API.get("/payroll-runs", { per_page: 100 }), API.get("/payslips", { per_page: 200 }),
-      API.get("/loans", { per_page: 100 }), API.get("/salary-components", { per_page: 100 }),
+      API.get("/payroll-runs", { per_page: 200 }), API.get("/payslips", { per_page: 500 }),
+      API.get("/loans", { per_page: 200 }), API.get("/salary-components", { per_page: 200 }),
     ]);
-    const runs = runRes.data, slips = slipRes.data, loans = loanRes.data, comps = compRes.data;
+    const runs = runRes.data;
+    const slips = (slipRes.data || []).map(r => ({
+      ...r,
+      period_label: r.period_month && r.period_year ? monthName(r.period_month) + " " + r.period_year : ("Run #" + r.run_id),
+    }));
+    const loans = loanRes.data, comps = compRes.data;
     const canRun = Store.canPayroll();
     const canApprove = Store.isRole("super_admin", "hr_admin");
     const bands = (Store.meta && Store.meta.tax_bands) || [];
@@ -618,14 +785,20 @@ Views.payroll = async function (root) {
     let body = "";
     if (payState.tab === "runs") {
       body = renderTable({
+        id: "payroll-runs-table",
+        exportName: "payroll-runs",
+        filters: [
+          { key: "period_year", label: "Year" },
+          { key: "status", label: "Status" },
+        ],
         columns: [
-          { label: "Period", render: r => '<b>' + monthName(r.period_month) + ' ' + r.period_year + '</b>' },
+          { label: "Period", sortValue: r => (Number(r.period_year) * 100) + Number(r.period_month), render: r => '<b>' + monthName(r.period_month) + ' ' + r.period_year + '</b>' },
           { label: "Employees", key: "employee_count" },
-          { label: "Gross", render: r => money(r.total_gross) },
-          { label: "PAYE", render: r => money(r.total_tax) },
-          { label: "Net", render: r => '<b>' + money(r.total_net) + '</b>' },
-          { label: "Status", render: r => chip(r.status) },
-          { label: "", class: "right", render: r => {
+          { label: "Gross", sortValue: r => Number(r.total_gross || 0), render: r => money(r.total_gross) },
+          { label: "PAYE", sortValue: r => Number(r.total_tax || 0), render: r => money(r.total_tax) },
+          { label: "Net", sortValue: r => Number(r.total_net || 0), render: r => '<b>' + money(r.total_net) + '</b>' },
+          { label: "Status", key: "status", render: r => chip(r.status) },
+          { label: "", class: "right", sortable: false, render: r => {
             let btns = '<button class="btn btn-sm btn-ghost" data-run-view="' + r.id + '">View</button> ';
             if (canRun && ["draft", "calculated"].includes(r.status)) btns += '<button class="btn btn-sm btn-soft" data-run-calc="' + r.id + '">Calculate</button> ';
             if (canApprove && r.status === "calculated") btns += '<button class="btn btn-sm btn-soft" data-run-approve="' + r.id + '">Approve</button> ';
@@ -638,46 +811,74 @@ Views.payroll = async function (root) {
       });
     } else if (payState.tab === "payslips") {
       body = renderTable({
+        id: "payroll-payslips-table",
+        exportName: "payslips-register",
+        filters: [
+          { key: "period_label", label: "Pay period" },
+          { key: "department_name", label: "Department" },
+          { key: "run_status", label: "Run status" },
+        ],
         columns: [
-          { label: "Employee", render: r => personCell({ name: r.employee_name, employee_no: r.employee_no }) },
-          { label: "Department", render: r => esc(r.department_name || "—") },
-          { label: "Gross", render: r => money(r.gross) }, { label: "PAYE", render: r => money(r.tax) },
-          { label: "Deductions", render: r => money(Number(r.ssnit) + Number(r.other_deductions || 0)) },
-          { label: "Net", render: r => '<b>' + money(r.net) + '</b>' },
-          { label: "", class: "right", render: r => '<button class="btn btn-sm btn-ghost" data-payslip="' + r.id + '">View</button>' },
-        ], rows: slips.slice(0, 80), emptyTitle: "No payslips",
+          { label: "Employee", sortKey: "employee_name", render: r => personCell({ name: r.employee_name, employee_no: r.employee_no }) },
+          { label: "Department", key: "department_name", render: r => esc(r.department_name || "—") },
+          { label: "Period", key: "period_label", render: r => '<span class="pill-tag">' + esc(r.period_label) + '</span>' },
+          { label: "Gross", sortValue: r => Number(r.gross || 0), render: r => money(r.gross) },
+          { label: "PAYE", sortValue: r => Number(r.tax || 0), render: r => money(r.tax) },
+          { label: "SSNIT & Ded.", sortValue: r => Number(r.ssnit || 0) + Number(r.other_deductions || 0), render: r => money(Number(r.ssnit) + Number(r.other_deductions || 0)) },
+          { label: "Net pay", sortValue: r => Number(r.net || 0), render: r => '<b>' + money(r.net) + '</b>' },
+          { label: "", class: "right", sortable: false, render: r => '<button class="btn btn-sm btn-ghost" data-payslip="' + r.id + '">View</button>' },
+        ], rows: slips, emptyTitle: "No payslips",
       });
     } else if (payState.tab === "loans") {
       body = renderTable({
+        id: "payroll-loans-table",
+        exportName: "staff-loans-advances",
+        filters: [
+          { key: "department_name", label: "Department" },
+          { key: "loan_type", label: "Type" },
+          { key: "status", label: "Status" },
+        ],
         columns: [
-          { label: "Employee", render: r => personCell({ name: r.employee_name }) },
-          { label: "Type", render: r => '<span style="text-transform:capitalize">' + esc((r.loan_type || "").replace("_", " ")) + '</span>' },
-          { label: "Principal", render: r => money(r.principal) },
-          { label: "Instalment", render: r => money(r.instalment) },
-          { label: "Balance", render: r => money(r.balance) },
-          { label: "Status", render: r => chip(r.status) },
-          { label: "", class: "right", render: r => canRun && r.status === "pending" ? '<button class="btn btn-sm btn-soft" data-loan-approve="' + r.id + '">Approve</button>' : "" },
+          { label: "Employee", sortKey: "employee_name", render: r => personCell({ name: r.employee_name }, r.department_name) },
+          { label: "Type", key: "loan_type", render: r => '<span style="text-transform:capitalize">' + esc((r.loan_type || "").replace(/_/g, " ")) + '</span>' },
+          { label: "Principal", sortValue: r => Number(r.principal || 0), render: r => money(r.principal) },
+          { label: "Instalment", sortValue: r => Number(r.instalment || 0), render: r => money(r.instalment) },
+          { label: "Balance", sortValue: r => Number(r.balance || 0), render: r => money(r.balance) },
+          { label: "Status", key: "status", render: r => chip(r.status) },
+          { label: "", class: "right", sortable: false, render: r => canRun && r.status === "pending" ? '<button class="btn btn-sm btn-soft" data-loan-approve="' + r.id + '">Approve</button>' : "" },
         ], rows: loans, emptyTitle: "No loans or advances",
       });
     } else {
-      body = '<div class="grid grid-2"><div class="card"><div class="card-head"><div><h3>Salary components</h3><div class="sub">Earnings and deductions</div></div><div class="right">' + (canRun ? '<button class="btn btn-sm btn-accent" id="add-comp">' + icon("plus", 13) + ' Add</button>' : "") + '</div></div>'
-        + renderTable({ columns: [
-          { label: "Component", render: r => '<b>' + esc(r.name) + '</b> <span class="pill-tag">' + esc(r.code) + '</span>' },
-          { label: "Kind", render: r => chip(r.kind === "earning" ? "active" : "locked", r.kind) },
-          { label: "Taxable", render: r => r.is_taxable ? "Yes" : "No" },
-          { label: "Calculation", render: r => esc(r.calculation || "fixed") },
-        ], rows: comps, emptyTitle: "No components" }) + '</div>'
-        + '<div class="card"><div class="card-head"><div><h3>PAYE tax bands</h3><div class="sub">Configurable statutory rules — Ghana</div></div></div>'
-        + renderTable({ columns: [
-          { label: "Band", render: r => esc(r.description || "—") },
-          { label: "From", render: r => money(r.min_amount) },
-          { label: "To", render: r => r.max_amount ? money(r.max_amount) : "No limit" },
-          { label: "Rate", render: r => '<b>' + (Number(r.rate) * 100).toFixed(1) + '%</b>' },
-        ], rows: bands, emptyTitle: "No tax bands" }) + '</div></div>';
+      body = '<div class="grid grid-2">'
+        + renderTable({
+          id: "salary-components-table",
+          title: "Salary components",
+          sub: "Earnings and deductions",
+          actions: canRun ? '<button class="btn btn-sm btn-accent" id="add-comp">' + icon("plus", 13) + ' Add</button>' : "",
+          filters: [{ key: "kind", label: "Kind" }],
+          columns: [
+            { label: "Component", key: "name", render: r => '<b>' + esc(r.name) + '</b> <span class="pill-tag">' + esc(r.code) + '</span>' },
+            { label: "Kind", key: "kind", render: r => chip(r.kind === "earning" ? "active" : "locked", r.kind) },
+            { label: "Taxable", sortValue: r => r.is_taxable ? 1 : 0, render: r => r.is_taxable ? "Yes" : "No" },
+            { label: "Calculation", key: "calculation", render: r => esc(r.calculation || "fixed") },
+          ], rows: comps, emptyTitle: "No components",
+        })
+        + renderTable({
+          id: "paye-bands-table",
+          title: "PAYE tax bands",
+          sub: "Configurable statutory rules — Ghana GRA",
+          columns: [
+            { label: "Band", key: "description", render: r => esc(r.description || "—") },
+            { label: "From", sortValue: r => Number(r.min_amount || 0), render: r => money(r.min_amount) },
+            { label: "To", sortValue: r => r.max_amount ? Number(r.max_amount) : 1e12, render: r => r.max_amount ? money(r.max_amount) : "No limit" },
+            { label: "Rate", sortValue: r => Number(r.rate || 0), render: r => '<b>' + (Number(r.rate) * 100).toFixed(1) + '%</b>' },
+          ], rows: bands, emptyTitle: "No tax bands",
+        })
+        + '</div>';
     }
 
     root.innerHTML = pageHead("Payroll", "Accurate, auditable payroll cycles with configurable statutory rules.",
-      canRun ? '<button class="btn btn-ghost" id="pay-export">' + icon("download", 15) + ' Bank file</button><button class="btn btn-accent" id="pay-new-run">' + icon("plus", 15) + ' New payroll run</button>' : "", "Compensation")
+      canRun ? '<button class="btn btn-ghost" id="pay-export">' + icon("download", 15) + ' Bank schedule CSV</button><button class="btn btn-accent" id="pay-new-run">' + icon("plus", 15) + ' New payroll run</button>' : "", "Compensation")
       + '<div class="grid grid-4" style="margin-bottom:18px">'
       + kpiCard({ label: "Last gross payroll", value: compactMoney(latest ? latest.total_gross : 0), icon: "wallet", tone: "teal", foot: latest ? monthName(latest.period_month) + " " + latest.period_year : "No runs yet" })
       + kpiCard({ label: "PAYE remitted", value: compactMoney(latest ? latest.total_tax : 0), icon: "dollar", tone: "accent", foot: "Statutory deduction" })
@@ -688,22 +889,52 @@ Views.payroll = async function (root) {
       + '<div class="page-enter">' + body + '</div>';
 
     root.querySelectorAll("[data-ptab]").forEach(b => b.onclick = () => { payState.tab = b.dataset.ptab; Views.payroll(root); });
-    root.querySelectorAll("[data-payslip]").forEach(b => b.onclick = () => openPayslipModal(Number(b.dataset.payslip)));
+    onDelegate(root, "click", "[data-payslip]", (b) => openPayslipModal(Number(b.dataset.payslip)));
     const nr = root.querySelector("#pay-new-run"); if (nr) nr.onclick = openPayrollRunForm;
-    const ex = root.querySelector("#pay-export"); if (ex) ex.onclick = () => toast("Bank payment file generated for the latest locked run (CSV).", "success");
+    const ex = root.querySelector("#pay-export"); if (ex) ex.onclick = () => downloadBankScheduleCSV(latest, slips);
     const comp = root.querySelector("#add-comp"); if (comp) comp.onclick = openComponentForm;
-    root.querySelectorAll("[data-run-calc]").forEach(b => b.onclick = () => runAction("/payroll-runs/" + b.dataset.runCalc + "/calculate", "Payroll calculated", root));
-    root.querySelectorAll("[data-run-approve]").forEach(b => b.onclick = () => runAction("/payroll-runs/" + b.dataset.runApprove + "/approve", "Payroll approved", root));
-    root.querySelectorAll("[data-run-lock]").forEach(b => b.onclick = () => runAction("/payroll-runs/" + b.dataset.runLock + "/lock", "Payroll locked", root));
-    root.querySelectorAll("[data-run-pay]").forEach(b => b.onclick = () => runAction("/payroll-runs/" + b.dataset.runPay + "/pay", "Payroll marked paid", root));
-    root.querySelectorAll("[data-run-view]").forEach(b => b.onclick = () => openRunPayslips(Number(b.dataset.runView)));
-    root.querySelectorAll("[data-loan-approve]").forEach(b => b.onclick = async () => {
+    onDelegate(root, "click", "[data-run-calc]", (b) => runAction("/payroll-runs/" + b.dataset.runCalc + "/calculate", "Payroll calculated", root));
+    onDelegate(root, "click", "[data-run-approve]", (b) => runAction("/payroll-runs/" + b.dataset.runApprove + "/approve", "Payroll approved", root));
+    onDelegate(root, "click", "[data-run-lock]", (b) => runAction("/payroll-runs/" + b.dataset.runLock + "/lock", "Payroll locked", root));
+    onDelegate(root, "click", "[data-run-pay]", (b) => runAction("/payroll-runs/" + b.dataset.runPay + "/pay", "Payroll marked paid", root));
+    onDelegate(root, "click", "[data-run-view]", (b) => openRunPayslips(Number(b.dataset.runView)));
+    onDelegate(root, "click", "[data-loan-approve]", async (b) => {
       try { await API.post("/loans/" + b.dataset.loanApprove + "/approve"); toast("Loan approved", "success"); Views.payroll(root); } catch (e) { handleErr(e); }
     });
   } catch (e) {
     root.innerHTML = pageHead("Payroll", "Unavailable") + emptyState("Could not load payroll", e.message, "alert");
   }
 };
+
+function downloadBankScheduleCSV(run, allSlips) {
+  if (!run) return toast("No payroll run available", "error");
+  const rows = (allSlips || []).filter(s => s.run_id === run.id);
+  if (!rows.length) return toast("Calculate the payroll run first to generate bank schedule", "error");
+  const period = monthName(run.period_month) + " " + run.period_year;
+  const header = "Employee No,Employee Name,Department,Period,Gross (GHS),PAYE Tax (GHS),SSNIT 5.5% (GHS),Other Deductions (GHS),Net Payable (GHS)";
+  const lines = rows.map(r => [
+    r.employee_no || "",
+    '"' + String(r.employee_name || "").replace(/"/g, '""') + '"',
+    '"' + String(r.department_name || "").replace(/"/g, '""') + '"',
+    '"' + period + '"',
+    Number(r.gross || 0).toFixed(2),
+    Number(r.tax || 0).toFixed(2),
+    Number(r.ssnit || 0).toFixed(2),
+    Number(r.other_deductions || 0).toFixed(2),
+    Number(r.net || 0).toFixed(2),
+  ].join(","));
+  const csv = "\uFEFF" + [header].concat(lines).join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "meridian-bank-schedule-" + run.period_year + "-" + String(run.period_month).padStart(2, "0") + ".csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  toast("Downloaded bank payment schedule (" + rows.length + " employees)", "success");
+}
 
 async function runAction(path, message, root) {
   try {
@@ -751,22 +982,27 @@ function openComponentForm() {
 
 async function openRunPayslips(runId) {
   try {
-    const res = await API.get("/payslips", { run_id: runId, per_page: 200 });
+    const res = await API.get("/payslips", { run_id: runId, per_page: 500 });
     openModal({
       title: "Payroll run payslips",
       sub: res.data.length + " payslips in this run",
       wide: true,
       body: renderTable({
+        id: "modal-run-payslips",
+        exportName: "payroll-run-" + runId + "-payslips",
+        filters: [{ key: "department_name", label: "Department" }],
         columns: [
-          { label: "Employee", render: r => personCell({ name: r.employee_name, employee_no: r.employee_no }) },
-          { label: "Gross", render: r => money(r.gross) }, { label: "PAYE", render: r => money(r.tax) },
-          { label: "Net", render: r => '<b>' + money(r.net) + '</b>' },
-          { label: "", class: "right", render: r => '<button class="btn btn-sm btn-ghost" data-payslip="' + r.id + '">View</button>' },
+          { label: "Employee", sortKey: "employee_name", render: r => personCell({ name: r.employee_name, employee_no: r.employee_no }) },
+          { label: "Department", key: "department_name", render: r => esc(r.department_name || "—") },
+          { label: "Gross", sortValue: r => Number(r.gross || 0), render: r => money(r.gross) },
+          { label: "PAYE", sortValue: r => Number(r.tax || 0), render: r => money(r.tax) },
+          { label: "Net", sortValue: r => Number(r.net || 0), render: r => '<b>' + money(r.net) + '</b>' },
+          { label: "", class: "right", sortable: false, render: r => '<button class="btn btn-sm btn-ghost" data-payslip="' + r.id + '">View</button>' },
         ], rows: res.data, emptyTitle: "No payslips in this run",
       }),
       footer: '<button class="btn btn-ghost" data-close-modal>Close</button>',
       onMount(card) {
-        card.querySelectorAll("[data-payslip]").forEach(b => b.onclick = () => openPayslipModal(Number(b.dataset.payslip)));
+        onDelegate(card, "click", "[data-payslip]", (b) => openPayslipModal(Number(b.dataset.payslip)));
       },
     });
   } catch (e) { handleErr(e); }
