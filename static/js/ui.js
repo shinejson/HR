@@ -54,6 +54,22 @@ const ICONS = {
   more: '<circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/>',
   grid: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/>',
   home: '<path d="M3 10l9-8 9 8v10a2 2 0 01-2 2H5a2 2 0 01-2-2V10z"/><path d="M9 22V12h6v10"/>',
+  eyeOff: '<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>',
+  message: '<path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>',
+  award: '<circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/>',
+  heart: '<path d="M20.8 4.6a5.5 5.5 0 00-7.8 0L12 5.6l-1-1a5.5 5.5 0 00-7.8 7.8l1 1L12 21.2l7.8-7.8 1-1a5.5 5.5 0 000-7.8z"/>',
+  globe: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>',
+  printer: '<polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>',
+  sliders: '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
+  link: '<path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>',
+  columns: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/>',
+  list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
+  chevronsLeft: '<polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/>',
+  chevronsRight: '<polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/>',
+  sort: '<path d="M7 15l5 5 5-5"/><path d="M7 9l5-5 5 5"/>',
+  sortUp: '<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>',
+  sortDown: '<path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/>',
+  zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
 };
 
 function icon(name, size) {
@@ -70,6 +86,20 @@ function esc(s) {
 function money(v, currency) {
   const n = Number(v || 0);
   return (currency || "GHS") + " " + n.toLocaleString("en-GH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+const fmtMoney = money;
+
+function fmtNumber(v) {
+  const n = Number(v || 0);
+  return Number.isInteger(n) ? n.toLocaleString("en-GH") : n.toLocaleString("en-GH", { maximumFractionDigits: 1 });
+}
+
+function mask(v) {
+  if (!v) return "—";
+  const s = String(v);
+  if (s.startsWith("••••")) return s;
+  if (s.length <= 4) return "••••";
+  return "•••• •••• " + s.slice(-4);
 }
 
 function compactMoney(v) {
@@ -134,17 +164,25 @@ function initials(name) {
   return (parts[0][0] + (parts[1] ? parts[1][0] : "")).toUpperCase();
 }
 
-function avatarHTML(name, cls, extraStyle) {
+function avatarHTML(name, cls, extraStyle, photoUrl) {
+  if (photoUrl) {
+    return '<div class="avatar ' + (cls || "") + '" style="background:' + colorFor(name) + ';overflow:hidden;' + (extraStyle || "") + '">'
+      + '<img src="' + esc(photoUrl) + '" alt="' + esc(name) + '" style="width:100%;height:100%;object-fit:cover" onerror="this.remove();this.parentElement.textContent=\'' + esc(initials(name)) + '\'">'
+      + '</div>';
+  }
   return '<div class="avatar ' + (cls || "") + '" style="background:' + colorFor(name) + ';' + (extraStyle || "") + '">' + esc(initials(name)) + '</div>';
 }
 
 const STATUS_MAP = {
   active: "green", present: "green", approved: "green", paid: "green", completed: "green",
+  sent: "green", going: "green", simulated: "teal", enabled: "green", ready: "green",
   hired: "green", available: "green", resolved: "green", confirmed: "green", enrolled: "blue",
   pending: "amber", draft: "grey", calculated: "blue", review: "blue", in_progress: "amber",
+  maybe: "amber", skipped: "amber", sandbox: "teal",
   late: "amber", remote: "blue", screening: "blue", interview: "purple", assessment: "purple",
   offer: "teal", applied: "grey", scheduled: "blue", open: "teal", filled: "green",
   rejected: "red", absent: "red", terminated: "red", resigned: "grey", cancelled: "grey",
+  failed: "red", disabled: "grey", declined: "grey",
   locked: "purple", closed: "grey", inactive: "grey", offboarded: "grey", leave: "blue",
   assigned: "blue", self_review: "amber", in_review: "blue", not_started: "grey",
   probation: "amber", suspended: "red", overdue: "red", expired: "red",
@@ -208,6 +246,11 @@ document.addEventListener("click", (e) => {
 });
 
 function confirmDialog(title, message, onConfirm, opts) {
+  if (typeof message === "function") {
+    opts = onConfirm;
+    onConfirm = message;
+    message = "Are you sure you want to proceed? This action is recorded in the audit log.";
+  }
   opts = opts || {};
   openModal({
     title: title,
@@ -409,6 +452,20 @@ function debounce(fn, wait) {
 function optionsFrom(arr, labelKey, valueKey) {
   return (arr || []).map(x => ({ value: x[valueKey || "id"], label: x[labelKey || "name"] }));
 }
+
+function openFormModal(opts) {
+  const vals = opts.values || {};
+  const mappedFields = (opts.fields || []).map(f => ({
+    ...f,
+    value: f.value !== undefined ? f.value : (vals[f.name] !== undefined && vals[f.name] !== null ? vals[f.name] : f.default),
+  }));
+  return formModal({ ...opts, fields: mappedFields });
+}
+
+function empOptions() { return optionsFrom((Store.meta && Store.meta.employees) || [], "name", "id"); }
+function desigOptions() { return optionsFrom((Store.meta && Store.meta.designations) || [], "title", "id"); }
+function gradeOptions() { return optionsFrom((Store.meta && Store.meta.grades) || [], "name", "id"); }
+function branchOptions() { return optionsFrom((Store.meta && Store.meta.branches) || [], "name", "id"); }
 
 function spinners(n) {
   return '<div class="loading-block">' + Array.from({ length: n || 3 }).map(() => '<div class="skeleton" style="height:42px"></div>').join("") + '</div>';

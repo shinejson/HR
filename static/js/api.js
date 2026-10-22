@@ -55,6 +55,7 @@ const API = (() => {
     put(path, data) { return request(path, { method: "PUT", body: JSON.stringify(data || {}) }); },
     patch(path, data) { return request(path, { method: "PATCH", body: JSON.stringify(data || {}) }); },
     del(path) { return request(path, { method: "DELETE" }); },
+    upload(path, formData) { return request(path, { method: "POST", body: formData }); },
   };
 })();
 
@@ -75,6 +76,8 @@ const Store = {
   async loadMeta() { this.meta = (await API.get("/meta")).data; return this.meta; },
   role() { return this.user ? this.user.role_slug : null; },
   isRole(...roles) { return roles.includes(this.role()); },
+  isAdmin() { return this.isRole("super_admin", "hr_admin"); },
+  isReadOnly() { return this.isRole("auditor"); },
   canManage() { return this.isRole("super_admin", "hr_admin", "hr_officer"); },
   canPayroll() { return this.isRole("super_admin", "hr_admin", "payroll"); },
   canAdmin() { return this.isRole("super_admin"); },
