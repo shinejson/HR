@@ -141,6 +141,11 @@ class Employee(db.Model, TimestampMixin, SoftDeleteMixin):
     tax_number = db.Column(db.String(80))
     ssnit_number = db.Column(db.String(80))
     basic_salary = db.Column(db.Numeric(15, 2), default=0)
+    bio = db.Column(db.Text)
+    personal_email = db.Column(db.String(180))
+    blood_group = db.Column(db.String(10))
+    linkedin_url = db.Column(db.String(255))
+    work_location = db.Column(db.String(80), default="Office")
     department = db.relationship("Department")
     designation = db.relationship("Designation")
     grade = db.relationship("Grade")
@@ -196,6 +201,31 @@ class EmploymentHistory(db.Model, TimestampMixin):
     to_value = db.Column(db.String(255))
     effective_date = db.Column(db.Date)
     notes = db.Column(db.Text)
+
+
+class EmployeeSkill(db.Model, TimestampMixin):
+    __tablename__ = "employee_skills"
+    id = db.Column(db.Integer, primary_key=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=False)
+    name = db.Column(db.String(120), nullable=False)
+    category = db.Column(db.String(40), default="technical")
+    proficiency = db.Column(db.String(40), default="intermediate")
+    years_experience = db.Column(db.Integer, default=1)
+    verified = db.Column(db.Boolean, default=False)
+
+
+class EmployeeEducation(db.Model, TimestampMixin):
+    __tablename__ = "employee_educations"
+    id = db.Column(db.Integer, primary_key=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=False)
+    kind = db.Column(db.String(40), default="degree")
+    institution = db.Column(db.String(180), nullable=False)
+    qualification = db.Column(db.String(180), nullable=False)
+    field_of_study = db.Column(db.String(120))
+    start_year = db.Column(db.Integer)
+    end_year = db.Column(db.Integer)
+    credential_id = db.Column(db.String(120))
+    expires_at = db.Column(db.Date)
 
 
 class Contract(db.Model, TimestampMixin):
@@ -668,9 +698,50 @@ class Announcement(db.Model, TimestampMixin):
     audience = db.Column(db.String(40), default="all")
     department_id = db.Column(db.Integer)
     branch_id = db.Column(db.Integer)
+    role_slug = db.Column(db.String(80))
     publish_at = db.Column(db.DateTime, default=now)
     pinned = db.Column(db.Boolean, default=False)
     author_id = db.Column(db.Integer)
+    send_in_app = db.Column(db.Boolean, default=True)
+    send_email = db.Column(db.Boolean, default=False)
+    send_sms = db.Column(db.Boolean, default=False)
+    email_subject = db.Column(db.String(255))
+    sms_message = db.Column(db.String(320))
+
+
+class CompanyEvent(db.Model, TimestampMixin):
+    __tablename__ = "company_events"
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(180), nullable=False)
+    description = db.Column(db.Text)
+    category = db.Column(db.String(40), default="general")
+    location = db.Column(db.String(180))
+    meeting_url = db.Column(db.String(255))
+    start_at = db.Column(db.DateTime, nullable=False)
+    end_at = db.Column(db.DateTime)
+    all_day = db.Column(db.Boolean, default=False)
+    audience = db.Column(db.String(40), default="all")
+    department_id = db.Column(db.Integer)
+    branch_id = db.Column(db.Integer)
+    role_slug = db.Column(db.String(80))
+    organizer_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    send_in_app = db.Column(db.Boolean, default=True)
+    send_email = db.Column(db.Boolean, default=True)
+    send_sms = db.Column(db.Boolean, default=False)
+    reminder_hours = db.Column(db.Integer, default=24)
+    email_subject = db.Column(db.String(255))
+    sms_message = db.Column(db.String(320))
+    last_reminded_at = db.Column(db.DateTime)
+    status = db.Column(db.String(20), default="scheduled")
+
+
+class EventRsvp(db.Model, TimestampMixin):
+    __tablename__ = "event_rsvps"
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey("company_events.id"), nullable=False)
+    employee_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=False)
+    status = db.Column(db.String(20), default="going")
+    __table_args__ = (db.UniqueConstraint("event_id", "employee_id", name="uq_event_rsvp"),)
 
 
 class Notification(db.Model, TimestampMixin):
@@ -702,11 +773,13 @@ class NotificationDelivery(db.Model, TimestampMixin):
     id = db.Column(db.Integer, primary_key=True)
     notification_id = db.Column(db.Integer)
     announcement_id = db.Column(db.Integer)
+    event_id = db.Column(db.Integer)
     user_id = db.Column(db.Integer)
     event_key = db.Column(db.String(60))
     channel = db.Column(db.String(20), nullable=False)
     recipient = db.Column(db.String(180))
     subject = db.Column(db.String(255))
+    body = db.Column(db.Text)
     status = db.Column(db.String(20), default="pending")
     error = db.Column(db.Text)
     provider_ref = db.Column(db.String(180))

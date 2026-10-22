@@ -1,17 +1,18 @@
 """Email and SMS delivery for Meridian HR.
 
-Configuration is stored in the application settings table. Nothing is sent
-unless the relevant channel is explicitly enabled and fully configured, so
-the demo environment remains safe by default.
+Configuration is stored in the application settings table (`delivery.*`).
+Supports both Sandbox (safe simulated delivery recorded in the delivery log)
+and live gateways (SMTP for email; Twilio, Africa's Talking, and custom HTTP
+webhooks for SMS).
 """
 import base64
 import json
+import secrets
 import smtplib
 import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
 from email.message import EmailMessage
 from email.utils import formataddr
 
@@ -30,6 +31,10 @@ EVENT_CATALOG = [
      "description": "A payroll run is marked paid and payslips are released."},
     {"key": "announcement", "label": "Announcements", "category": "Announcements",
      "description": "Company-wide or targeted announcements."},
+    {"key": "event_published", "label": "Company events", "category": "Events",
+     "description": "A company or team event is scheduled or updated."},
+    {"key": "event_reminder", "label": "Event reminders", "category": "Events",
+     "description": "Reminders dispatched ahead of upcoming company events."},
     {"key": "ticket_update", "label": "Helpdesk updates", "category": "Helpdesk",
      "description": "A helpdesk ticket is assigned, replied to or resolved."},
     {"key": "asset_assigned", "label": "Asset assignments", "category": "Assets",
@@ -47,27 +52,51 @@ DEFAULT_ROUTING = {
     "expense_decision": {"in_app": True, "email": True, "sms": False},
     "payroll_paid": {"in_app": True, "email": True, "sms": True},
     "announcement": {"in_app": True, "email": True, "sms": False},
+    "event_published": {"in_app": True, "email": True, "sms": False},
+    "event_reminder": {"in_app": True, "email": True, "sms": True},
     "ticket_update": {"in_app": True, "email": True, "sms": False},
     "asset_assigned": {"in_app": True, "email": True, "sms": False},
     "training_enrolled": {"in_app": True, "email": True, "sms": False},
 }
 
-DEFAULT_PREFERENCE = {"in_app": True, "email": True, "sms": False}
+DEFAULT_USER_PREF = {"in_app": True, "email": True, "sms": True}
 
 CONFIG_KEYS = [
-    "email_enabled", "smtp_host", "smtp_port", "smtp_encryption", "smtp_username",
-    "smtp_password", "smtp_from_email", "smtp_from_name",
-    "sms_enabled", "sms_provider", "sms_sender_id",
+    "email_enabled", "email_mode", "smtp_host", "smtp_port", "smtp_encryption",
+    "smtp_username", "smtp_password", "smtp_from_email", "smtp_from_name",
+    "smtp_reply_to", "email_subject_prefix",
+    "sms_enabled", "sms_provider", "sms_sender_id", "sms_prefix",
     "twilio_account_sid", "twilio_auth_token", "twilio_from_number",
-    "at_username", "at_api_key", "sms_webhook_url",
+    "at_username", "at_api_key", "sms_webhook_url", "sms_api_key",
+    "ann_default_in_app", "ann_default_email", "ann_default_sms",
+    "evt_default_in_app", "evt_default_email", "evt_default_sms",
+    "evt_default_reminder_hours",
 ]
 
-SECRET_KEYS = {"smtp_password", "twilio_auth_token", "at_api_key"}
+SECRET_KEYS = {"smtp_password", "twilio_auth_token", "at_api_key", "sms_api_key"}
 
 CONFIG_DEFAULTS = {
-    "email_enabled": "0", "smtp_port": "587", "smtp_encryption": "starttls",
-    "smtp_from_name": "Meridian HR", "sms_enabled": "0", "sms_provider": "twilio",
-    "sms_sender_id": "Meridian",
+    "email_enabled": "1",
+    "email_mode": "sandbox",
+    "smtp_host": "",
+    "smtp_port": "587",
+    "smtp_encryption": "starttls",
+    "smtp_username": "",
+    "smtp_from_email": "notifications@meridian.gh",
+    "smtp_from_name": "Meridian HR",
+    "smtp_reply_to": "hr@meridian.gh",
+    "email_subject_prefix": "[Meridian HR]",
+    "sms_enabled": "1",
+    "sms_provider": "sandbox",
+    "sms_sender_id": "MeridianHR",
+    "sms_prefix": "Meridian HR: ",
+    "ann_default_in_app": "1",
+    "ann_default_email": "1",
+    "ann_default_sms": "0",
+    "evt_default_in_app": "1",
+    "evt_default_email": "1",
+    "evt_default_sms": "0",
+    "evt_default_reminder_hours": "24",
 }
 
 
@@ -82,6 +111,26 @@ def config():
     return values
 
 
+def email_provider_ready(cfg):
+    mode = (cfg.get("email_mode") or "smtp").lower()
+    if mode == "sandbox":
+        return True
+    return bool(cfg.get("smtp_host") and (cfg.get("smtp_from_email") or cfg.get("smtp_username")))
+
+
+def sms_provider_ready(cfg):
+    provider = (cfg.get("sms_provider") or "twilio").lower()
+    if provider == "sandbox":
+        return True
+    if provider == "twilio":
+        return bool(cfg.get("twilio_account_sid") and cfg.get("twilio_auth_token") and cfg.get("twilio_from_number"))
+    if provider == "africastalking":
+        return bool(cfg.get("at_username") and cfg.get("at_api_key"))
+    if provider == "custom":
+        return bool(cfg.get("sms_webhook_url"))
+    return False
+
+
 def public_config():
     cfg = config()
     out = {}
@@ -91,20 +140,33 @@ def public_config():
             out[key + "_set"] = bool(cfg.get(key))
         else:
             out[key] = cfg.get(key, "")
-    out["email_ready"] = bool(cfg.get("email_enabled") == "1" and cfg.get("smtp_host") and cfg.get("smtp_from_email"))
+    out["email_ready"] = bool(cfg.get("email_enabled") == "1" and email_provider_ready(cfg))
     out["sms_ready"] = bool(cfg.get("sms_enabled") == "1" and sms_provider_ready(cfg))
     return out
 
 
-def sms_provider_ready(cfg):
-    provider = cfg.get("sms_provider", "twilio")
-    if provider == "twilio":
-        return bool(cfg.get("twilio_account_sid") and cfg.get("twilio_auth_token") and cfg.get("twilio_from_number"))
-    if provider == "africastalking":
-        return bool(cfg.get("at_username") and cfg.get("at_api_key"))
-    if provider == "custom":
-        return bool(cfg.get("sms_webhook_url"))
-    return False
+def status_summary():
+    cfg = config()
+    return {
+        "email_enabled": cfg.get("email_enabled") == "1",
+        "email_mode": cfg.get("email_mode") or "smtp",
+        "email_ready": bool(cfg.get("email_enabled") == "1" and email_provider_ready(cfg)),
+        "sms_enabled": cfg.get("sms_enabled") == "1",
+        "sms_provider": cfg.get("sms_provider") or "twilio",
+        "sms_ready": bool(cfg.get("sms_enabled") == "1" and sms_provider_ready(cfg)),
+        "ann_defaults": {
+            "in_app": cfg.get("ann_default_in_app", "1") == "1",
+            "email": cfg.get("ann_default_email", "1") == "1",
+            "sms": cfg.get("ann_default_sms", "0") == "1",
+        },
+        "evt_defaults": {
+            "in_app": cfg.get("evt_default_in_app", "1") == "1",
+            "email": cfg.get("evt_default_email", "1") == "1",
+            "sms": cfg.get("evt_default_sms", "0") == "1",
+            "reminder_hours": int(cfg.get("evt_default_reminder_hours") or 24),
+        },
+        "events": EVENT_CATALOG,
+    }
 
 
 def event_routing():
@@ -117,7 +179,7 @@ def event_routing():
             stored = {}
     out = {}
     for key in EVENT_MAP:
-        out[key] = dict(DEFAULT_ROUTING.get(key, DEFAULT_PREFERENCE))
+        out[key] = dict(DEFAULT_ROUTING.get(key, DEFAULT_USER_PREF))
         out[key].update(stored.get(key) or {})
     return out
 
@@ -127,7 +189,29 @@ def preference_for(user_id, event_key):
     pref = NotificationPreference.query.filter_by(user_id=user_id, event_key=event_key).first()
     if pref:
         return {"in_app": bool(pref.in_app), "email": bool(pref.email), "sms": bool(pref.sms)}
-    return dict(DEFAULT_PREFERENCE)
+    return dict(DEFAULT_USER_PREF)
+
+
+def user_preferences_all(user_id):
+    from models import NotificationPreference
+    rows = {
+        r.event_key: {"in_app": bool(r.in_app), "email": bool(r.email), "sms": bool(r.sms)}
+        for r in NotificationPreference.query.filter_by(user_id=user_id).all()
+    }
+    routing = event_routing()
+    out = {}
+    for ev in EVENT_CATALOG:
+        key = ev["key"]
+        if key in rows:
+            out[key] = rows[key]
+        else:
+            # Default user opt-in mirrors active routing defaults, with SMS allowed if triggered
+            out[key] = {
+                "in_app": True,
+                "email": True,
+                "sms": bool(routing.get(key, {}).get("sms", True)),
+            }
+    return out
 
 
 def _smtp_connect(cfg):
@@ -149,29 +233,58 @@ def _smtp_connect(cfg):
     return server
 
 
+def format_subject(subject, cfg=None):
+    cfg = cfg or config()
+    prefix = (cfg.get("email_subject_prefix") or "").strip()
+    subj = (subject or "Notification").strip()
+    if prefix and not subj.startswith(prefix):
+        return f"{prefix} {subj}"
+    return subj
+
+
+def format_sms_body(text, cfg=None):
+    cfg = cfg or config()
+    prefix = cfg.get("sms_prefix") or ""
+    body = (text or "").strip()
+    if prefix and not body.startswith(prefix.strip()):
+        body = f"{prefix}{body}"
+    return body[:320]
+
+
 def send_email(to_email, subject, text_body, html_body=None):
     cfg = config()
     if cfg.get("email_enabled") != "1":
-        return {"ok": False, "status": "disabled", "error": "Email delivery is disabled"}
-    if not cfg.get("smtp_host"):
-        return {"ok": False, "status": "failed", "error": "SMTP host is not configured"}
-    if not to_email:
-        return {"ok": False, "status": "skipped", "error": "Recipient has no email address"}
-    from_email = cfg.get("smtp_from_email") or cfg.get("smtp_username")
-    if not from_email:
-        return {"ok": False, "status": "failed", "error": "Sender email is not configured"}
+        return {"ok": False, "status": "disabled", "error": "Email delivery is disabled in gateway settings"}
+    if not to_email or "@" not in str(to_email):
+        return {"ok": False, "status": "skipped", "error": "Recipient has no valid email address"}
+    mode = (cfg.get("email_mode") or "smtp").lower()
+    full_subject = format_subject(subject, cfg)
+    from_email = cfg.get("smtp_from_email") or cfg.get("smtp_username") or "notifications@meridian.gh"
     msg = EmailMessage()
-    msg["Subject"] = subject
+    msg["Subject"] = full_subject
     msg["From"] = formataddr((cfg.get("smtp_from_name") or "Meridian HR", from_email))
     msg["To"] = to_email
+    if cfg.get("smtp_reply_to"):
+        msg["Reply-To"] = cfg["smtp_reply_to"]
     msg.set_content(text_body or "")
     if html_body:
         msg.add_alternative(html_body, subtype="html")
+    if mode == "sandbox":
+        return {
+            "ok": True,
+            "status": "simulated",
+            "error": None,
+            "ref": "sim-mail-" + secrets.token_hex(5),
+        }
+    if not cfg.get("smtp_host"):
+        return {"ok": False, "status": "failed", "error": "SMTP host is not configured"}
+    if not (cfg.get("smtp_from_email") or cfg.get("smtp_username")):
+        return {"ok": False, "status": "failed", "error": "Sender email is not configured"}
     try:
         with _smtp_connect(cfg) as server:
             server.send_message(msg)
-        return {"ok": True, "status": "sent", "error": None}
-    except Exception as exc:  # network and auth errors are surfaced in the delivery log
+        return {"ok": True, "status": "sent", "error": None, "ref": "smtp-" + secrets.token_hex(4)}
+    except Exception as exc:
         return {"ok": False, "status": "failed", "error": str(exc)[:500]}
 
 
@@ -212,32 +325,46 @@ def _africastalking_send(cfg, to_number, body):
 
 
 def _custom_send(cfg, to_number, body):
-    payload = json.dumps({"to": to_number, "message": body, "sender": cfg.get("sms_sender_id")}).encode()
-    req = urllib.request.Request(cfg.get("sms_webhook_url"), data=payload, method="POST", headers={
-        "Content-Type": "application/json"})
+    headers = {"Content-Type": "application/json"}
+    if cfg.get("sms_api_key"):
+        headers["Authorization"] = "Bearer " + cfg.get("sms_api_key")
+    payload = json.dumps({
+        "to": to_number,
+        "message": body,
+        "sender": cfg.get("sms_sender_id") or "MeridianHR",
+    }).encode()
+    req = urllib.request.Request(cfg.get("sms_webhook_url"), data=payload, method="POST", headers=headers)
     with urllib.request.urlopen(req, timeout=10) as resp:
         data = json.loads(resp.read().decode() or "{}")
-    return data.get("id") or data.get("message_id")
+    return data.get("id") or data.get("message_id") or ("webhook-" + secrets.token_hex(4))
 
 
 def send_sms(to_number, body):
     cfg = config()
     if cfg.get("sms_enabled") != "1":
-        return {"ok": False, "status": "disabled", "error": "SMS delivery is disabled"}
-    if not to_number:
+        return {"ok": False, "status": "disabled", "error": "SMS delivery is disabled in gateway settings"}
+    if not to_number or not str(to_number).strip():
         return {"ok": False, "status": "skipped", "error": "Recipient has no phone number"}
     provider = (cfg.get("sms_provider") or "twilio").lower()
+    formatted = format_sms_body(body, cfg)
+    if provider == "sandbox":
+        return {
+            "ok": True,
+            "status": "simulated",
+            "error": None,
+            "ref": "sim-sms-" + secrets.token_hex(5),
+        }
     if not sms_provider_ready(cfg):
-        return {"ok": False, "status": "failed", "error": "SMS provider credentials are incomplete"}
+        return {"ok": False, "status": "failed", "error": f"SMS provider ({provider}) credentials are incomplete"}
     try:
         if provider == "twilio":
-            ref = _twilio_send(cfg, to_number, body)
+            ref = _twilio_send(cfg, to_number, formatted)
         elif provider == "africastalking":
-            ref = _africastalking_send(cfg, to_number, body)
+            ref = _africastalking_send(cfg, to_number, formatted)
         elif provider == "custom":
-            ref = _custom_send(cfg, to_number, body)
+            ref = _custom_send(cfg, to_number, formatted)
         else:
-            return {"ok": False, "status": "failed", "error": "Unknown SMS provider"}
+            return {"ok": False, "status": "failed", "error": f"Unknown SMS provider: {provider}"}
         return {"ok": True, "status": "sent", "error": None, "ref": ref}
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")[:500]
@@ -246,18 +373,41 @@ def send_sms(to_number, body):
         return {"ok": False, "status": "failed", "error": str(exc)[:500]}
 
 
-def html_email(title, body, link=None):
-    safe_body = (body or "").replace("\n", "<br>")
+def html_email(title, body, link=None, meta_rows=None, badge=None):
+    safe_body = (body or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+    badge_html = ""
+    if badge:
+        badge_html = (
+            f'<div style="display:inline-block;background:#f7e9de;color:#a85c2d;font-size:11px;'
+            f'font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:4px 10px;'
+            f'border-radius:6px;margin-bottom:10px">{badge}</div>'
+        )
+    meta_html = ""
+    if meta_rows:
+        rows = "".join(
+            f'<tr><td style="padding:6px 12px 6px 0;color:#6b7773;font-size:12.5px;white-space:nowrap">{k}</td>'
+            f'<td style="padding:6px 0;color:#1d2b29;font-size:12.5px;font-weight:600">{v}</td></tr>'
+            for k, v in meta_rows if v
+        )
+        if rows:
+            meta_html = (
+                '<div style="margin:18px 0;padding:14px 16px;background:#faf8f3;border:1px solid #e6e0d5;'
+                f'border-radius:10px"><table style="border-collapse:collapse;width:100%">{rows}</table></div>'
+            )
     action = ""
     if link:
-        action = f'<p style="margin-top:24px"><a href="{link}" style="background:#b86b3f;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Open Meridian HR</a></p>'
+        action = (
+            f'<p style="margin-top:24px"><a href="{link}" style="display:inline-block;background:#c2703d;'
+            'color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600">'
+            'Open in Meridian HR</a></p>'
+        )
     return (
         '<div style="font-family:Inter,Arial,sans-serif;background:#f5f3ee;padding:28px">'
         '<div style="max-width:560px;margin:auto;background:#fff;border:1px solid #e6e0d5;border-radius:14px;overflow:hidden">'
         '<div style="background:#14312e;color:#fff;padding:20px 26px"><b style="font-size:17px">Meridian HR</b>'
         '<div style="font-size:11px;color:#b9cbc4;letter-spacing:.12em;margin-top:3px">PEOPLE OPERATIONS</div></div>'
-        f'<div style="padding:26px"><h2 style="font-size:20px;color:#1f2a27;margin:0 0 12px">{title}</h2>'
-        f'<div style="font-size:14px;line-height:1.7;color:#56615d">{safe_body}</div>{action}</div>'
+        f'<div style="padding:26px">{badge_html}<h2 style="font-size:20px;color:#1f2a27;margin:0 0 12px">{title}</h2>'
+        f'<div style="font-size:14px;line-height:1.7;color:#56615d">{safe_body}</div>{meta_html}{action}</div>'
         '<div style="padding:16px 26px;border-top:1px solid #eee8dd;color:#8a918d;font-size:11px">'
-        'This message was sent by the Meridian HR system.</div></div></div>'
+        'This message was sent by the Meridian HR system. Manage your channel preferences in Settings &rarr; Notifications.</div></div></div>'
     )

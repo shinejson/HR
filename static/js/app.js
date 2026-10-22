@@ -1,5 +1,11 @@
 const NAV = [
-  { label: "Workspace", items: [{ id: "dashboard", label: "Overview", icon: "dashboard" }] },
+  {
+    label: "Workspace", items: [
+      { id: "dashboard", label: "Overview", icon: "dashboard" },
+      { id: "profile", label: "My Profile", icon: "user" },
+      { id: "notifications", label: "Notifications", icon: "bell" },
+    ],
+  },
   {
     label: "Core HR", items: [
       { id: "employees", label: "Employees", icon: "users" },
@@ -31,19 +37,24 @@ const NAV = [
     label: "Operations", items: [
       { id: "assets", label: "Assets", icon: "laptop" },
       { id: "helpdesk", label: "Helpdesk", icon: "lifebuoy" },
-      { id: "announcements", label: "Announcements", icon: "megaphone" },
+      { id: "announcements", label: "Announcements & Events", icon: "megaphone" },
     ],
   },
   { label: "Insight", items: [{ id: "reports", label: "Reports", icon: "chart", roles: ["super_admin", "hr_admin", "hr_officer", "payroll", "manager", "auditor"] }] },
-  { label: "System", items: [{ id: "admin", label: "Administration", icon: "settings", roles: ["super_admin"] }] },
+  {
+    label: "System", items: [
+      { id: "settings", label: "Settings", icon: "sliders" },
+      { id: "admin", label: "Administration", icon: "settings", roles: ["super_admin"] },
+    ],
+  },
 ];
 
 const PAGES = {
   dashboard: "Overview", employees: "Employees", organisation: "Organisation", recruitment: "Recruitment",
   onboarding: "Onboarding", documents: "Documents", attendance: "Attendance", leave: "Leave",
   payroll: "Payroll", expenses: "Expenses", performance: "Performance", training: "Training",
-  assets: "Assets", helpdesk: "Helpdesk", announcements: "Announcements", reports: "Reports",
-  admin: "Administration", profile: "My profile", settings: "Preferences",
+  assets: "Assets", helpdesk: "Helpdesk", announcements: "Announcements & Events", reports: "Reports",
+  admin: "Administration", profile: "My Profile", settings: "Settings", notifications: "Notifications",
 };
 
 function currentRole() { return Store.role(); }
@@ -56,7 +67,9 @@ function renderNav() {
     if (!items.length) return "";
     return '<div class="nav-group"><div class="nav-label">' + group.label + '</div>'
       + items.map(i => '<button class="nav-item" data-nav="' + i.id + '">' + icon(i.icon, 17) + '<span>' + i.label + '</span>'
-        + (i.id === "leave" ? '<span class="badge hidden" id="nav-leave-badge"></span>' : "") + '</button>').join("")
+        + (i.id === "leave" ? '<span class="badge hidden" id="nav-leave-badge"></span>' : "")
+        + (i.id === "notifications" ? '<span class="badge hidden" id="nav-notif-badge"></span>' : "")
+        + '</button>').join("")
       + '</div>';
   }).join("");
   nav.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => {
@@ -78,7 +91,8 @@ function parseHash() {
 async function renderRoute() {
   if (!Store.user) return;
   const parts = parseHash();
-  const section = parts[0] || "dashboard";
+  let section = parts[0] || "dashboard";
+  if (section === "approvals") section = "leave";
   const params = parts.slice(1);
   const view = document.getElementById("view");
   if (!PAGES[section]) {
@@ -134,6 +148,7 @@ function showApp() {
   set("dd-role", esc(u.role));
   set("search-icon", icon("search", 15));
   set("bell-icon", icon("bell", 17));
+  set("settings-btn", icon("settings", 17));
   set("menu-btn", icon("menu", 18));
   document.getElementById("logout-btn").innerHTML = icon("logout", 16);
   loadNotifications();
@@ -148,6 +163,11 @@ async function loadNotifications() {
     const badge = document.getElementById("notif-count");
     badge.textContent = count;
     badge.classList.toggle("hidden", count === 0);
+    const navBadge = document.getElementById("nav-notif-badge");
+    if (navBadge) {
+      navBadge.textContent = count;
+      navBadge.classList.toggle("hidden", count === 0);
+    }
     const list = document.getElementById("notif-list");
     list.innerHTML = res.data.length ? res.data.map(n =>
       '<div class="dropdown-item" data-notif="' + n.id + '" data-link="' + esc(n.link || "") + '">'
@@ -156,10 +176,16 @@ async function loadNotifications() {
     ).join("") : '<div class="dropdown-empty">You are all caught up.</div>';
     list.querySelectorAll("[data-notif]").forEach(item => item.onclick = async () => {
       try { await API.post("/notifications/" + item.dataset.notif + "/read"); } catch (e) {}
-      const link = item.dataset.link || "";
+      const rawLink = item.dataset.link || "";
       document.getElementById("notif-dropdown").classList.add("hidden");
       loadNotifications();
-      if (link) go(link.replace(/^\/app\/?/, "").replace(/^\//, "") || "dashboard");
+      if (rawLink) {
+        let dest = rawLink.replace(/^\/app\/?/, "").replace(/^\//, "") || "dashboard";
+        if (dest === "approvals") dest = "leave";
+        go(dest);
+      } else {
+        go("notifications");
+      }
     });
   } catch (e) { /* silent */ }
 }
@@ -172,6 +198,13 @@ function bindChrome() {
     document.getElementById("notif-dropdown").classList.toggle("hidden");
     document.getElementById("user-dropdown").classList.add("hidden");
   };
+  document.querySelectorAll("[data-go-notif]").forEach(el => el.onclick = (e) => {
+    e.stopPropagation();
+    document.getElementById("notif-dropdown").classList.add("hidden");
+    go(el.dataset.goNotif);
+  });
+  const settingsBtn = document.getElementById("settings-btn");
+  if (settingsBtn) settingsBtn.onclick = () => go("settings");
   document.getElementById("mark-all-read").onclick = async (e) => {
     e.stopPropagation();
     try { await API.post("/notifications/read-all"); loadNotifications(); toast("All notifications marked read", "success"); } catch (err) { handleErr(err); }
