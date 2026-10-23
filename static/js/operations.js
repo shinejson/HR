@@ -12,9 +12,8 @@ const opsState = { tab: "dashboard" };
 
 Views.operations = async function (root, params) {
   const sub = params && params[0];
-  if (sub && ["dashboard", "assets", "helpdesk", "announcements", "incidents", "settings"].includes(sub)) {
-    opsState.tab = sub;
-  }
+  const validTabs = ["dashboard", "assets", "helpdesk", "announcements", "incidents", "settings"];
+  opsState.tab = (sub && validTabs.includes(sub)) ? sub : "dashboard";
   root.innerHTML = pageHead("Operations", "Loading operations workspace…") + spinners(4);
   try {
     const [assetRes, assignRes, tktRes, annRes, evRes, empRes] = await Promise.all([
@@ -181,7 +180,12 @@ Views.operations = async function (root, params) {
       + '<div class="tabs" style="margin-bottom:18px">' + tabs.map(t => '<button class="tab ' + (opsState.tab === t[0] ? "active" : "") + '" data-opstab="' + t[0] + '">' + t[1] + '</button>').join("") + '</div>'
       + '<div class="page-enter">' + body + '</div>';
 
-    root.querySelectorAll("[data-opstab]").forEach(b => b.onclick = () => { opsState.tab = b.dataset.opstab; Views.operations(root); });
+    root.querySelectorAll("[data-opstab]").forEach(b => b.onclick = () => {
+      const tab = b.dataset.opstab;
+      opsState.tab = tab;
+      // Keep the URL and the sidebar sub-links in sync with the active tab
+      go(tab === "dashboard" ? "operations" : "operations/" + tab);
+    });
     const at = root.querySelector("#ops-ticket"); if (at) at.onclick = openTicketForm;
     const aa = root.querySelector("#ops-asset"); if (aa) aa.onclick = openAssetForm;
   } catch (e) {

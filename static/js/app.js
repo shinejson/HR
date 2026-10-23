@@ -128,9 +128,13 @@ function renderNav() {
         + visible.map(i => {
             if (i.children) {
               return '<div class="flyout-subhead">' + icon(i.icon || "chevronRight", 14) + '<span>' + esc(i.label) + '</span></div>'
-                + i.children.map(c => '<button class="nav-item flyout-item" data-nav="' + esc(c.id) + '"><span>' + esc(c.label) + '</span></button>').join("");
+                + i.children.map(c => '<button class="nav-item flyout-item flyout-child" data-nav="' + esc(c.id) + '"'
+                  + (c.subTab ? ' data-subtab="' + esc(c.subTab) + '"' : "") + '>'
+                  + icon("dot", 9) + '<span>' + esc(c.label) + '</span></button>').join("");
             }
-            return '<button class="nav-item flyout-item" data-nav="' + esc(i.id) + '">' + icon(i.icon || "circle", 15) + '<span>' + esc(i.label) + '</span>' + itemBadge(i.id) + '</button>';
+            return '<button class="nav-item flyout-item" data-nav="' + esc(i.id) + '"'
+              + (i.subTab ? ' data-subtab="' + esc(i.subTab) + '"' : "") + '>'
+              + icon(i.icon || "circle", 15) + '<span>' + esc(i.label) + '</span>' + itemBadge(i.id) + '</button>';
           }).join("")
         + '</div></div>';
     } else {
@@ -179,6 +183,7 @@ function renderNav() {
   }
 }
 
+<<<<<<< HEAD
 function bindCollapsedFlyouts(navEl) {
   navEl.querySelectorAll(".nav-group-collapsed").forEach(group => {
     const flyout = group.querySelector(".nav-flyout");
@@ -219,8 +224,36 @@ function setActiveNav(section) {
           navExpandedGroups[i.id] = true;
         }
       });
+=======
+function setActiveNav(section, sub) {
+  // A nav entry matches when both the route section and its sub-tab line up, so
+  // "Operations → Assets" and "Operations → Overview" never light up together.
+  const activeSub = sub === undefined ? (parseHash()[1] || null) : (sub || null);
+
+  // Auto-expand every parent subgroup that owns the current route/sub-tab. The nav
+  // has to be re-rendered for that to be visible, so do it before marking entries
+  // active (renderNav rebuilds the buttons from scratch).
+  let expandChanged = false;
+  NAV.forEach(group => {
+    group.items.forEach(i => {
+      if (!i.children) return;
+      const ownsRoute = i.children.some(c => c.id === section && (c.subTab || null) === activeSub);
+      if (ownsRoute && !navExpandedGroups[i.id]) { navExpandedGroups[i.id] = true; expandChanged = true; }
+>>>>>>> 2b353a6073436817261e167a83fea0634df14044
     });
-  }
+  });
+  if (expandChanged && !sidebarCollapsed) renderNav();
+
+  document.querySelectorAll("[data-nav]").forEach(b => {
+    const sameSection = b.dataset.nav === section;
+    const sameSub = (b.dataset.subtab || null) === activeSub;
+    b.classList.toggle("active", sameSection && sameSub);
+  });
+  // Highlight the subgroup heading that contains the open page
+  document.querySelectorAll("[data-subtoggle]").forEach(head => {
+    const sub = head.nextElementSibling;
+    head.classList.toggle("sub-active", !!(sub && sub.querySelector(".nav-sub-item.active")));
+  });
 }
 
 function parseHash() {

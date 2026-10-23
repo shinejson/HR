@@ -19,6 +19,14 @@
   --accent-soft: #f7e9de;
   --teal: #0f766e;
   --teal-soft: #e2f0ed;
+
+  /* Sidebar + navigation flyout surfaces (always a dark shell) */
+  --side-bg: #10201f;
+  --side-elev: #172b29;
+  --side-line: rgba(255, 255, 255, .09);
+  --side-fg: #dfe6e2;
+  --side-fg-dim: rgba(223, 230, 226, .72);
+  --side-fg-faint: rgba(223, 230, 226, .42);
 }
 
 /* Dark Theme */
@@ -39,6 +47,14 @@
   --accent-soft: #2d2318;
   --teal: #14a895;
   --teal-soft: #0f2e2a;
+
+  /* Sidebar + navigation flyout surfaces */
+  --side-bg: #0d1816;
+  --side-elev: #16231f;
+  --side-line: rgba(255, 255, 255, .1);
+  --side-fg: #d4d1c7;
+  --side-fg-dim: rgba(223, 230, 226, .7);
+  --side-fg-faint: rgba(223, 230, 226, .45);
 }
 
 /* Dark theme specific adjustments */
@@ -50,8 +66,8 @@
 }
 
 [data-theme="dark"] .sidebar {
-  background: #0d1816;
-  color: #d4d1c7;
+  background: var(--side-bg);
+  color: var(--side-fg);
 }
 
 [data-theme="dark"] .topbar {
@@ -77,6 +93,22 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, .3);
 }
 
+/* In dark mode --ink becomes a light TEXT colour, so solid "ink" surfaces
+   (buttons, toasts, chips, badges) need their own dark equivalent. */
+[data-theme="dark"] .btn-primary,
+[data-theme="dark"] .toast,
+[data-theme="dark"] .filter-chip.active,
+[data-theme="dark"] .pager button.active,
+[data-theme="dark"] .dt-page-btn.active,
+[data-theme="dark"] .event-date-badge .mon {
+  background: #24332f;
+  border-color: #354542;
+  color: #f2efe6;
+}
+
+[data-theme="dark"] .event-date-badge { background: var(--paper-2); }
+[data-theme="dark"] th.dt-sortable:hover { background: var(--paper-2); }
+
 /* Blue Theme */
 [data-theme="blue"] {
   --ink: #0f1c2e;
@@ -95,6 +127,13 @@
   --accent-soft: #dbeafe;
   --teal: #0891b2;
   --teal-soft: #cffafe;
+
+  --side-bg: #0f1c2e;
+  --side-elev: #17273c;
+  --side-line: rgba(255, 255, 255, .1);
+  --side-fg: #dfe6e2;
+  --side-fg-dim: rgba(223, 230, 226, .72);
+  --side-fg-faint: rgba(223, 230, 226, .42);
 }
 
 /* Green Theme */
@@ -115,6 +154,13 @@
   --accent-soft: #d1fae5;
   --teal: #0f766e;
   --teal-soft: #ccfbf1;
+
+  --side-bg: #0f2e1c;
+  --side-elev: #173a2a;
+  --side-line: rgba(255, 255, 255, .1);
+  --side-fg: #dfe6e2;
+  --side-fg-dim: rgba(223, 230, 226, .72);
+  --side-fg-faint: rgba(223, 230, 226, .42);
 }
 
 /* Purple Theme */
@@ -135,6 +181,13 @@
   --accent-soft: #ede9fe;
   --teal: #7c3aed;
   --teal-soft: #f3e8ff;
+
+  --side-bg: #1e1b2e;
+  --side-elev: #2a2540;
+  --side-line: rgba(255, 255, 255, .1);
+  --side-fg: #dfe6e2;
+  --side-fg-dim: rgba(223, 230, 226, .72);
+  --side-fg-faint: rgba(223, 230, 226, .42);
 }
 
 
