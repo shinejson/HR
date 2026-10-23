@@ -32,6 +32,7 @@ class Role(db.Model, TimestampMixin):
 class User(db.Model, TimestampMixin, SoftDeleteMixin):
     __tablename__ = "users"
     id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, index=True)
     email = db.Column(db.String(180), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     employee_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=True)
@@ -148,9 +149,11 @@ class Employee(db.Model, TimestampMixin, SoftDeleteMixin):
     city = db.Column(db.String(80))
     photo_url = db.Column(db.String(255))
     hire_date = db.Column(db.Date)
+    end_date = db.Column(db.Date)
     confirmation_date = db.Column(db.Date)
     probation_end = db.Column(db.Date)
     contract_type = db.Column(db.String(40), default="permanent")
+    staff_category = db.Column(db.String(60), default="General Staff")
     status = db.Column(db.String(20), default="active")
     department_id = db.Column(db.Integer, db.ForeignKey("departments.id"))
     designation_id = db.Column(db.Integer, db.ForeignKey("designations.id"))
@@ -271,6 +274,33 @@ class Document(db.Model, TimestampMixin):
     notes = db.Column(db.Text)
     expires_at = db.Column(db.Date)
     uploaded_by = db.Column(db.Integer)
+    employee = db.relationship("Employee")
+
+
+class EmploymentLetter(db.Model, TimestampMixin):
+    __tablename__ = "employment_letters"
+    id = db.Column(db.Integer, primary_key=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=False, index=True)
+    reference_no = db.Column(db.String(80), unique=True, nullable=False)
+    category_key = db.Column(db.String(40), default="permanent", nullable=False)
+    staff_category = db.Column(db.String(80))
+    letter_title = db.Column(db.String(180))
+    subject_line = db.Column(db.String(240))
+    issue_date = db.Column(db.Date, default=date.today)
+    effective_date = db.Column(db.Date)
+    end_date = db.Column(db.Date)
+    probation_months = db.Column(db.Integer)
+    working_hours = db.Column(db.String(180))
+    notice_period = db.Column(db.String(120))
+    custom_clauses = db.Column(db.Text)
+    signatory_name = db.Column(db.String(120))
+    signatory_title = db.Column(db.String(120))
+    status = db.Column(db.String(30), default="issued")
+    accepted_at = db.Column(db.DateTime)
+    accepted_signature = db.Column(db.String(180))
+    accepted_ip = db.Column(db.String(64))
+    emailed_at = db.Column(db.DateTime)
+    employee = db.relationship("Employee")
 
 
 class Policy(db.Model, TimestampMixin):
@@ -802,6 +832,7 @@ class NotificationDelivery(db.Model, TimestampMixin):
     recipient = db.Column(db.String(180))
     subject = db.Column(db.String(255))
     body = db.Column(db.Text)
+    html_body = db.Column(db.Text)
     status = db.Column(db.String(20), default="pending")
     error = db.Column(db.Text)
     provider_ref = db.Column(db.String(180))
