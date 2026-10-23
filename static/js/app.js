@@ -1,6 +1,7 @@
 const NAV = [
   {
-    label: "Workspace", items: [
+    label: "Workspace", icon: "home",
+    items: [
       { id: "dashboard", label: "Overview", icon: "dashboard" },
       { id: "approvals", label: "Approvals", icon: "inbox", roles: ["super_admin", "hr_admin", "hr_officer", "manager", "payroll"] },
       { id: "profile", label: "My Profile", icon: "user" },
@@ -8,42 +9,78 @@ const NAV = [
     ],
   },
   {
-    label: "Core HR", items: [
-      { id: "employees", label: "Employees", icon: "users" },
-      { id: "organisation", label: "Organisation", icon: "org" },
+    label: "Core HR", icon: "users",
+    items: [
+      { id: "employees", label: "People directory", icon: "users" },
+      {
+        id: "organisation-group", label: "Organisation", icon: "org",
+        children: [
+          { id: "organisation", label: "Departments & structure" },
+          { id: "organisation?tab=designations", label: "Designations" },
+        ],
+      },
       { id: "recruitment", label: "Recruitment", icon: "briefcase", roles: ["super_admin", "hr_admin", "hr_officer", "recruiter"] },
       { id: "onboarding", label: "Onboarding", icon: "clipboard", roles: ["super_admin", "hr_admin", "hr_officer"] },
       { id: "documents", label: "Documents", icon: "file", roles: ["super_admin", "hr_admin", "hr_officer", "manager", "employee", "auditor"] },
     ],
   },
   {
-    label: "Time & absence", items: [
+    label: "Time & absence", icon: "clock",
+    items: [
       { id: "attendance", label: "Attendance", icon: "clock" },
       { id: "leave", label: "Leave", icon: "calendar" },
     ],
   },
   {
-    label: "Compensation", items: [
+    label: "Compensation", icon: "wallet",
+    items: [
       { id: "payroll", label: "Payroll", icon: "wallet", roles: ["super_admin", "hr_admin", "hr_officer", "payroll", "manager", "employee"] },
       { id: "expenses", label: "Expenses", icon: "receipt", roles: ["super_admin", "hr_admin", "hr_officer", "payroll", "manager", "employee"] },
     ],
   },
   {
-    label: "Talent", items: [
+    label: "Talent", icon: "award",
+    items: [
       { id: "performance", label: "Performance", icon: "target" },
-      { id: "training", label: "Training", icon: "graduation" },
+      { id: "training", label: "Learning & training", icon: "graduation" },
     ],
   },
   {
-    label: "Operations", items: [
-      { id: "assets", label: "Assets", icon: "laptop" },
-      { id: "helpdesk", label: "Helpdesk", icon: "lifebuoy" },
-      { id: "announcements", label: "Announcements & Events", icon: "megaphone" },
+    label: "Operations", icon: "laptop",
+    items: [
+      { id: "operations", label: "Overview", icon: "grid" },
+      {
+        id: "ops-resources", label: "Resources", icon: "laptop",
+        children: [
+          { id: "assets", label: "Assets" },
+          { id: "operations", label: "Ops inventory", subTab: "assets" },
+        ],
+      },
+      {
+        id: "ops-service", label: "Service desk", icon: "lifebuoy",
+        children: [
+          { id: "helpdesk", label: "Helpdesk tickets" },
+          { id: "operations", label: "Ops queue", subTab: "helpdesk" },
+        ],
+      },
+      {
+        id: "ops-comms", label: "Communications", icon: "megaphone",
+        children: [
+          { id: "announcements", label: "Announcements" },
+          { id: "operations", label: "Ops events", subTab: "announcements" },
+        ],
+      },
     ],
   },
-  { label: "Insight", items: [{ id: "reports", label: "Reports", icon: "chart", roles: ["super_admin", "hr_admin", "hr_officer", "payroll", "manager", "auditor"] }] },
   {
-    label: "System", items: [
+    label: "Insight", icon: "chart",
+    items: [
+      { id: "reports", label: "Reports & analytics", icon: "chart", roles: ["super_admin", "hr_admin", "hr_officer", "payroll", "manager", "auditor"] },
+    ],
+  },
+  {
+    label: "System", icon: "sliders",
+    items: [
       { id: "settings", label: "Settings", icon: "sliders" },
       { id: "admin", label: "Administration", icon: "settings", roles: ["super_admin"] },
     ],
@@ -54,34 +91,104 @@ const PAGES = {
   dashboard: "Overview", approvals: "Approvals Inbox", employees: "Employees", organisation: "Organisation", recruitment: "Recruitment",
   onboarding: "Onboarding", documents: "Documents", attendance: "Attendance", leave: "Leave",
   payroll: "Payroll", expenses: "Expenses", performance: "Performance", training: "Training",
-  assets: "Assets", helpdesk: "Helpdesk", announcements: "Announcements & Events", reports: "Reports",
-  admin: "Administration", profile: "My Profile", settings: "Settings", notifications: "Notifications",
+  assets: "Assets", helpdesk: "Helpdesk", announcements: "Announcements & Events", operations: "Operations",
+  reports: "Reports", admin: "Administration", profile: "My Profile", settings: "Settings", notifications: "Notifications",
 };
 
 function currentRole() { return Store.role(); }
 
+function itemVisible(i, role) { return !i.roles || i.roles.includes(role); }
+function itemBadge(id) {
+  if (id === "approvals") return '<span class="badge hidden" id="nav-approvals-badge"></span>';
+  if (id === "notifications") return '<span class="badge hidden" id="nav-notif-badge"></span>';
+  if (id === "leave") return '<span class="badge hidden" id="nav-leave-badge"></span>';
+  return "";
+}
+
+let navExpandedGroups = {};
+let sidebarCollapsed = false;
+try { sidebarCollapsed = localStorage.getItem("hrms_sidebar_collapsed") === "1"; } catch (_) {}
+
 function renderNav() {
   const nav = document.getElementById("nav");
   const role = currentRole();
-  nav.innerHTML = NAV.map(group => {
-    const items = group.items.filter(i => !i.roles || i.roles.includes(role));
-    if (!items.length) return "";
-    return '<div class="nav-group"><div class="nav-label">' + group.label + '</div>'
-      + items.map(i => '<button class="nav-item" data-nav="' + i.id + '">' + icon(i.icon, 17) + '<span>' + i.label + '</span>'
-        + (i.id === "approvals" ? '<span class="badge hidden" id="nav-approvals-badge"></span>' : "")
-        + (i.id === "leave" ? '<span class="badge hidden" id="nav-leave-badge"></span>' : "")
-        + (i.id === "notifications" ? '<span class="badge hidden" id="nav-notif-badge"></span>' : "")
-        + '</button>').join("")
-      + '</div>';
-  }).join("");
+  const collapsed = sidebarCollapsed;
+  document.getElementById("sidebar").classList.toggle("collapsed", collapsed);
+  document.getElementById("main-wrap")?.classList.toggle("sidebar-collapsed", collapsed);
+
+  let html = "";
+  NAV.forEach(group => {
+    const visible = group.items.filter(i => itemVisible(i, role));
+    if (!visible.length) return;
+    if (collapsed) {
+      // collapsed: group shows icon; flyout on hover with items/subgroups
+      html += '<div class="nav-group nav-group-collapsed">'
+        + '<button class="nav-item nav-group-head" title="' + esc(group.label) + '" data-group-icon="' + group.label + '">' + icon(group.icon || "grid", 18) + '</button>'
+        + '<div class="nav-flyout"><div class="flyout-title">' + esc(group.label) + '</div>'
+        + visible.map(i => {
+            if (i.children) {
+              return '<div class="flyout-subhead">' + icon(i.icon || "chevronRight", 14) + '<span>' + esc(i.label) + '</span></div>'
+                + i.children.map(c => '<button class="nav-item flyout-item" data-nav="' + esc(c.id) + '"><span>' + esc(c.label) + '</span></button>').join("");
+            }
+            return '<button class="nav-item flyout-item" data-nav="' + esc(i.id) + '">' + icon(i.icon || "circle", 15) + '<span>' + esc(i.label) + '</span>' + itemBadge(i.id) + '</button>';
+          }).join("")
+        + '</div></div>';
+    } else {
+      html += '<div class="nav-group" data-group="' + esc(group.label) + '"><div class="nav-label">' + esc(group.label) + '</div>'
+        + visible.map(i => {
+            if (i.children) {
+              const gid = "grp-" + i.id;
+              const open = navExpandedGroups[i.id];
+              return '<button class="nav-item nav-subhead" data-subtoggle="' + esc(i.id) + '">'
+                + icon(i.icon || "folder", 17) + '<span>' + esc(i.label) + '</span>'
+                + '<span class="nav-caret">' + icon(open ? "chevronDown" : "chevronRight", 13) + '</span></button>'
+                + '<div class="nav-sub ' + (open ? "open" : "") + '" id="' + gid + '">'
+                + i.children.map(c => '<button class="nav-item nav-sub-item" data-nav="' + esc(c.id) + '"' + (c.subTab ? ' data-subtab="' + esc(c.subTab) + '"' : "") + '><span>' + icon("dot", 10) + '</span><span>' + esc(c.label) + '</span></button>').join("")
+                + '</div>';
+            }
+            return '<button class="nav-item" data-nav="' + esc(i.id) + '">' + icon(i.icon, 17) + '<span>' + esc(i.label) + '</span>' + itemBadge(i.id) + '</button>';
+          }).join("")
+        + '</div>';
+    }
+  });
+  nav.innerHTML = html;
+
   nav.querySelectorAll("[data-nav]").forEach(b => b.onclick = () => {
-    go(b.dataset.nav);
+    const target = b.dataset.subtab ? (b.dataset.nav + "/" + b.dataset.subtab) : b.dataset.nav;
+    go(target);
     document.getElementById("sidebar").classList.remove("open");
   });
+  nav.querySelectorAll("[data-subtoggle]").forEach(b => b.onclick = () => {
+    const key = b.dataset.subtoggle;
+    navExpandedGroups[key] = !navExpandedGroups[key];
+    renderNav();
+  });
+
+  // Collapse toggle
+  const toggle = document.getElementById("sidebar-toggle");
+  if (toggle) {
+    toggle.innerHTML = icon(collapsed ? "chevronsRight" : "chevronsLeft", 16);
+    toggle.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
+    toggle.onclick = () => {
+      sidebarCollapsed = !sidebarCollapsed;
+      try { localStorage.setItem("hrms_sidebar_collapsed", sidebarCollapsed ? "1" : "0"); } catch (_) {}
+      renderNav();
+    };
+  }
 }
 
 function setActiveNav(section) {
   document.querySelectorAll("[data-nav]").forEach(b => b.classList.toggle("active", b.dataset.nav === section));
+  // auto-expand parent subgroup containing section
+  if (!sidebarCollapsed) {
+    NAV.forEach(group => {
+      group.items.forEach(i => {
+        if (i.children && i.children.some(c => c.id === section)) {
+          navExpandedGroups[i.id] = true;
+        }
+      });
+    });
+  }
 }
 
 function parseHash() {
@@ -133,6 +240,56 @@ function logout() {
   });
 }
 
+function applyBrand(brand) {
+  if (!brand) return;
+  if (brand.name) {
+    document.getElementById("brand-name").textContent = brand.name;
+    document.title = brand.name + " — " + (brand.tagline || "People operations");
+    const initial = (brand.name || "M").trim().charAt(0).toUpperCase();
+    const glyphEl = document.getElementById("brand-glyph");
+    if (glyphEl && !brand.logo_url) glyphEl.textContent = initial;
+    const crumbLogo = document.getElementById("crumb-logo");
+    if (crumbLogo && !brand.logo_url) crumbLogo.textContent = initial;
+  }
+  if (brand.tagline) document.getElementById("brand-sub").textContent = brand.tagline;
+  const pillText = document.getElementById("site-pill-text");
+  if (pillText) {
+    const loc = brand.location_name || (brand.city ? brand.city + " HQ" : "Accra HQ");
+    pillText.textContent = (brand.name || "Meridian") + " · " + loc;
+  }
+  if (brand.favicon_url) {
+    const link = document.getElementById("favicon-link");
+    if (link) link.href = brand.favicon_url;
+  }
+  if (brand.logo_url) {
+    const glyph = document.getElementById("brand-glyph");
+    if (glyph) {
+      glyph.innerHTML = '<img src="' + esc(brand.logo_url) + '" alt="logo" style="width:100%;height:100%;object-fit:cover;border-radius:10px">';
+      glyph.style.background = "transparent";
+    }
+    const cl = document.getElementById("crumb-logo");
+    if (cl) {
+      cl.innerHTML = '<img src="' + esc(brand.logo_url) + '" alt="logo" style="width:100%;height:100%;object-fit:cover;border-radius:7px">';
+      cl.style.background = "transparent";
+    }
+  }
+  // Theme color variables
+  const root = document.documentElement;
+  if (brand.theme === "teal") { root.style.setProperty("--accent", "#0f766e"); root.style.setProperty("--accent-dark", "#0c5f59"); root.style.setProperty("--accent-soft", "#e2f0ed"); }
+  else if (brand.theme === "navy") { root.style.setProperty("--accent", "#2c5d8f"); root.style.setProperty("--accent-dark", "#214a73"); root.style.setProperty("--accent-soft", "#e6eef7"); }
+  else if (brand.theme === "plum") { root.style.setProperty("--accent", "#6b4a86"); root.style.setProperty("--accent-dark", "#553a6b"); root.style.setProperty("--accent-soft", "#f0e9f6"); }
+  else if (brand.theme === "emerald") { root.style.setProperty("--accent", "#2f7d5d"); root.style.setProperty("--accent-dark", "#25634a"); root.style.setProperty("--accent-soft", "#e4f2ea"); }
+  else { root.style.setProperty("--accent", "#c2703d"); root.style.setProperty("--accent-dark", "#a85c2d"); root.style.setProperty("--accent-soft", "#f7e9de"); }
+}
+
+async function loadBrand() {
+  try {
+    const res = await fetch("/api/v1/brand");
+    const j = await res.json();
+    if (j && j.data) applyBrand(j.data);
+  } catch (e) { /* silent */ }
+}
+
 function showApp() {
   document.getElementById("login-view").classList.add("hidden");
   document.getElementById("app-view").classList.remove("hidden");
@@ -153,6 +310,8 @@ function showApp() {
   set("settings-btn", icon("settings", 17));
   set("menu-btn", icon("menu", 18));
   document.getElementById("logout-btn").innerHTML = icon("logout", 16);
+  loadBrand();
+  if (Store.meta && Store.meta.company) applyBrand(Store.meta.company);
   loadNotifications();
   renderRoute();
 }

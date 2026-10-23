@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/app.css">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310201f'/%3E%3Ctext x='32' y='44' font-family='Georgia' font-size='34' fill='%23c2703d' text-anchor='middle'%3EM%3C/text%3E%3C/svg%3E">
+  <link id="favicon-link" rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310201f'/%3E%3Ctext x='32' y='44' font-family='Georgia' font-size='34' fill='%23c2703d' text-anchor='middle'%3EM%3C/text%3E%3C/svg%3E">
 </head>
 <body>
 
@@ -93,13 +93,14 @@
 <div id="app-view" class="app-shell hidden">
   <aside class="sidebar" id="sidebar">
     <div class="brand">
-      <div class="glyph">M</div>
-      <div>
-        <div class="name">Meridian HR</div>
-        <div class="sub">People operations</div>
+      <div class="glyph" id="brand-glyph">M</div>
+      <div class="brand-text">
+        <div class="name" id="brand-name">Meridian HR</div>
+        <div class="sub" id="brand-sub">People operations</div>
       </div>
+      <button class="sidebar-toggle" id="sidebar-toggle" title="Collapse sidebar" aria-label="Collapse sidebar"></button>
     </div>
-    <div class="site-pill"><span class="dot"></span> Meridian Ghana Ltd &middot; Accra HQ</div>
+    <div class="site-pill" id="site-pill"><span class="dot"></span> <span id="site-pill-text">Meridian Ghana Ltd · Accra HQ</span></div>
     <nav class="nav-scroll" id="nav"></nav>
     <div class="sidebar-foot">
       <div class="side-user" id="side-user">
@@ -114,10 +115,10 @@
   </aside>
   <div class="sidebar-scrim" id="sidebar-scrim"></div>
 
-  <div class="main">
+  <div class="main" id="main-wrap">
     <header class="topbar">
       <button class="icon-btn menu-btn" id="menu-btn" aria-label="Toggle menu"></button>
-      <div class="crumb"><span>Meridian</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg><b id="crumb-current">Dashboard</b></div>
+      <div class="crumb"><span class="crumb-logo" id="crumb-logo">M</span><span id="crumb-company">Meridian</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg><b id="crumb-current">Dashboard</b></div>
       <div class="spacer"></div>
       <div class="global-search" id="global-search-trigger" title="Quick jump to people, modules & actions (Ctrl+K / ⌘K)">
         <span id="search-icon"></span>
@@ -181,6 +182,7 @@
 <script src="/static/js/views3.js"></script>
 <script src="/static/js/profile.js"></script>
 <script src="/static/js/settings_notifications.js"></script>
+<script src="/static/js/operations.js"></script>
 <script src="/static/js/app.js"></script>
 </body>
 </html>

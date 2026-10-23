@@ -72,6 +72,21 @@ def ensure_schema():
             ("event_id", "INTEGER"),
             ("body", "TEXT"),
         ],
+        "companies": [
+            ("city", "VARCHAR(80) DEFAULT 'Accra'"),
+            ("location_name", "VARCHAR(120) DEFAULT 'Accra HQ'"),
+            ("tagline", "VARCHAR(180) DEFAULT 'People operations'"),
+            ("favicon_url", "TEXT"),
+            ("theme", "VARCHAR(60) DEFAULT 'meridian'"),
+        ],
+        "departments": [
+            ("description", "TEXT"),
+            ("budget", "NUMERIC(15,2) DEFAULT 0"),
+            ("target_headcount", "INTEGER DEFAULT 0"),
+            ("status", "VARCHAR(20) DEFAULT 'active'"),
+            ("email", "VARCHAR(180)"),
+            ("phone", "VARCHAR(40)"),
+        ],
     }
     with db.engine.begin() as conn:
         for table, spec in alterations.items():
@@ -2980,8 +2995,8 @@ def update_company_settings():
     if not comp:
         comp = Company(name=comp_in.get("name") or "Meridian Ghana Ltd")
         db.session.add(comp)
-    for k in ("name", "legal_name", "country", "currency", "timezone", "address",
-              "phone", "email", "tax_id", "logo_url", "website"):
+    for k in ("name", "legal_name", "country", "city", "location_name", "tagline", "currency", "timezone", "address",
+              "phone", "email", "tax_id", "logo_url", "favicon_url", "theme", "website"):
         if k in comp_in:
             setattr(comp, k, comp_in[k])
     group_map = {
@@ -3225,7 +3240,15 @@ def org_chart():
 @app.get("/api/v1/meta")
 @login_required
 def meta():
+    company = Company.query.first()
+    comp_data = {}
+    if company:
+        for fld in ("id", "name", "legal_name", "city", "location_name", "tagline", "country",
+                    "currency", "timezone", "address", "phone", "email", "tax_id",
+                    "logo_url", "favicon_url", "theme", "website"):
+            comp_data[fld] = getattr(company, fld)
     return jsonify({"data": {
+        "company": comp_data,
         "departments": [{"id": d.id, "name": d.name} for d in Department.query.order_by(Department.name)],
         "designations": [{"id": d.id, "title": d.title, "department_id": d.department_id}
                          for d in Designation.query.order_by(Designation.title)],
@@ -3256,6 +3279,23 @@ def index():
 @app.get("/app/<path:path>")
 def spa(path=None):
     return render_template("index.html")
+
+
+@app.get("/api/v1/brand")
+def public_brand():
+    comp = Company.query.first()
+    out = {
+        "name": comp.name if comp else "Meridian HR",
+        "tagline": (comp.tagline if comp else None) or "People operations",
+        "city": (comp.city if comp else None) or "Accra",
+        "location_name": (comp.location_name if comp else None) or "Accra HQ",
+        "logo_url": comp.logo_url if comp else None,
+        "favicon_url": comp.favicon_url if comp else None,
+        "theme": comp.theme if comp else "meridian",
+        "accent": "#c2703d",
+        "teal": "#0f766e",
+    }
+    return jsonify({"data": out})
 
 
 @app.get("/health")
