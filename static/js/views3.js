@@ -769,6 +769,292 @@ Views.reports = async function (root) {
 
 /* ============================================================ ADMIN */
 const adminState = { tab: "users" };
+const ADMIN_PERMISSIONS = ["employees", "org", "leave", "attendance", "payroll", "recruitment", "documents", "reports", "settings", "audit", "ess"];
+const ADMIN_SETTING_GROUPS = ["general", "hr", "attendance", "payroll", "branding", "security", "notifications"];
+
+function reloadAdmin() {
+  const view = document.getElementById("view");
+  if (view) Views.admin(view);
+}
+
+function adminDrawerError(panel, msg) {
+  const box = panel.querySelector(".drawer-form-error");
+  if (!box) return toast(msg, "error");
+  box.textContent = msg;
+  box.classList.remove("hidden");
+}
+
+function drawerErrBox() {
+  return '<div class="form-error hidden drawer-form-error" style="margin-bottom:14px"></div>';
+}
+
+function drawerField(id, label, control, hint, full) {
+  return '<div class="field' + (full ? " full" : "") + '"><label for="' + id + '">' + esc(label) + '</label>'
+    + control + (hint ? '<span class="field-hint">' + esc(hint) + '</span>' : '') + '</div>';
+}
+
+function drawerSelect(id, options, current, placeholder) {
+  return '<select class="select" id="' + id + '">'
+    + (placeholder ? '<option value="">' + esc(placeholder) + '</option>' : '')
+    + (options || []).map(o => {
+        const val = typeof o === "object" ? o.value : o;
+        const lab = typeof o === "object" ? o.label : o;
+        return '<option value="' + esc(val) + '"' + (String(current) === String(val) ? " selected" : "") + '>' + esc(lab) + '</option>';
+      }).join("")
+    + '</select>';
+}
+
+function drawerMetaItem(label, value, raw) {
+  return '<div class="item"><span>' + esc(label) + '</span><b>' + (value === null || value === undefined || value === "" ? "—" : (raw ? value : esc(value))) + '</b></div>';
+}
+
+/* ------------------------------------------------------------ users */
+function openUserDrawer(user) {
+  if (!Store.canAdmin()) return toast("Only Super Admin accounts can manage users", "error");
+  const isEdit = !!user;
+  const roles = (Store.meta && Store.meta.roles) || [];
+  const employees = (Store.meta && Store.meta.employees) || [];
+  const defaultRole = roles.find(r => r.slug === "employee") || roles[0] || null;
+  const empOpts = employees.map(e => ({ value: e.id, label: e.name + (e.employee_no ? " · " + e.employee_no : "") }));
+  const roleOpts = roles.map(r => ({ value: r.id, label: r.name }));
+  const isSelf = isEdit && Store.user && Number(Store.user.id) === Number(user.id);
+
+  const head = isEdit
+    ? '<div class="row" style="gap:12px;align-items:center;min-width:0">'
+      + avatarHTML(user.employee_name || user.email || "User", "avatar-sm")
+      + '<div style="min-width:0"><h3>' + esc(user.employee_name || String(user.email || "User").split("@")[0]) + '</h3>'
+      + '<div class="sub">' + esc(user.email || "") + (user.username ? " · @" + esc(user.username) : "") + '</div></div></div>'
+    : '<div><h3>Add user account</h3><div class="sub">Create a login and link it to an employee record</div></div>';
+
+  const body = drawerErrBox()
+    + '<div class="drawer-section">Account details</div>'
+    + '<div class="drawer-grid">'
+    + drawerField("du-employee", "Linked employee", drawerSelect("du-employee", empOpts, isEdit ? (user.employee_id || "") : "", "No employee link"), "Ties this login to an HR record.", true)
+    + drawerField("du-email", "Login email", '<input class="input" type="email" id="du-email" value="' + esc(isEdit ? user.email : "") + '" placeholder="name@meridian.gh" autocomplete="off">')
+    + drawerField("du-username", "Username", '<input class="input" type="text" id="du-username" value="' + esc(isEdit && user.username ? user.username : "") + '" placeholder="Auto-generated when blank">')
+    + drawerField("du-role", "Role", drawerSelect("du-role", roleOpts, isEdit ? user.role_id : (defaultRole ? defaultRole.id : "")))
+    + drawerField("du-status", "Status", drawerSelect("du-status", [{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }], isEdit ? user.status : "active"))
+    + drawerField("du-password", isEdit ? "Reset password" : "Temporary password",
+      '<input class="input" type="password" id="du-password" autocomplete="new-password" placeholder="' + (isEdit ? "Leave blank to keep current" : "Leave blank to auto-generate") + '">',
+      "Minimum 8 characters. Resetting a password signs the user out everywhere.", true)
+    + '</div>'
+    + (isEdit
+      ? '<div class="drawer-section">Activity</div><div class="drawer-meta">'
+        + drawerMetaItem("Last sign in", user.last_login_at ? fmtDateTime(user.last_login_at) : "Never")
+        + drawerMetaItem("Last IP", user.last_login_ip)
+        + drawerMetaItem("MFA", user.mfa_enabled ? "Enabled" : "Not enabled")
+        + drawerMetaItem("Password reset", user.must_change_password ? "Required" : "Not required")
+        + drawerMetaItem("Created", user.created_at ? fmtDateTime(user.created_at) : null)
+        + drawerMetaItem("Last updated", user.updated_at ? fmtDateTime(user.updated_at) : null)
+        + '</div>'
+        + (isSelf ? '<div class="drawer-note" style="margin-top:14px">' + icon("info", 13) + ' This is your own account — it cannot be deleted or deactivated from here.</div>' : '')
+      : '<div class="drawer-section">What happens next</div><div class="drawer-note">The account is created immediately and the credentials are emailed to the user. Leave the password blank to auto-generate a temporary one.</div>');
+
+  const footer = (isEdit && !isSelf ? '<div class="left"><button class="btn btn-danger" id="du-delete">' + icon("trash", 13) + ' Delete</button></div>' : '')
+    + '<button class="btn btn-ghost" data-close-drawer>Cancel</button>'
+    + '<button class="btn btn-accent" id="du-save">' + (isEdit ? "Save changes" : "Create user") + '</button>';
+
+  openDrawer({
+    wide: true, head: head, body: body, footer: footer,
+    onMount(panel) {
+      const saveBtn = panel.querySelector("#du-save");
+      saveBtn.onclick = async () => {
+        const val = id => (panel.querySelector("#" + id).value || "").trim();
+        const email = val("du-email");
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return adminDrawerError(panel, "Enter a valid email address");
+        if (!val("du-role")) return adminDrawerError(panel, "Choose a role for this account");
+        const pwd = val("du-password");
+        if (pwd && pwd.length < 8) return adminDrawerError(panel, "Password must be at least 8 characters");
+        const payload = {
+          email: email,
+          username: val("du-username") || null,
+          role_id: Number(val("du-role")),
+          status: val("du-status") || "active",
+          employee_id: val("du-employee") ? Number(val("du-employee")) : null,
+        };
+        if (pwd) payload.password = pwd;
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Saving…";
+        try {
+          const res = isEdit ? await API.put("/users/" + user.id, payload) : await API.post("/users", payload);
+          closeDrawer();
+          toast(isEdit ? "User updated" : "User account created", "success");
+          reloadAdmin();
+          const creds = res && res.data && res.data.credentials_dispatch;
+          if (!isEdit && creds && creds.temporary_password && creds.email_sent === false) {
+            toast("Temporary password: " + creds.temporary_password + " (email not delivered)", "error");
+          }
+        } catch (e) { adminDrawerError(panel, e.message); }
+        finally { saveBtn.disabled = false; saveBtn.textContent = isEdit ? "Save changes" : "Create user"; }
+      };
+      const del = panel.querySelector("#du-delete");
+      if (del) del.onclick = () => confirmDialog("Delete user account",
+        "This will revoke access for " + (user.email || "this user") + ". The employee record itself is kept. This action is recorded in the audit log.",
+        async () => {
+          await API.del("/users/" + user.id);
+          closeDrawer(); toast("User deleted", "success"); reloadAdmin();
+        }, { danger: true, confirmLabel: "Delete account" });
+    },
+  });
+}
+
+/* ------------------------------------------------------------ roles */
+function openRoleDrawer(role) {
+  if (!Store.canAdmin()) return toast("Only Super Admin accounts can manage roles", "error");
+  const isEdit = !!role;
+  const allPerms = isEdit && role.permissions === "*";
+  const current = isEdit ? String(role.permissions || "").split(",").map(p => p.trim()).filter(Boolean) : [];
+
+  const head = isEdit
+    ? '<div><h3>Edit role</h3><div class="sub">' + esc(role.name) + (role.is_system ? " · system role" : " · custom role") + '</div></div>'
+    : '<div><h3>Add role</h3><div class="sub">Define a new role and its permissions</div></div>';
+
+  const body = drawerErrBox()
+    + '<div class="drawer-section">Role details</div>'
+    + '<div class="drawer-grid">'
+    + drawerField("dr-name", "Role name", '<input class="input" type="text" id="dr-name" value="' + esc(isEdit ? role.name : "") + '" placeholder="HR Assistant">')
+    + drawerField("dr-slug", "Slug", '<input class="input" type="text" id="dr-slug" value="' + esc(isEdit ? role.slug : "") + '" placeholder="hr_assistant"' + (isEdit && role.is_system ? " readonly" : "") + '>', isEdit && role.is_system ? "System role slugs are locked." : "Lowercase identifier used by the API.")
+    + drawerField("dr-desc", "Description", '<input class="input" type="text" id="dr-desc" value="' + esc(isEdit ? role.description : "") + '" placeholder="What this role is responsible for">', "", true)
+    + '</div>'
+    + '<div class="drawer-section">Permissions</div>'
+    + '<label class="row" style="gap:8px;font-size:12.5px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card)">'
+    + '<input type="checkbox" id="dr-all" ' + (allPerms ? "checked" : "") + '> <b style="font-weight:500">All permissions</b>'
+    + '<span class="tiny muted" style="margin-left:auto">Super Admin</span></label>'
+    + '<div class="drawer-check-grid">'
+    + ADMIN_PERMISSIONS.map(p => '<label class="row" style="gap:7px;font-size:12px"><input type="checkbox" class="dr-perm" value="' + p + '"'
+        + (allPerms || current.includes(p) ? " checked" : "") + (allPerms ? " disabled" : "") + '> ' + p + '</label>').join("")
+    + '</div>'
+    + (isEdit && role.is_system ? '<div class="drawer-note" style="margin-top:14px">' + icon("lock", 13) + ' System roles cannot be deleted. Permissions stay editable.</div>' : '');
+
+  const footer = (isEdit && !role.is_system ? '<div class="left"><button class="btn btn-danger" id="dr-delete">' + icon("trash", 13) + ' Delete</button></div>' : '')
+    + '<button class="btn btn-ghost" data-close-drawer>Cancel</button>'
+    + '<button class="btn btn-accent" id="dr-save">' + (isEdit ? "Save role" : "Create role") + '</button>';
+
+  openDrawer({
+    head: head, body: body, footer: footer,
+    onMount(panel) {
+      const allBox = panel.querySelector("#dr-all");
+      const permBoxes = Array.from(panel.querySelectorAll(".dr-perm"));
+      allBox.onchange = () => {
+        permBoxes.forEach(b => {
+          b.disabled = allBox.checked;
+          if (allBox.checked) b.checked = true;
+        });
+      };
+      panel.querySelector("#dr-save").onclick = async () => {
+        const val = id => (panel.querySelector("#" + id).value || "").trim();
+        const name = val("dr-name");
+        const slug = val("dr-slug");
+        if (!name) return adminDrawerError(panel, "Role name is required");
+        if (!slug) return adminDrawerError(panel, "Role slug is required");
+        const all = allBox.checked;
+        const chosen = permBoxes.filter(b => b.checked).map(b => b.value);
+        if (!all && !chosen.length) return adminDrawerError(panel, "Select at least one permission (or grant all)");
+        const payload = {
+          name: name,
+          slug: slug.toLowerCase().replace(/\s+/g, "_"),
+          description: val("dr-desc"),
+          permissions: all ? "*" : chosen.join(","),
+        };
+        if (!isEdit) payload.is_system = false;
+        const btn = panel.querySelector("#dr-save");
+        btn.disabled = true; btn.textContent = "Saving…";
+        try {
+          if (isEdit) await API.put("/roles/" + role.id, payload);
+          else await API.post("/roles", payload);
+          closeDrawer();
+          toast(isEdit ? "Role updated" : "Role created", "success");
+          await Store.loadMeta();
+          reloadAdmin();
+        } catch (e) { adminDrawerError(panel, e.message); }
+        finally { btn.disabled = false; btn.textContent = isEdit ? "Save role" : "Create role"; }
+      };
+      const del = panel.querySelector("#dr-delete");
+      if (del) del.onclick = () => confirmDialog("Delete role",
+        "Delete the role “" + role.name + "”? Roles still assigned to users cannot be deleted.",
+        async () => {
+          await API.del("/roles/" + role.id);
+          closeDrawer(); toast("Role deleted", "success");
+          await Store.loadMeta(); reloadAdmin();
+        }, { danger: true, confirmLabel: "Delete role" });
+    },
+  });
+}
+
+/* ------------------------------------------------------------ settings */
+function openSettingDrawer(setting) {
+  if (!Store.canAdmin()) return toast("Only Super Admin accounts can manage settings", "error");
+  const isEdit = !!setting;
+  const groups = ADMIN_SETTING_GROUPS.slice();
+  if (isEdit && setting.group_name && !groups.includes(setting.group_name)) groups.push(setting.group_name);
+
+  const head = isEdit
+    ? '<div><h3>Edit setting</h3><div class="sub mono">' + esc(setting.key) + '</div></div>'
+    : '<div><h3>Add setting</h3><div class="sub">Create a configuration value</div></div>';
+
+  const body = drawerErrBox()
+    + '<div class="drawer-section">Configuration</div>'
+    + '<div class="drawer-grid">'
+    + drawerField("ds-key", "Key", '<input class="input mono" type="text" id="ds-key" value="' + esc(isEdit ? setting.key : "") + '" placeholder="company_leave_year">', isEdit ? "Changing a key can affect code that reads it." : "Snake_case identifier.", true)
+    + drawerField("ds-group", "Group", drawerSelect("ds-group", groups, isEdit ? setting.group_name : "general"), "", true)
+    + drawerField("ds-value", "Value", '<textarea class="textarea" id="ds-value" rows="5" placeholder="Setting value">' + esc(isEdit ? (setting.value || "") : "") + '</textarea>', "", true)
+    + '</div>'
+    + '<div class="drawer-note" style="margin-top:14px">' + icon("info", 13) + ' Settings are read by the application at runtime — changes apply on the next page load.</div>';
+
+  const footer = (isEdit ? '<div class="left"><button class="btn btn-danger" id="ds-delete">' + icon("trash", 13) + ' Delete</button></div>' : '')
+    + '<button class="btn btn-ghost" data-close-drawer>Cancel</button>'
+    + '<button class="btn btn-accent" id="ds-save">' + (isEdit ? "Save setting" : "Create setting") + '</button>';
+
+  openDrawer({
+    head: head, body: body, footer: footer,
+    onMount(panel) {
+      panel.querySelector("#ds-save").onclick = async () => {
+        const val = id => panel.querySelector("#" + id).value;
+        const key = (val("ds-key") || "").trim();
+        if (!key) return adminDrawerError(panel, "Setting key is required");
+        const payload = { key: key, value: val("ds-value"), group_name: val("ds-group") || "general" };
+        const btn = panel.querySelector("#ds-save");
+        btn.disabled = true; btn.textContent = "Saving…";
+        try {
+          if (isEdit) await API.put("/settings/" + setting.id, payload);
+          else await API.post("/settings", payload);
+          closeDrawer();
+          toast(isEdit ? "Setting updated" : "Setting created", "success");
+          reloadAdmin();
+        } catch (e) { adminDrawerError(panel, e.message); }
+        finally { btn.disabled = false; btn.textContent = isEdit ? "Save setting" : "Create setting"; }
+      };
+      const del = panel.querySelector("#ds-delete");
+      if (del) del.onclick = () => confirmDialog("Delete setting",
+        "Delete “" + setting.key + "”? Code that reads this setting will fall back to its default.",
+        async () => {
+          await API.del("/settings/" + setting.id);
+          closeDrawer(); toast("Setting deleted", "success"); reloadAdmin();
+        }, { danger: true, confirmLabel: "Delete setting" });
+    },
+  });
+}
+
+/* ------------------------------------------------------------ audit */
+function openAuditDrawer(log) {
+  const head = '<div><h3 style="text-transform:capitalize">' + esc(String(log.event || "event").replace(/_/g, " ")) + '</h3>'
+    + '<div class="sub">' + esc(log.entity || "system") + (log.entity_id ? " #" + log.entity_id : "") + ' · ' + esc(fmtDateTime(log.created_at)) + '</div></div>';
+  const body = '<div class="drawer-section">Entry</div><div class="drawer-meta">'
+    + drawerMetaItem("Timestamp", fmtDateTime(log.created_at))
+    + drawerMetaItem("Actor", log.user_name || "System")
+    + drawerMetaItem("Event", log.event)
+    + drawerMetaItem("Entity", (log.entity || "—") + (log.entity_id ? " #" + log.entity_id : ""))
+    + drawerMetaItem("IP address", log.ip)
+    + drawerMetaItem("Log ID", log.id)
+    + '</div>'
+    + (log.old_values ? '<div class="drawer-section">Before</div><div class="drawer-code">' + esc(log.old_values) + '</div>' : '')
+    + (log.new_values ? '<div class="drawer-section">After</div><div class="drawer-code">' + esc(log.new_values) + '</div>' : '')
+    + '<div class="drawer-section">Integrity</div><div class="drawer-note">' + icon("shield", 13) + ' Audit entries are immutable. They are created automatically and cannot be edited or deleted.</div>';
+  openDrawer({
+    wide: true, head: head, body: body,
+    footer: '<button class="btn btn-ghost" data-close-drawer>Close</button>',
+  });
+}
 
 Views.admin = async function (root) {
   if (!Store.canAdmin()) {
@@ -789,6 +1075,8 @@ Views.admin = async function (root) {
       body = renderTable({
         id: "admin-users-table",
         exportName: "platform-users",
+        searchPlaceholder: "Search users by name, email or username…",
+        onRowClick: r => openUserDrawer(r),
         filters: [
           { key: "role_name", label: "Role" },
           { key: "status", label: "Status" },
@@ -798,26 +1086,53 @@ Views.admin = async function (root) {
           { label: "Role", key: "role_name", render: r => '<span class="pill-tag">' + esc(r.role_name || "—") + '</span>' },
           { label: "Last login", sortKey: "last_login_at", render: r => r.last_login_at ? timeAgo(r.last_login_at) : "Never" },
           { label: "Status", key: "status", render: r => chip(r.status) },
-          { label: "", class: "right", sortable: false, render: r => '<button class="btn btn-sm btn-ghost" data-toggle-user="' + r.id + '" data-status="' + r.status + '">' + (r.status === "active" ? "Deactivate" : "Activate") + '</button>' },
+          {
+            label: "", class: "right", sortable: false, render: r => '<div class="row" style="gap:4px;justify-content:flex-end">'
+              + '<button class="btn btn-sm btn-ghost" data-user-edit="' + r.id + '">' + icon("edit", 12) + ' Edit</button>'
+              + '<button class="btn btn-sm btn-ghost" data-toggle-user="' + r.id + '" data-status="' + esc(r.status) + '">' + (r.status === "active" ? "Deactivate" : "Activate") + '</button></div>'
+          },
         ], rows: users, emptyTitle: "No users",
       });
     } else if (adminState.tab === "roles") {
-      body = '<div class="grid grid-2">' + roles.map(r => '<div class="card card-pad"><div class="row-between"><div><b>' + esc(r.name) + '</b><div class="tiny muted">' + esc(r.description || "") + '</div></div>' + (r.is_system ? '<span class="chip chip-teal">System</span>' : "") + '</div>'
-        + '<div class="divider"></div><div class="row wrap" style="gap:4px">' + (r.permissions === "*" ? '<span class="chip chip-amber">All permissions</span>' : (r.permissions || "ess").split(",").filter(Boolean).map(p => '<span class="pill-tag">' + esc(p) + '</span>').join("")) + '</div>'
-        + '<button class="btn btn-sm btn-ghost" style="margin-top:14px" data-role-edit="' + r.id + '">' + icon("edit", 12) + ' Edit permissions</button></div>').join("") + '</div>';
+      body = renderTable({
+        id: "admin-roles-table",
+        exportName: "roles-and-permissions",
+        searchPlaceholder: "Search roles…",
+        onRowClick: r => openRoleDrawer(r),
+        columns: [
+          { label: "Role", sortKey: "name", render: r => '<div><b>' + esc(r.name) + '</b><div class="tiny muted">' + esc(r.description || "—") + '</div></div>' },
+          { label: "Slug", key: "slug", render: r => '<span class="mono tiny">' + esc(r.slug) + '</span>' },
+          {
+            label: "Permissions", sortable: false, render: r => r.permissions === "*"
+              ? '<span class="chip chip-amber">All permissions</span>'
+              : '<div class="row wrap" style="gap:4px">' + (String(r.permissions || "").split(",").filter(Boolean).map(p => '<span class="pill-tag">' + esc(p) + '</span>').join("") || '<span class="tiny muted">None</span>') + '</div>'
+          },
+          { label: "Type", sortable: false, render: r => r.is_system ? '<span class="chip chip-teal">System</span>' : '<span class="chip chip-grey">Custom</span>' },
+          { label: "", class: "right", sortable: false, render: r => '<button class="btn btn-sm btn-ghost" data-role-edit="' + r.id + '">' + icon("edit", 12) + ' Edit</button>' },
+        ], rows: roles, emptyTitle: "No roles",
+      });
     } else if (adminState.tab === "settings") {
-      const groups = {};
-      settings.forEach(s => { (groups[s.group_name] = groups[s.group_name] || []).push(s); });
-      body = Object.keys(groups).map(g => '<div class="card" style="margin-bottom:14px"><div class="card-head"><h3 style="text-transform:capitalize">' + esc(g) + '</h3></div><div class="card-body"><div class="form-grid">'
-        + groups[g].map(s => '<div class="field"><label>' + esc(s.key.replace(/_/g, " ")) + '</label><input class="input" data-setting="' + s.id + '" value="' + esc(s.value || "") + '"></div>').join("")
-        + '</div></div></div>').join("")
-        + '<button class="btn btn-accent" id="save-settings">' + icon("check", 14) + ' Save all settings</button>';
+      body = renderTable({
+        id: "admin-settings-table",
+        exportName: "platform-settings",
+        searchPlaceholder: "Search settings by key or group…",
+        onRowClick: r => openSettingDrawer(r),
+        filters: [{ key: "group_name", label: "Group" }],
+        columns: [
+          { label: "Key", sortKey: "key", render: r => '<span class="mono" style="font-size:12px">' + esc(r.key) + '</span>' },
+          { label: "Value", sortable: false, render: r => '<span class="small">' + esc(String(r.value || "").length > 90 ? String(r.value).slice(0, 90) + "…" : (r.value || "—")) + '</span>' },
+          { label: "Group", key: "group_name", render: r => '<span class="pill-tag">' + esc(r.group_name || "general") + '</span>' },
+          { label: "", class: "right", sortable: false, render: r => '<button class="btn btn-sm btn-ghost" data-setting-edit="' + r.id + '">' + icon("edit", 12) + ' Edit</button>' },
+        ], rows: settings, emptyTitle: "No settings",
+      });
     } else {
       body = renderTable({
         id: "admin-audit-logs",
         exportName: "security-audit-log",
         dateField: "created_at",
         dateLabel: "Timestamp",
+        searchPlaceholder: "Search the audit trail…",
+        onRowClick: r => openAuditDrawer(r),
         filters: [
           { key: "event", label: "Event" },
           { key: "entity", label: "Entity" },
@@ -833,95 +1148,47 @@ Views.admin = async function (root) {
       });
     }
 
-    root.innerHTML = pageHead("Administration", "Roles, permissions, configuration and a complete audit trail.", '<button class="btn btn-accent" id="admin-add">' + icon("plus", 15) + ' ' + (adminState.tab === "users" ? "Add user" : adminState.tab === "roles" ? "Add role" : "Add setting") + '</button>', "System")
-      + '<div class="tabs" style="margin-bottom:18px">' + tabs.map(t => '<button class="tab ' + (adminState.tab === t[0] ? "active" : "") + '" data-atab="' + t[0] + '">' + t[1] + '</button>').join("") + '</div>'
+    const addLabel = adminState.tab === "users" ? "Add user" : adminState.tab === "roles" ? "Add role" : "Add setting";
+    const addBtn = adminState.tab === "audit" ? "" : '<button class="btn btn-accent" id="admin-add">' + icon("plus", 15) + ' ' + addLabel + '</button>';
+    const hint = adminState.tab === "audit"
+      ? "Audit entries are read-only — click a row to inspect the recorded change."
+      : "Click any row to open it in the side panel for edit and other actions.";
+
+    root.innerHTML = pageHead("Administration", "Roles, permissions, configuration and a complete audit trail.", addBtn, "System")
+      + '<div class="tabs" style="margin-bottom:14px">' + tabs.map(t => '<button class="tab ' + (adminState.tab === t[0] ? "active" : "") + '" data-atab="' + t[0] + '">' + t[1] + '</button>').join("") + '</div>'
+      + '<div class="row tiny muted" style="gap:6px;margin-bottom:12px">' + icon("info", 13) + ' <span>' + esc(hint) + '</span></div>'
       + '<div class="page-enter">' + body + '</div>';
 
     root.querySelectorAll("[data-atab]").forEach(b => b.onclick = () => { adminState.tab = b.dataset.atab; Views.admin(root); });
     const add = root.querySelector("#admin-add");
     if (add) add.onclick = () => {
-      if (adminState.tab === "users") openUserForm();
-      else if (adminState.tab === "roles") openRoleForm();
-      else openSettingForm();
+      if (adminState.tab === "users") openUserDrawer(null);
+      else if (adminState.tab === "roles") openRoleDrawer(null);
+      else openSettingDrawer(null);
     };
-    onDelegate(root, "click", "[data-toggle-user]", async (b) => {
-      try { await API.put("/users/" + b.dataset.toggleUser, { status: b.dataset.status === "active" ? "inactive" : "active" }); toast("User updated", "success"); Views.admin(root); }
-      catch (e) { handleErr(e); }
+    onDelegate(root, "click", "[data-user-edit]", b => {
+      const u = users.find(x => Number(x.id) === Number(b.dataset.userEdit));
+      if (u) openUserDrawer(u);
     });
-    root.querySelectorAll("[data-role-edit]").forEach(b => b.onclick = () => openRoleForm(roles.find(r => r.id === Number(b.dataset.roleEdit))));
-    const save = root.querySelector("#save-settings");
-    if (save) save.onclick = async () => {
+    onDelegate(root, "click", "[data-toggle-user]", async b => {
       try {
-        const inputs = root.querySelectorAll("[data-setting]");
-        for (const input of inputs) await API.put("/settings/" + input.dataset.setting, { value: input.value });
-        toast("Settings saved", "success");
+        await API.put("/users/" + b.dataset.toggleUser, { status: b.dataset.status === "active" ? "inactive" : "active" });
+        toast("User updated", "success");
+        Views.admin(root);
       } catch (e) { handleErr(e); }
-    };
+    });
+    onDelegate(root, "click", "[data-role-edit]", b => {
+      const r = roles.find(x => Number(x.id) === Number(b.dataset.roleEdit));
+      if (r) openRoleDrawer(r);
+    });
+    onDelegate(root, "click", "[data-setting-edit]", b => {
+      const s = settings.find(x => Number(x.id) === Number(b.dataset.settingEdit));
+      if (s) openSettingDrawer(s);
+    });
   } catch (e) {
     root.innerHTML = pageHead("Administration", "Unavailable") + emptyState("Could not load administration", e.message, "alert");
   }
 };
-
-function openUserForm() {
-  formModal({
-    title: "Add user account",
-    sub: "Create a login and link it to an employee record",
-    fields: [
-      { name: "employee_id", label: "Employee", type: "select", options: employeeOptions(), placeholder: "No employee link" },
-      { name: "email", label: "Email", type: "email", required: true },
-      { name: "role_id", label: "Role", type: "select", options: roleOptions(), required: true },
-      { name: "password", label: "Temporary password", type: "password", required: true, hint: "Minimum 8 characters" },
-      { name: "status", label: "Status", type: "select", options: ["active", "inactive"], value: "active" },
-    ],
-    onSubmit: async (data) => {
-      if (!data.employee_id) delete data.employee_id;
-      await API.post("/users", data);
-      navigate();
-    },
-  });
-}
-
-function openRoleForm(existing) {
-  const perms = ["employees", "org", "leave", "attendance", "payroll", "recruitment", "documents", "reports", "settings", "audit", "ess"];
-  const selected = existing && existing.permissions !== "*" ? (existing.permissions || "").split(",") : [];
-  openModal({
-    title: existing ? "Edit role" : "Add role",
-    body: '<div id="role-form-error" class="form-error hidden"></div><div class="form-grid">'
-      + '<div class="field"><label>Role name</label><input class="input" id="role-name" value="' + esc(existing ? existing.name : "") + '"></div>'
-      + '<div class="field"><label>Slug</label><input class="input" id="role-slug" value="' + esc(existing ? existing.slug : "") + '" placeholder="hr_assistant"></div>'
-      + '<div class="field full"><label>Description</label><input class="input" id="role-desc" value="' + esc(existing ? existing.description : "") + '"></div>'
-      + '<div class="field full"><label>Permissions</label><div class="row wrap" style="gap:10px;margin-top:6px">'
-      + perms.map(p => '<label class="row" style="gap:6px;font-size:12px"><input type="checkbox" value="' + p + '" class="role-perm" ' + (selected.includes(p) ? "checked" : "") + '> ' + p + '</label>').join("")
-      + '</div><span class="field-hint">Super Admin implicitly holds every permission.</span></div></div>',
-    footer: '<button class="btn btn-ghost" data-close-modal>Cancel</button><button class="btn btn-accent" id="role-save">Save role</button>',
-    onMount(card) {
-      card.querySelector("#role-save").onclick = async () => {
-        const name = card.querySelector("#role-name").value.trim();
-        const slug = card.querySelector("#role-slug").value.trim();
-        if (!name || !slug) return toast("Name and slug are required", "error");
-        const chosen = Array.from(card.querySelectorAll(".role-perm:checked")).map(i => i.value);
-        const payload = { name, slug, description: card.querySelector("#role-desc").value, permissions: chosen.join(","), is_system: false };
-        try {
-          if (existing) await API.put("/roles/" + existing.id, payload);
-          else await API.post("/roles", payload);
-          closeModal(); toast("Role saved", "success"); await Store.loadMeta(); Views.admin(document.getElementById("view"));
-        } catch (e) { const box = card.querySelector("#role-form-error"); box.textContent = e.message; box.classList.remove("hidden"); }
-      };
-    },
-  });
-}
-
-function openSettingForm() {
-  formModal({
-    title: "Add setting",
-    fields: [
-      { name: "key", label: "Key", required: true },
-      { name: "value", label: "Value" },
-      { name: "group_name", label: "Group", type: "select", options: ["general", "hr", "attendance", "payroll", "branding"], value: "general" },
-    ],
-    onSubmit: async (data) => { await API.post("/settings", data); navigate(); },
-  });
-}
 
 /* ============================================================ PROFILE & SETTINGS */
 Views.profile = async function (root) {
