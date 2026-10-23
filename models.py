@@ -54,6 +54,9 @@ class Company(db.Model, TimestampMixin):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(180), nullable=False)
     legal_name = db.Column(db.String(180))
+    city = db.Column(db.String(80), default="Accra")
+    location_name = db.Column(db.String(120), default="Accra HQ")
+    tagline = db.Column(db.String(180), default="People operations")
     country = db.Column(db.String(80), default="Ghana")
     currency = db.Column(db.String(8), default="GHS")
     timezone = db.Column(db.String(64), default="Africa/Accra")
@@ -61,7 +64,9 @@ class Company(db.Model, TimestampMixin):
     phone = db.Column(db.String(40))
     email = db.Column(db.String(180))
     tax_id = db.Column(db.String(80))
-    logo_url = db.Column(db.String(255))
+    logo_url = db.Column(db.Text)
+    favicon_url = db.Column(db.Text)
+    theme = db.Column(db.String(60), default="meridian")
     website = db.Column(db.String(180))
 
 
@@ -81,14 +86,21 @@ class Branch(db.Model, TimestampMixin):
 class Department(db.Model, TimestampMixin):
     __tablename__ = "departments"
     id = db.Column(db.Integer, primary_key=True)
-    company_id = db.Column(db.Integer, db.ForeignKey("companies.id"), nullable=False)
+    company_id = db.Column(db.Integer, primary_key=False, default=1)
     parent_id = db.Column(db.Integer, db.ForeignKey("departments.id"))
     name = db.Column(db.String(120), nullable=False)
     code = db.Column(db.String(20))
     head_id = db.Column(db.Integer)
     cost_centre = db.Column(db.String(40))
     branch_id = db.Column(db.Integer, db.ForeignKey("branches.id"))
+    description = db.Column(db.Text)
+    budget = db.Column(db.Numeric(15, 2), default=0)
+    target_headcount = db.Column(db.Integer, default=0)
+    status = db.Column(db.String(20), default="active")
+    email = db.Column(db.String(180))
+    phone = db.Column(db.String(40))
     parent = db.relationship("Department", remote_side="Department.id")
+    branch = db.relationship("Branch")
 
 
 class Designation(db.Model, TimestampMixin):

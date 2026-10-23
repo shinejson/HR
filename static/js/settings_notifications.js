@@ -517,19 +517,32 @@ Views.settings = async function (root, params) {
         const p = res.data.platform || {};
 
         stage.innerHTML = '<form id="company-settings-form" class="stack">'
-          + '<div class="card"><div class="card-head"><div><h3>Organisation Profile</h3><div class="sub">Legal identity, headquarters, localization & branding</div></div>'
+          + '<div class="card"><div class="card-head"><div><h3>Basic company information</h3><div class="sub">Name, location and branding used across the portal</div></div>'
           + '<div class="right"><button class="btn btn-accent" type="submit">' + icon("check", 14) + ' Save organisation settings</button></div></div>'
           + '<div class="card-body"><div class="form-grid">'
-          + '<div class="field"><label>Display name</label><input class="input" name="c_name" value="' + esc(c.name || "") + '" required></div>'
+          + '<div class="field"><label>Company display name *</label><input class="input" name="c_name" value="' + esc(c.name || "") + '" required></div>'
+          + '<div class="field"><label>Tagline</label><input class="input" name="c_tagline" value="' + esc(c.tagline || "People operations") + '" placeholder="People operations"></div>'
           + '<div class="field"><label>Registered legal name</label><input class="input" name="c_legal_name" value="' + esc(c.legal_name || "") + '"></div>'
           + '<div class="field"><label>Tax ID / Employer TIN</label><input class="input" name="c_tax_id" value="' + esc(c.tax_id || "") + '"></div>'
+          + '<div class="field"><label>City (HQ)</label><input class="input" name="c_city" value="' + esc(c.city || "Accra") + '" placeholder="Accra"></div>'
+          + '<div class="field"><label>Location label</label><input class="input" name="c_location_name" value="' + esc(c.location_name || "Accra HQ") + '" placeholder="Accra HQ"></div>'
           + '<div class="field"><label>Country</label><input class="input" name="c_country" value="' + esc(c.country || "Ghana") + '"></div>'
           + '<div class="field"><label>Primary currency</label><input class="input" name="c_currency" value="' + esc(c.currency || "GHS") + '"></div>'
           + '<div class="field"><label>Timezone</label><input class="input" name="c_timezone" value="' + esc(c.timezone || "Africa/Accra") + '"></div>'
           + '<div class="field"><label>Official HR email</label><input class="input" type="email" name="c_email" value="' + esc(c.email || "") + '"></div>'
           + '<div class="field"><label>Switchboard phone</label><input class="input" name="c_phone" value="' + esc(c.phone || "") + '"></div>'
           + '<div class="field"><label>Website</label><input class="input" name="c_website" value="' + esc(c.website || "") + '"></div>'
-          + '<div class="field"><label>Headquarters address</label><input class="input" name="c_address" value="' + esc(c.address || "") + '"></div>'
+          + '<div class="field full"><label>Headquarters address</label><input class="input" name="c_address" value="' + esc(c.address || "") + '"></div>'
+          + '</div></div></div>'
+
+          + '<div class="card"><div class="card-head"><div><h3>Branding — logo, favicon & theme</h3><div class="sub">These update the sidebar, topnav and browser tab instantly</div></div></div>'
+          + '<div class="card-body"><div class="form-grid">'
+          + '<div class="field full"><label>Logo URL (displayed in sidebar and topnav)</label><input class="input" name="c_logo_url" value="' + esc(c.logo_url || "") + '" placeholder="https://…/logo.svg or data:image/…"></div>'
+          + '<div class="field full"><label>Favicon URL (browser tab icon)</label><input class="input" name="c_favicon_url" value="' + esc(c.favicon_url || "") + '" placeholder="https://…/favicon.ico or data:image/…"></div>'
+          + '<div class="field"><label>Theme accent</label><select class="select" name="c_theme">'
+          + [["meridian","Meridian (terracotta)"],["teal","Teal"],["navy","Navy blue"],["plum","Plum"],["emerald","Emerald"]].map(([v,l]) => '<option value="' + v + '"' + ((c.theme || "meridian") === v ? " selected" : "") + '>' + l + '</option>').join("")
+          + '</select></div>'
+          + '<div class="field"><div class="tiny muted" style="margin-bottom:6px">Live preview</div><div class="row" style="gap:10px"><div style="width:44px;height:44px;border-radius:10px;background:var(--accent);display:grid;place-items:center;color:#fff;font-family:var(--serif);font-size:20px">' + esc((c.name || "M").charAt(0)) + '</div><div><b style="font-family:var(--serif);font-size:18px">' + esc(c.name || "Meridian HR") + '</b><div class="tiny muted">' + esc(c.tagline || "People operations") + '</div></div></div></div>'
           + '</div></div></div>'
 
           + '<div class="card"><div class="card-head"><div><h3>HR, Attendance & Statutory Payroll Rules</h3><div class="sub">Platform-wide policy parameters applied across modules</div></div></div>'
@@ -550,7 +563,7 @@ Views.settings = async function (root, params) {
           const platform = {};
           Object.keys(fd).forEach(k => {
             if (k.startsWith("c_")) company[k.slice(2)] = fd[k];
-            if (k.startsWith("p_")) platform[k.slice(2)] = fd[k];
+            else if (k.startsWith("p_")) platform[k.slice(2)] = fd[k];
           });
           platform.default_currency = company.currency || "GHS";
           try {

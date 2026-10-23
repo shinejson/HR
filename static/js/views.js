@@ -715,17 +715,27 @@ Views.organisation = async function (root) {
 function openDeptForm(existing) {
   const d = existing || {};
   formModal({
-    title: existing ? "Edit department" : "Add department",
+    title: existing ? "Edit department / unit" : "Add department or sub-unit",
+    sub: existing ? d.name : "Group the organisation into departments, sub-departments and teams",
+    wide: true,
     fields: [
-      { name: "name", label: "Department name", required: true, value: d.name },
-      { name: "code", label: "Code", value: d.code },
-      { name: "branch_id", label: "Branch", type: "select", options: optionsFrom(Store.meta.branches, "name", "id"), value: d.branch_id },
+      { name: "name", label: "Department / Unit name", required: true, value: d.name },
+      { name: "code", label: "Code", value: d.code, placeholder: "OPS / OPS-LOG" },
+      { name: "parent_id", label: "Parent (leave blank for top-level)", type: "select", options: deptOptions().filter(o => !existing || String(o.value) !== String(existing.id)), value: d.parent_id, placeholder: "Top level department" },
+      { name: "branch_id", label: "Branch / Location", type: "select", options: optionsFrom(Store.meta.branches, "name", "id"), value: d.branch_id },
       { name: "head_id", label: "Department head", type: "select", options: employeeOptions(), value: d.head_id, placeholder: "Unassigned" },
-      { name: "cost_centre", label: "Cost centre", value: d.cost_centre },
-      { name: "parent_id", label: "Parent department", type: "select", options: deptOptions(), value: d.parent_id, placeholder: "Top level" },
+      { name: "email", label: "Shared inbox", type: "email", value: d.email, placeholder: "operations@meridian.gh" },
+      { name: "phone", label: "Phone", value: d.phone },
+      { name: "cost_centre", label: "Cost centre", value: d.cost_centre, placeholder: "CC-OPS" },
+      { name: "target_headcount", label: "Target headcount", type: "number", value: d.target_headcount, min: 0 },
+      { name: "budget", label: "Annual budget (GHS)", type: "number", step: "0.01", value: d.budget, min: 0 },
+      { name: "status", label: "Status", type: "select", options: ["active", "inactive", "planned"], value: d.status || "active" },
+      { name: "description", label: "Description / Mandate", type: "textarea", value: d.description, full: true },
     ],
     onSubmit: async (data) => {
       if (!data.head_id) delete data.head_id;
+      if (!data.parent_id) delete data.parent_id;
+      ["target_headcount", "budget"].forEach(k => { if (data[k] === "" || data[k] === null || data[k] === undefined) delete data[k]; });
       data.company_id = 1;
       if (existing) await API.put("/departments/" + existing.id, data);
       else await API.post("/departments", data);
