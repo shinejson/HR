@@ -1603,6 +1603,50 @@ def create_resource(resource):
     return _create(resource, model)
 
 
+def admin_conflict(model, fields, obj=None):
+    """Return a friendly conflict message for administration records (or None)."""
+    if model is User:
+        email = (fields.get("email") or "").strip() if isinstance(fields.get("email"), str) else fields.get("email")
+        if email:
+            q = User.query.filter(func.lower(User.email) == str(email).strip().lower())
+            if obj:
+                q = q.filter(User.id != obj.id)
+            if q.first():
+                return "That email address is already used by another account"
+        username = fields.get("username")
+        if username:
+            q = User.query.filter(func.lower(User.username) == str(username).strip().lower())
+            if obj:
+                q = q.filter(User.id != obj.id)
+            if q.first():
+                return "That username is already taken"
+        if fields.get("employee_id"):
+            q = User.query.filter(User.employee_id == fields["employee_id"], User.deleted_at.is_(None))
+            if obj:
+                q = q.filter(User.id != obj.id)
+            if q.first():
+                return "That employee is already linked to another login"
+    if model is Role:
+        for attr, msg in (("name", "A role with that name already exists"),
+                          ("slug", "A role with that slug already exists")):
+            value = fields.get(attr)
+            if value:
+                q = Role.query.filter(func.lower(getattr(Role, attr)) == str(value).strip().lower())
+                if obj:
+                    q = q.filter(Role.id != obj.id)
+                if q.first():
+                    return msg
+    if model is Setting:
+        key = fields.get("key")
+        if key:
+            q = Setting.query.filter(Setting.key == str(key).strip())
+            if obj:
+                q = q.filter(Setting.id != obj.id)
+            if q.first():
+                return "A setting with that key already exists"
+    return None
+
+
 def _create(resource, model):
     if role_of(request.user) in READ_ONLY:
         return error("Auditor accounts are read-only", 403)
@@ -1613,6 +1657,9 @@ def _create(resource, model):
         fields = writable_fields(model, data)
     except ValueError as e:
         return error(str(e), 422)
+    conflict = admin_conflict(model, fields)
+    if conflict:
+        return error(conflict, 409)
     raw_user_pwd = None
     if model is User:
         raw_user_pwd = (data.get("password") or "").strip() or generate_temp_password()
@@ -1790,6 +1837,19 @@ def update_resource(resource, rid):
         fields = writable_fields(model, data)
     except ValueError as e:
         return error(str(e), 422)
+    conflict = admin_conflict(model, fields, obj)
+    if conflict:
+        return error(conflict, 409)
+    if model is User and obj.id == request.user.id:
+        if fields.get("status") == "inactive":
+            return error("You cannot deactivate your own account", 409)
+        if "role_id" in fields and fields["role_id"] != obj.role_id:
+            return error("You cannot change your own role", 409)
+    if model is Role:
+        if obj.is_system and fields.get("slug") and fields["slug"] != obj.slug:
+            return error("System role slugs cannot be changed", 409)
+        if obj.slug == "super_admin" and "permissions" in fields and fields["permissions"] != "*":
+            return error("The Super Admin role must keep all permissions", 409)
     for k, v in fields.items():
         old[k] = conv(getattr(obj, k))
         setattr(obj, k, v)
@@ -1834,8 +1894,21 @@ def delete_resource(resource, rid):
     if can_self_write(request.user, resource) and not can_write(request.user, resource):
         if getattr(obj, "employee_id", None) != request.user.employee_id:
             return error("You can only delete your own records", 403)
-    if model is User and obj.id == request.user.id:
-        return error("You cannot delete your own account", 409)
+    if model is User:
+        if obj.id == request.user.id:
+            return error("You cannot delete your own account", 409)
+        if obj.role and obj.role.slug == "super_admin":
+            remaining = User.query.join(Role, User.role_id == Role.id).filter(
+                Role.slug == "super_admin", User.deleted_at.is_(None),
+                User.status == "active", User.id != obj.id,
+            ).count()
+            if remaining == 0:
+                return error("At least one active Super Admin account must remain", 409)
+    if model is Role:
+        if obj.is_system:
+            return error("System roles cannot be deleted", 409)
+        if User.query.filter(User.role_id == obj.id, User.deleted_at.is_(None)).first():
+            return error("This role is still assigned to users. Reassign them first.", 409)
     if hasattr(obj, "deleted_at"):
         obj.deleted_at = datetime.utcnow()
         audit(request.user, "soft_delete", resource, obj.id)

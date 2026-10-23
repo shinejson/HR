@@ -241,14 +241,23 @@ function closeDrawer() {
 function openDrawer(opts) {
   const root = document.getElementById("drawer-root");
   const panel = document.getElementById("drawer-panel");
+  panel.className = "drawer-panel" + (opts.wide ? " wide" : "") + (opts.narrow ? " narrow" : "");
   panel.innerHTML = ''
-    + '<div class="drawer-head"><div style="min-width:0;flex:1">' + (opts.head || ('<h3 style="font-family:var(--serif);font-size:22px;font-weight:500">' + esc(opts.title || "") + '</h3>'))
-    + '</div><button class="icon-btn" data-close-drawer aria-label="Close">' + icon("x", 17) + '</button></div>'
+    + '<div class="drawer-head"><div style="min-width:0;flex:1">' + (opts.head || ('<h3 style="font-family:var(--serif);font-size:22px;font-weight:500">' + esc(opts.title || "") + '</h3>'
+      + (opts.sub ? '<div class="sub">' + esc(opts.sub) + '</div>' : '')))
+    + '</div><button class="icon-btn drawer-head-close" data-close-drawer aria-label="Close">' + icon("x", 17) + '</button></div>'
     + '<div class="drawer-body">' + (opts.body || "") + '</div>'
-    + (opts.footer ? '<div class="modal-foot">' + opts.footer + '</div>' : '');
+    + (opts.footer ? '<div class="drawer-foot">' + opts.footer + '</div>' : '');
   root.classList.add("open");
   if (opts.onMount) opts.onMount(panel);
+  return panel;
 }
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const drawer = document.getElementById("drawer-root");
+  if (drawer && drawer.classList.contains("open")) closeDrawer();
+});
 
 document.addEventListener("click", (e) => {
   if (e.target.closest("[data-close-modal]")) closeModal();
