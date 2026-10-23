@@ -1,0 +1,218 @@
+/* Theme System for Meridian HR */
+
+/* Light Theme (Default - Meridian) */
+[data-theme="meridian"],
+:root {
+  --ink: #10201f;
+  --ink-2: #1b3432;
+  --ink-3: #2c4a47;
+  --paper: #f5f3ee;
+  --paper-2: #ece9e1;
+  --card: #fffdf9;
+  --line: #e3ddd1;
+  --line-2: #d6cfc0;
+  --text: #1d2b29;
+  --muted: #6b7773;
+  --muted-2: #8b948f;
+  --accent: #c2703d;
+  --accent-dark: #a85c2d;
+  --accent-soft: #f7e9de;
+  --teal: #0f766e;
+  --teal-soft: #e2f0ed;
+}
+
+/* Dark Theme */
+[data-theme="dark"] {
+  --ink: #f5f3ee;
+  --ink-2: #e8e6df;
+  --ink-3: #d4d1c7;
+  --paper: #0f1514;
+  --paper-2: #1a2220;
+  --card: #1d2b29;
+  --line: #2c3937;
+  --line-2: #3a4845;
+  --text: #e8e6df;
+  --muted: #8b948f;
+  --muted-2: #6b7773;
+  --accent: #e89860;
+  --accent-dark: #d67d40;
+  --accent-soft: #2d2318;
+  --teal: #14a895;
+  --teal-soft: #0f2e2a;
+}
+
+/* Dark theme specific adjustments */
+[data-theme="dark"] .login-brand {
+  background:
+    radial-gradient(900px 500px at 15% -10%, rgba(232, 152, 96, .18), transparent 60%),
+    radial-gradient(700px 500px at 100% 110%, rgba(20, 168, 149, .22), transparent 60%),
+    #0a1312;
+}
+
+[data-theme="dark"] .sidebar {
+  background: #0d1816;
+  color: #d4d1c7;
+}
+
+[data-theme="dark"] .topbar {
+  background: rgba(15, 21, 20, .86);
+  border-bottom-color: var(--line);
+}
+
+[data-theme="dark"] tbody tr:hover {
+  background: rgba(255, 255, 255, .02);
+}
+
+[data-theme="dark"] .modal-backdrop,
+[data-theme="dark"] .drawer-backdrop {
+  background: rgba(0, 0, 0, .65);
+}
+
+[data-theme="dark"] .hero-strip {
+  background: linear-gradient(120deg, #0f1e1c 0%, #162825 55%, #1d332f 100%);
+}
+
+[data-theme="dark"] .kpi-icon,
+[data-theme="dark"] .sidebar .brand .glyph {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .3);
+}
+
+/* Blue Theme */
+[data-theme="blue"] {
+  --ink: #0f1c2e;
+  --ink-2: #1a2840;
+  --ink-3: #2a3f5f;
+  --paper: #f0f4f8;
+  --paper-2: #e3e9f0;
+  --card: #ffffff;
+  --line: #d9e2ec;
+  --line-2: #bcccdc;
+  --text: #1e293b;
+  --muted: #64748b;
+  --muted-2: #94a3b8;
+  --accent: #3b82f6;
+  --accent-dark: #2563eb;
+  --accent-soft: #dbeafe;
+  --teal: #0891b2;
+  --teal-soft: #cffafe;
+}
+
+/* Green Theme */
+[data-theme="green"] {
+  --ink: #0f2e1c;
+  --ink-2: #1a3f2a;
+  --ink-3: #2a5f3f;
+  --paper: #f0f8f4;
+  --paper-2: #e3f0e9;
+  --card: #ffffff;
+  --line: #d9ece2;
+  --line-2: #bcdccc;
+  --text: #1e3b2b;
+  --muted: #547464;
+  --muted-2: #8b9f94;
+  --accent: #10b981;
+  --accent-dark: #059669;
+  --accent-soft: #d1fae5;
+  --teal: #0f766e;
+  --teal-soft: #ccfbf1;
+}
+
+/* Purple Theme */
+[data-theme="purple"] {
+  --ink: #1e1b2e;
+  --ink-2: #2a2640;
+  --ink-3: #3f3a5f;
+  --paper: #f5f3f8;
+  --paper-2: #e9e6f0;
+  --card: #ffffff;
+  --line: #e2d9ec;
+  --line-2: #ccbcdc;
+  --text: #2b1e3b;
+  --muted: #6b6478;
+  --muted-2: #9b94a8;
+  --accent: #8b5cf6;
+  --accent-dark: #7c3aed;
+  --accent-soft: #ede9fe;
+  --teal: #7c3aed;
+  --teal-soft: #f3e8ff;
+}
+
+
+/* Theme Selector Component */
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  cursor: pointer;
+  transition: all .2s;
+  text-align: left;
+  font-family: inherit;
+}
+
+.theme-card:hover {
+  border-color: var(--line-2);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(16, 32, 31, .08);
+}
+
+.theme-card.active {
+  border-color: var(--teal);
+  background: var(--teal-soft);
+}
+
+.theme-preview {
+  width: 100%;
+  height: 60px;
+  border-radius: 8px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+}
+
+.theme-colors {
+  display: flex;
+  gap: 8px;
+}
+
+.color-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .6);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .15);
+}
+
+.theme-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.theme-emoji {
+  font-size: 24px;
+}
+
+.theme-name {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.theme-badge {
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: var(--teal);
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}

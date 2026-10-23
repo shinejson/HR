@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Theme Demo - Meridian HR</title>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <link rel="stylesheet" href="/static/css/themes.css">
+  <style>
+    .demo-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+    .theme-buttons {
+      display: flex;
+      gap: 10px;
+      margin: 30px 0;
+      flex-wrap: wrap;
+    }
+    .demo-section {
+      margin: 30px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="demo-container">
+    <h1 style="font-family: var(--serif); font-size: 48px; margin-bottom: 10px;">Meridian HR Theme System</h1>
+    <p style="color: var(--muted); font-size: 18px; margin-bottom: 30px;">Experience different color themes for your HR management system</p>
+    
+    <div class="card" style="padding: 30px; margin-bottom: 30px;">
+      <h2 style="margin-bottom: 20px;">Choose Your Theme</h2>
+      <div id="theme-selector"></div>
+    </div>
+
+    <div class="demo-section">
+      <h2 style="margin-bottom: 20px;">UI Components Preview</h2>
+      <div class="grid grid-3" style="gap: 20px;">
+        <div class="kpi">
+          <div class="kpi-label">Total Employees</div>
+          <div class="kpi-value">248</div>
+          <div class="kpi-foot">
+            <span class="delta-up">↑ 12%</span>
+            <span class="muted">vs last month</span>
+          </div>
+        </div>
+        
+        <div class="kpi">
+          <div class="kpi-top">
+            <div>
+              <div class="kpi-label">Active Projects</div>
+              <div class="kpi-value">42</div>
+            </div>
+            <div class="kpi-icon teal">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                <rect x="2" y="7" width="20" height="14" rx="2"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        <div class="kpi">
+          <div class="kpi-label">Pending Approvals</div>
+          <div class="kpi-value">18</div>
+          <div class="kpi-foot">
+            <span class="chip chip-amber">Needs attention</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="demo-section">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <h3>Buttons & Actions</h3>
+            <div class="sub">Different button styles across themes</div>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="row" style="gap: 10px; flex-wrap: wrap;">
+            <button class="btn btn-primary">Primary Button</button>
+            <button class="btn btn-accent">Accent Button</button>
+            <button class="btn btn-ghost">Ghost Button</button>
+            <button class="btn btn-soft">Soft Button</button>
+            <button class="btn btn-danger">Danger Button</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="demo-section">
+      <div class="card">
+        <div class="card-head">
+          <h3>Status Chips</h3>
+        </div>
+        <div class="card-body">
+          <div class="row" style="gap: 8px; flex-wrap: wrap;">
+            <span class="chip chip-green">Active</span>
+            <span class="chip chip-amber">Pending</span>
+            <span class="chip chip-red">Rejected</span>
+            <span class="chip chip-blue">In Progress</span>
+            <span class="chip chip-purple">Scheduled</span>
+            <span class="chip chip-teal">Approved</span>
+            <span class="chip chip-grey">Inactive</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="demo-section">
+      <div class="card">
+        <div class="card-head">
+          <h3>Sample Data Table</h3>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Employee</th>
+                <th>Department</th>
+                <th>Status</th>
+                <th>Salary</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <div class="person">
+                    <div class="avatar" style="background: var(--teal);">AM</div>
+                    <div>
+                      <b>Ama Mensah</b>
+                      <span>CEO</span>
+                    </div>
+                  </div>
+                </td>
+                <td>Executive</td>
+                <td><span class="chip chip-green">Active</span></td>
+                <td>GHS 25,000.00</td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="person">
+                    <div class="avatar" style="background: var(--accent);">KB</div>
+                    <div>
+                      <b>Kwame Boateng</b>
+                      <span>HR Director</span>
+                    </div>
+                  </div>
+                </td>
+                <td>Human Resources</td>
+                <td><span class="chip chip-green">Active</span></td>
+                <td>GHS 18,000.00</td>
+              </tr>
+              <tr>
+                <td>
+                  <div class="person">
+                    <div class="avatar" style="background: var(--blue);">AS</div>
+                    <div>
+                      <b>Abena Sarpong</b>
+                      <span>Software Engineer</span>
+                    </div>
+                  </div>
+                </td>
+                <td>Engineering</td>
+                <td><span class="chip chip-green">Active</span></td>
+                <td>GHS 6,800.00</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/theme.js"></script>
+  <script>
+    // Render theme selector
+    document.getElementById('theme-selector').innerHTML = window.ThemeManager.renderSelector();
+    
+    // Add click handler
+    document.addEventListener('click', function(e) {
+      const themeCard = e.target.closest('.theme-card');
+      if (themeCard) {
+        const theme = themeCard.dataset.theme;
+        window.ThemeManager.set(theme);
+        // Re-render to show active state
+        document.getElementById('theme-selector').innerHTML = window.ThemeManager.renderSelector();
+      }
+    });
+  </script>
+</body>
+</html>

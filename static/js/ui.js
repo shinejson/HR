@@ -476,3 +476,27 @@ function branchOptions() { return optionsFrom((Store.meta && Store.meta.branches
 function spinners(n) {
   return '<div class="loading-block">' + Array.from({ length: n || 3 }).map(() => '<div class="skeleton" style="height:42px"></div>').join("") + '</div>';
 }
+
+
+// Theme Management
+function initTheme() {
+  const savedTheme = localStorage.getItem('hrms-theme') || 'meridian';
+  document.documentElement.setAttribute('data-theme', savedTheme);
+}
+
+function setTheme(themeName) {
+  document.documentElement.setAttribute('data-theme', themeName);
+  localStorage.setItem('hrms-theme', themeName);
+  toast(`Theme changed to ${themeName}`, 'success');
+}
+
+function getCurrentTheme() {
+  return document.documentElement.getAttribute('data-theme') || 'meridian';
+}
+
+// Initialize theme on load
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initTheme);
+} else {
+  initTheme();
+}
