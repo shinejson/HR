@@ -3082,6 +3082,7 @@ def serialize_event(ev, current_emp_id=None):
 
 
 @app.get("/api/v1/events")
+@app.get("/api/v1/company-events")
 @login_required
 def list_company_events():
     rows = CompanyEvent.query.order_by(CompanyEvent.start_at.asc()).all()

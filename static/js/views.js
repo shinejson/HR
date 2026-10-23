@@ -45,7 +45,7 @@ Views.dashboard = async function (root) {
     const [dashRes, repRes, evtRes] = await Promise.all([
       API.get("/dashboard"),
       API.get("/reports/overview"),
-      API.get("/company-events").catch(() => ({ data: [] })),
+      API.get("/events").catch(() => ({ data: [] })),
     ]);
     const d = dashRes.data, r = repRes.data;
     const events = (evtRes.data || []).filter(e => e.status !== "cancelled").slice(0, 3);
@@ -582,7 +582,13 @@ function openStatusForm(e) {
 /* ============================================================ ORGANISATION */
 const orgTab = { tab: "departments", chartQuery: "" };
 
-Views.organisation = async function (root) {
+Views.organisation = async function (root, params) {
+  if (params && params[0]) {
+    orgTab.tab = params[0];
+  } else {
+    const tabMatch = location.hash.match(/[?&]tab=([^&]+)/);
+    if (tabMatch) orgTab.tab = tabMatch[1];
+  }
   root.innerHTML = pageHead("Organisation", "Loading structure…") + spinners(3);
   try {
     const [deptRes, desRes, gradeRes, chartRes, empRes, branchRes] = await Promise.all([

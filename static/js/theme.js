@@ -85,10 +85,11 @@
     return Object.entries(THEMES).map(([key, theme]) => {
       const sw = THEME_SWATCHES[key] || THEME_SWATCHES.meridian;
       const active = currentTheme === key;
-      return '<button type="button" class="dropdown-item theme-menu-item' + (active ? ' active' : '') + '" data-theme-pick="' + key + '">'
-        + '<span class="theme-menu-swatch" style="background:' + sw.accent + '"></span>'
-        + '<span>' + theme.name + '</span>'
-        + (active ? '<span class="chip teal" style="margin-left:auto;font-size:10px">Active</span>' : '')
+      const checkIcon = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="margin-right:2px"><polyline points="20 6 9 17 4 12"/></svg>';
+      return '<button type="button" class="theme-menu-item' + (active ? ' active' : '') + '" data-theme-pick="' + key + '" role="menuitem" aria-checked="' + active + '">'
+        + '<span class="theme-menu-swatch" style="background:' + sw.accent + '" aria-hidden="true"></span>'
+        + '<span class="theme-menu-name">' + theme.name + '</span>'
+        + (active ? '<span class="theme-menu-check">' + checkIcon + 'Active</span>' : '')
         + '</button>';
     }).join('');
   }

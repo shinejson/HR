@@ -15,8 +15,8 @@ const NAV = [
       {
         id: "organisation-group", label: "Organisation", icon: "org",
         children: [
-          { id: "organisation", label: "Departments & structure" },
-          { id: "organisation?tab=designations", label: "Designations" },
+          { id: "organisation", label: "Departments & structure", subTab: "departments" },
+          { id: "organisation", label: "Designations", subTab: "designations" },
         ],
       },
       { id: "recruitment", label: "Recruitment", icon: "briefcase", roles: ["super_admin", "hr_admin", "hr_officer", "recruiter"] },
@@ -183,7 +183,6 @@ function renderNav() {
   }
 }
 
-<<<<<<< HEAD
 function bindCollapsedFlyouts(navEl) {
   navEl.querySelectorAll(".nav-group-collapsed").forEach(group => {
     const flyout = group.querySelector(".nav-flyout");
@@ -214,17 +213,6 @@ function bindCollapsedFlyouts(navEl) {
   });
 }
 
-function setActiveNav(section) {
-  document.querySelectorAll("[data-nav]").forEach(b => b.classList.toggle("active", b.dataset.nav === section));
-  // auto-expand parent subgroup containing section
-  if (!sidebarCollapsed) {
-    NAV.forEach(group => {
-      group.items.forEach(i => {
-        if (i.children && i.children.some(c => c.id === section)) {
-          navExpandedGroups[i.id] = true;
-        }
-      });
-=======
 function setActiveNav(section, sub) {
   // A nav entry matches when both the route section and its sub-tab line up, so
   // "Operations → Assets" and "Operations → Overview" never light up together.
@@ -239,7 +227,6 @@ function setActiveNav(section, sub) {
       if (!i.children) return;
       const ownsRoute = i.children.some(c => c.id === section && (c.subTab || null) === activeSub);
       if (ownsRoute && !navExpandedGroups[i.id]) { navExpandedGroups[i.id] = true; expandChanged = true; }
->>>>>>> 2b353a6073436817261e167a83fea0634df14044
     });
   });
   if (expandChanged && !sidebarCollapsed) renderNav();
@@ -257,9 +244,15 @@ function setActiveNav(section, sub) {
 }
 
 function parseHash() {
-  const h = location.hash.replace(/^#\/?/, "");
-  if (!h) return ["dashboard"];
-  return h.split("/").filter(Boolean);
+  const raw = location.hash.replace(/^#\/?/, "");
+  if (!raw) return ["dashboard"];
+  const [clean, query] = raw.split("?");
+  const parts = clean.split("/").filter(Boolean);
+  if (query && parts.length === 1) {
+    const qMatch = query.match(/tab=([^&]+)/);
+    if (qMatch) parts.push(qMatch[1]);
+  }
+  return parts.length ? parts : ["dashboard"];
 }
 
 async function renderRoute() {
@@ -519,7 +512,7 @@ function bindLogin() {
     try {
       Store.user = await API.login(email, password);
       await Store.loadMeta();
-      history.replaceState(null, "", location.pathname);
+      if (!location.hash || location.hash === '#/' || location.hash === '#') location.hash = '#/dashboard';
       showApp();
     } catch (err) {
       errorBox.textContent = err.message;

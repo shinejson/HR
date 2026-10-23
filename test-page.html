@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CSS Test Page</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <link rel="stylesheet" href="/static/css/themes.css">
+</head>
+<body>
+  <div style="padding: 40px;">
+    <h1 style="color: var(--text); background: var(--card); padding: 20px; border: 1px solid var(--line);">
+      CSS Test Page
+    </h1>
+    <div style="margin-top: 20px; padding: 20px; background: var(--card); border: 1px solid var(--line); border-radius: 12px;">
+      <p style="color: var(--text);">If you can read this text clearly, the CSS is loading correctly.</p>
+      <p style="color: var(--muted); margin-top: 10px;">Background should be: <span style="background: var(--paper); padding: 2px 8px; border: 1px solid var(--line);">Light beige</span></p>
+      <p style="color: var(--muted); margin-top: 10px;">This card background: <span style="background: var(--card); padding: 2px 8px; border: 1px solid var(--line);">Off-white</span></p>
+      
+      <div style="margin-top: 20px;">
+        <h2>CSS Variables Test:</h2>
+        <ul style="list-style: none; padding: 0;">
+          <li style="margin: 5px 0;">--paper: <span style="background: var(--paper); padding: 2px 8px; border: 1px solid var(--line);">████</span></li>
+          <li style="margin: 5px 0;">--card: <span style="background: var(--card); padding: 2px 8px; border: 1px solid var(--line);">████</span></li>
+          <li style="margin: 5px 0;">--text: <span style="color: var(--text); font-weight: bold;">Sample Text</span></li>
+          <li style="margin: 5px 0;">--accent: <span style="background: var(--accent); color: white; padding: 2px 8px;">████</span></li>
+          <li style="margin: 5px 0;">--teal: <span style="background: var(--teal); color: white; padding: 2px 8px;">████</span></li>
+        </ul>
+      </div>
+
+      <div style="margin-top: 20px;">
+        <h3>Current Theme:</h3>
+        <p id="current-theme" style="font-weight: bold; color: var(--accent);">Loading...</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/theme.js"></script>
+  <script>
+    document.getElementById('current-theme').textContent = 
+      'Theme: ' + (document.documentElement.getAttribute('data-theme') || 'none set') + 
+      ' (from localStorage: ' + (localStorage.getItem('hrms-theme') || 'none') + ')';
+    
+    // Log CSS variables to console
+    const style = getComputedStyle(document.documentElement);
+    console.log('CSS Variables:');
+    console.log('--paper:', style.getPropertyValue('--paper'));
+    console.log('--card:', style.getPropertyValue('--card'));
+    console.log('--text:', style.getPropertyValue('--text'));
+    console.log('--ink:', style.getPropertyValue('--ink'));
+    console.log('data-theme attribute:', document.documentElement.getAttribute('data-theme'));
+  </script>
+</body>
+</html>
