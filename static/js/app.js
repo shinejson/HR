@@ -12,6 +12,7 @@ const NAV = [
     label: "Core HR", icon: "users",
     items: [
       { id: "employees", label: "People directory", icon: "users" },
+      { id: "employment-letters", label: "Employment letters", icon: "file" },
       {
         id: "organisation-group", label: "Organisation", icon: "org",
         children: [
@@ -88,7 +89,8 @@ const NAV = [
 ];
 
 const PAGES = {
-  dashboard: "Overview", approvals: "Approvals Inbox", employees: "Employees", organisation: "Organisation", recruitment: "Recruitment",
+  dashboard: "Overview", approvals: "Approvals Inbox", employees: "Employees",
+  "employment-letters": "Employment Letters", organisation: "Organisation", recruitment: "Recruitment",
   onboarding: "Onboarding", documents: "Documents", attendance: "Attendance", leave: "Leave",
   payroll: "Payroll", expenses: "Expenses", performance: "Performance", training: "Training",
   assets: "Assets", helpdesk: "Helpdesk", announcements: "Announcements & Events", operations: "Operations",

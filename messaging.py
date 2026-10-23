@@ -19,6 +19,10 @@ from email.utils import formataddr
 from models import Setting
 
 EVENT_CATALOG = [
+    {"key": "account_credentials", "label": "Portal login credentials", "category": "Onboarding",
+     "description": "Welcome email with username, temporary password and sign-in link sent to employees."},
+    {"key": "employment_letter", "label": "Employment letter issued", "category": "Onboarding",
+     "description": "Official appointment or contract letter issued for an employee's category."},
     {"key": "leave_submitted", "label": "Leave submitted", "category": "Leave",
      "description": "An employee submits a leave request for approval."},
     {"key": "leave_decision", "label": "Leave decision", "category": "Leave",
@@ -46,6 +50,8 @@ EVENT_CATALOG = [
 EVENT_MAP = {e["key"]: e for e in EVENT_CATALOG}
 
 DEFAULT_ROUTING = {
+    "account_credentials": {"in_app": True, "email": True, "sms": True},
+    "employment_letter": {"in_app": True, "email": True, "sms": False},
     "leave_submitted": {"in_app": True, "email": True, "sms": False},
     "leave_decision": {"in_app": True, "email": True, "sms": True},
     "expense_submitted": {"in_app": True, "email": True, "sms": False},
@@ -373,41 +379,74 @@ def send_sms(to_number, body):
         return {"ok": False, "status": "failed", "error": str(exc)[:500]}
 
 
-def html_email(title, body, link=None, meta_rows=None, badge=None):
-    safe_body = (body or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+def _esc_html(val):
+    return (
+        str(val or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _brand_info():
+    try:
+        from models import Company
+        comp = Company.query.first()
+    except Exception:
+        comp = None
+    name = (comp.name if comp and comp.name else "Meridian HR").strip()
+    legal = (comp.legal_name if comp and comp.legal_name else "").strip()
+    tagline = (comp.tagline if comp and comp.tagline else "People Operations").strip()
+    address = (comp.address if comp and comp.address else "").strip()
+    return {
+        "name": name,
+        "display": f"{name} — {legal}" if legal and legal.lower() != name.lower() else name,
+        "tagline": tagline.upper(),
+        "address": address,
+    }
+
+
+def html_email(title, body, link=None, meta_rows=None, badge=None, action_label=None, extra_html=""):
+    brand = _brand_info()
+    safe_body = _esc_html(body or "").replace("\n", "<br>")
     badge_html = ""
     if badge:
         badge_html = (
             f'<div style="display:inline-block;background:#f7e9de;color:#a85c2d;font-size:11px;'
             f'font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:4px 10px;'
-            f'border-radius:6px;margin-bottom:10px">{badge}</div>'
+            f'border-radius:6px;margin-bottom:10px">{_esc_html(badge)}</div>'
         )
     meta_html = ""
     if meta_rows:
         rows = "".join(
-            f'<tr><td style="padding:6px 12px 6px 0;color:#6b7773;font-size:12.5px;white-space:nowrap">{k}</td>'
-            f'<td style="padding:6px 0;color:#1d2b29;font-size:12.5px;font-weight:600">{v}</td></tr>'
+            f'<tr><td style="padding:7px 14px 7px 0;color:#6b7773;font-size:12.5px;white-space:nowrap;'
+            f'border-bottom:1px solid #efeae0;vertical-align:top">{_esc_html(k)}</td>'
+            f'<td style="padding:7px 0;color:#1d2b29;font-size:13px;font-weight:600;'
+            f'border-bottom:1px solid #efeae0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace">{_esc_html(v)}</td></tr>'
             for k, v in meta_rows if v
         )
         if rows:
             meta_html = (
-                '<div style="margin:18px 0;padding:14px 16px;background:#faf8f3;border:1px solid #e6e0d5;'
+                '<div style="margin:18px 0;padding:14px 18px;background:#faf8f3;border:1px solid #e6e0d5;'
                 f'border-radius:10px"><table style="border-collapse:collapse;width:100%">{rows}</table></div>'
             )
     action = ""
     if link:
+        btn_text = _esc_html(action_label or f"Open {_esc_html(brand['name'])} Portal")
         action = (
-            f'<p style="margin-top:24px"><a href="{link}" style="display:inline-block;background:#c2703d;'
-            'color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600">'
-            'Open in Meridian HR</a></p>'
+            f'<p style="margin-top:24px"><a href="{_esc_html(link)}" style="display:inline-block;background:#c2703d;'
+            f'color:#fff;padding:11px 20px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600">'
+            f'{btn_text}</a></p>'
         )
+    addr_line = f" &middot; {_esc_html(brand['address'])}" if brand["address"] else ""
     return (
         '<div style="font-family:Inter,Arial,sans-serif;background:#f5f3ee;padding:28px">'
-        '<div style="max-width:560px;margin:auto;background:#fff;border:1px solid #e6e0d5;border-radius:14px;overflow:hidden">'
-        '<div style="background:#14312e;color:#fff;padding:20px 26px"><b style="font-size:17px">Meridian HR</b>'
-        '<div style="font-size:11px;color:#b9cbc4;letter-spacing:.12em;margin-top:3px">PEOPLE OPERATIONS</div></div>'
-        f'<div style="padding:26px">{badge_html}<h2 style="font-size:20px;color:#1f2a27;margin:0 0 12px">{title}</h2>'
-        f'<div style="font-size:14px;line-height:1.7;color:#56615d">{safe_body}</div>{meta_html}{action}</div>'
+        '<div style="max-width:600px;margin:auto;background:#fff;border:1px solid #e6e0d5;border-radius:14px;overflow:hidden">'
+        f'<div style="background:#14312e;color:#fff;padding:20px 26px"><b style="font-size:17px">{_esc_html(brand["display"])}</b>'
+        f'<div style="font-size:11px;color:#b9cbc4;letter-spacing:.12em;margin-top:3px">{_esc_html(brand["tagline"])}</div></div>'
+        f'<div style="padding:26px">{badge_html}<h2 style="font-size:20px;color:#1f2a27;margin:0 0 12px">{_esc_html(title)}</h2>'
+        f'<div style="font-size:14px;line-height:1.7;color:#56615d">{safe_body}</div>{meta_html}{extra_html}{action}</div>'
         '<div style="padding:16px 26px;border-top:1px solid #eee8dd;color:#8a918d;font-size:11px">'
-        'This message was sent by the Meridian HR system. Manage your channel preferences in Settings &rarr; Notifications.</div></div></div>'
+        f'Sent by {_esc_html(brand["display"])}{addr_line}. Keep any login credentials confidential.</div></div></div>'
     )

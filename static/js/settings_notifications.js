@@ -921,22 +921,35 @@ Views.settings = async function (root, params) {
 
           // EMAIL GATEWAY CARD
           + '<div class="card">'
-          + '  <div class="card-head"><div><h3>Email Gateway (SMTP / Sandbox)</h3><div class="sub">Configure HTML email delivery for announcements, event invitations & HR workflows</div></div>'
+          + '  <div class="card-head"><div><h3>Email Gateway (SMTP / Sandbox)</h3><div class="sub">Configure live email delivery for employee login credentials, employment letters, announcements & alerts</div></div>'
           + '    <div class="right">' + switchHTML('name="email_enabled" id="cfg-email-enabled"', cfg.email_enabled === "1", "Enable Email") + '</div>'
           + '  </div>'
           + '  <div class="card-body stack">'
+          + '    <div class="callout-banner ' + ((cfg.email_mode || "sandbox") === "smtp" ? "green" : "amber") + '" style="flex-wrap:wrap">'
+          + '      <div><b>' + ((cfg.email_mode || "sandbox") === "smtp" ? "Live SMTP Mode Enabled" : "Sandbox Simulation Mode Active") + ':</b> '
+          +        ((cfg.email_mode || "sandbox") === "smtp"
+                     ? "Employee credentials and employment letters are delivered directly via your configured SMTP mail server."
+                     : "Emails are safely logged inside Meridian HR. Click a quick provider preset below and enter your SMTP / Gmail App Password to send real emails to external addresses (e.g. @gmail.com).")
+          + '      </div>'
+          + '      <div class="row" style="gap:6px;flex-wrap:wrap">'
+          + '        <button class="btn btn-sm btn-soft" type="button" data-smtp-preset="gmail">Gmail Preset</button>'
+          + '        <button class="btn btn-sm btn-soft" type="button" data-smtp-preset="m365">Microsoft 365</button>'
+          + '        <button class="btn btn-sm btn-soft" type="button" data-smtp-preset="domain">Custom Domain SSL</button>'
+          + '      </div>'
+          + '    </div>'
           + '    <div class="form-grid">'
           + '      <div class="field"><label>Email Delivery Mode</label><select class="select" name="email_mode" id="cfg-email-mode">'
           + '        <option value="sandbox"' + ((cfg.email_mode || "sandbox") === "sandbox" ? " selected" : "") + '>Sandbox / Simulated (Safe offline logging)</option>'
-          + '        <option value="smtp"' + (cfg.email_mode === "smtp" ? " selected" : "") + '>Live SMTP Server</option>'
+          + '        <option value="smtp"' + (cfg.email_mode === "smtp" ? " selected" : "") + '>Live SMTP Server (Send real emails to inboxes)</option>'
           + '      </select></div>'
-          + '      <div class="field"><label>Subject Prefix</label><input class="input" name="email_subject_prefix" value="' + esc(cfg.email_subject_prefix || "[Meridian HR]") + '" placeholder="[Meridian HR]"></div>'
+          + '      <div class="field"><label>Subject Prefix</label><input class="input" name="email_subject_prefix" value="' + esc(cfg.email_subject_prefix || "[Meridian HR]") + '" placeholder="[AWH HR]"></div>'
           + '      <div class="field"><label>Sender Display Name</label><input class="input" name="smtp_from_name" value="' + esc(cfg.smtp_from_name || "Meridian HR") + '"></div>'
           + '      <div class="field"><label>Sender Email Address</label><input class="input" type="email" name="smtp_from_email" value="' + esc(cfg.smtp_from_email || "notifications@meridian.gh") + '"></div>'
-          + '      <div class="field full"><label>Reply-To Address (optional)</label><input class="input" type="email" name="smtp_reply_to" value="' + esc(cfg.smtp_reply_to || "") + '" placeholder="hr@meridian.gh"></div>'
+          + '      <div class="field full"><label>Reply-To Address (optional)</label><input class="input" type="email" name="smtp_reply_to" value="' + esc(cfg.smtp_reply_to || "") + '" placeholder="hr@company.com"></div>'
           + '    </div>'
           + '    <div id="smtp-fields-wrap" class="channel-box ' + ((cfg.email_mode || "sandbox") === "smtp" ? "" : "hidden") + '">'
-          + '      <div class="section-title" style="margin-bottom:10px">SMTP Server Credentials</div>'
+          + '      <div class="section-title" style="margin-bottom:6px">SMTP Server Credentials</div>'
+          + '      <div class="tiny muted" style="margin-bottom:12px"><b>Using Gmail?</b> Turn on 2-Step Verification on your Google Account → search <b>App passwords</b> → generate a 16-character App Password, then enter your Gmail address in both <i>Sender Email</i> & <i>SMTP Username</i> and paste the 16-character App Password below.</div>'
           + '      <div class="form-grid">'
           + '        <div class="field"><label>SMTP Host</label><input class="input" name="smtp_host" value="' + esc(cfg.smtp_host || "") + '" placeholder="smtp.office365.com or smtp.gmail.com"></div>'
           + '        <div class="field"><label>SMTP Port</label><input class="input" type="number" name="smtp_port" value="' + esc(cfg.smtp_port || "587") + '"></div>'
@@ -1029,6 +1042,30 @@ Views.settings = async function (root, params) {
         syncProviderVisibility();
         stage.querySelector("#cfg-email-mode").onchange = syncProviderVisibility;
         stage.querySelector("#cfg-sms-provider").onchange = syncProviderVisibility;
+
+        stage.querySelectorAll("[data-smtp-preset]").forEach(btn => {
+          btn.onclick = () => {
+            const p = btn.dataset.smtpPreset;
+            const form = stage.querySelector("#gateway-config-form");
+            form.querySelector('[name="email_mode"]').value = "smtp";
+            if (p === "gmail") {
+              form.querySelector('[name="smtp_host"]').value = "smtp.gmail.com";
+              form.querySelector('[name="smtp_port"]').value = "587";
+              form.querySelector('[name="smtp_encryption"]').value = "starttls";
+            } else if (p === "m365") {
+              form.querySelector('[name="smtp_host"]').value = "smtp.office365.com";
+              form.querySelector('[name="smtp_port"]').value = "587";
+              form.querySelector('[name="smtp_encryption"]').value = "starttls";
+            } else {
+              form.querySelector('[name="smtp_host"]').value = "mail.yourdomain.com";
+              form.querySelector('[name="smtp_port"]').value = "465";
+              form.querySelector('[name="smtp_encryption"]').value = "ssl";
+            }
+            syncProviderVisibility();
+            form.querySelector('[name="smtp_username"]').focus();
+            toast("Applied SMTP preset — enter your email username & App Password, then click Save.", "info");
+          };
+        });
 
         const saveGatewayPayload = async () => {
           const form = stage.querySelector("#gateway-config-form");
@@ -1174,24 +1211,10 @@ Views.settings = async function (root, params) {
         if (!stage._delBound) {
           stage._delBound = true;
           onDelegate(stage, "click", "[data-inspect-del]", (b) => {
-            const item = (stage._latestRows || []).find(x => String(x.id) === String(b.dataset.inspectDel));
-            if (!item) return;
-            openModal({
-              title: (item.channel || "").toUpperCase() + " Delivery #" + item.id,
-              sub: (item.recipient_name || item.recipient || "") + " · " + fmtDateTime(item.sent_at || item.created_at),
-              body: '<div class="stack"><dl class="kv">'
-                + '<dt>Channel</dt><dd style="text-transform:uppercase">' + esc(item.channel) + '</dd>'
-                + '<dt>Recipient</dt><dd class="mono">' + esc(item.recipient || "—") + '</dd>'
-                + '<dt>Event Key</dt><dd class="mono">' + esc(item.event_key || "—") + '</dd>'
-                + '<dt>Status</dt><dd>' + chip(item.status) + '</dd>'
-                + '<dt>Provider Ref</dt><dd class="mono">' + esc(item.provider_ref || "—") + '</dd>'
-                + (item.error ? '<dt>Error</dt><dd style="color:var(--red)">' + esc(item.error) + '</dd>' : '')
-                + '</dl>'
-                + (item.subject ? '<div><div class="tiny muted">SUBJECT</div><b>' + esc(item.subject) + '</b></div>' : '')
-                + (item.body ? '<div><div class="tiny muted">MESSAGE BODY</div><div class="channel-box small" style="white-space:pre-wrap;margin-top:4px">' + esc(item.body) + '</div></div>' : '')
-                + '</div>',
-              footer: '<button class="btn btn-accent" data-close-modal>Close</button>',
-            });
+            if (typeof openDeliveryPreviewModal === "function") {
+              openDeliveryPreviewModal(b.dataset.inspectDel, loadLogs);
+              return;
+            }
           });
           onDelegate(stage, "click", "[data-retry-del]", async (b) => {
             try {

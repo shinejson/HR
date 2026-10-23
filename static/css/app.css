@@ -1263,4 +1263,122 @@ html[data-dt-density="compact"] .avatar-sm { width: 25px; height: 25px; font-siz
   text-decoration: underline;
 }
 
+/* ============================================================================
+   EMPLOYMENT LETTERS, CREDENTIALS RECEIPTS & A4 PRINT ENGINE
+============================================================================ */
+#print-letter-portal {
+  display: none;
+}
+
+.letter-preview-canvas {
+  background: #ede9e0;
+  padding: 24px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+.callout-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 12.8px;
+  line-height: 1.5;
+}
+.callout-banner.green {
+  background: #eaf7f1;
+  border: 1px solid #b8e3cf;
+  color: #0e543a;
+}
+.callout-banner.amber {
+  background: #fdf6ea;
+  border: 1px solid #eed6ad;
+  color: #744810;
+}
+.callout-banner.red {
+  background: #fdf0ef;
+  border: 1px solid #efb9b5;
+  color: #8c231c;
+}
+
+.cred-grid-box {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.cred-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.cred-row:last-child { border-bottom: 0; }
+.cred-row.highlight { background: #fdfaf3; }
+.cred-row .k { color: var(--muted); font-size: 12px; }
+.cred-row .v { font-weight: 600; color: var(--ink); text-align: right; word-break: break-all; }
+
+.tpl-pick-btn {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  cursor: pointer;
+  transition: all .15s ease;
+  color: var(--ink);
+}
+.tpl-pick-btn:hover { border-color: var(--accent); }
+.tpl-pick-btn.active {
+  border-color: var(--accent);
+  background: #fdf6ee;
+  box-shadow: 0 2px 8px rgba(194, 112, 61, 0.09);
+}
+
+@media print {
+  @page { size: A4; margin: 11mm; }
+  html, body {
+    background: #ffffff !important;
+    color: #111 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  body.printing-letter > *:not(#print-letter-portal) {
+    display: none !important;
+  }
+  body.printing-letter #print-letter-portal {
+    display: block !important;
+    width: 100% !important;
+  }
+  body.printing-letter #print-letter-portal .el-sheet,
+  .el-sheet {
+    border: none !important;
+    box-shadow: none !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 4px 8px !important;
+  }
+  .sidebar, .topbar, .toast-root, .modal-backdrop, .drawer-root, .page-head, .tabs, .filter-chips {
+    display: none !important;
+  }
+  .main, .content, .letter-preview-canvas {
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: #fff !important;
+    overflow: visible !important;
+  }
+}
+
+
 
