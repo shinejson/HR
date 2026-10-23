@@ -267,7 +267,8 @@ async function renderRoute() {
     return;
   }
   document.getElementById("crumb-current").textContent = PAGES[section];
-  document.title = "Meridian HR — " + PAGES[section];
+  const brandName = (Store.meta && Store.meta.company && Store.meta.company.name) || "Meridian HR";
+  document.title = brandName + " — " + PAGES[section];
   setActiveNav(section);
   window.scrollTo({ top: 0 });
   try {
@@ -298,39 +299,79 @@ function logout() {
   });
 }
 
+function buildDefaultFaviconHref(initial) {
+  const ch = encodeURIComponent((initial || "M").trim().charAt(0).toUpperCase() || "M");
+  const svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
+    + "<rect width='64' height='64' rx='14' fill='%2310201f'/>"
+    + "<text x='32' y='44' font-family='Georgia' font-size='34' fill='%23c2703d' text-anchor='middle'>" + ch + "</text>"
+    + "</svg>";
+  return "data:image/svg+xml," + svg;
+}
+
+function setBrowserFavicon(faviconUrl, fallbackInitial) {
+  const targetHref = (faviconUrl && String(faviconUrl).trim()) ? String(faviconUrl).trim() : buildDefaultFaviconHref(fallbackInitial);
+  let link = document.getElementById("favicon-link") || document.querySelector("link[rel*='icon']");
+  if (link && link.getAttribute("href") === targetHref) return;
+  if (link && link.parentNode) link.parentNode.removeChild(link);
+  link = document.createElement("link");
+  link.id = "favicon-link";
+  link.rel = "icon";
+  link.href = targetHref;
+  document.head.appendChild(link);
+}
+
+function renderGlyphElement(el, logoUrl, initial, altText) {
+  if (!el) return;
+  if (logoUrl && String(logoUrl).trim()) {
+    el.classList.add("has-logo");
+    el.style.background = "";
+    el.innerHTML = '<img src="' + esc(String(logoUrl).trim()) + '" alt="' + esc(altText || "logo") + '">';
+    const img = el.querySelector("img");
+    if (img) {
+      img.onerror = () => {
+        el.classList.remove("has-logo");
+        el.textContent = initial;
+      };
+    }
+  } else {
+    el.classList.remove("has-logo");
+    el.style.background = "";
+    el.textContent = initial;
+  }
+}
+
 function applyBrand(brand) {
   if (!brand) return;
-  if (brand.name) {
-    document.getElementById("brand-name").textContent = brand.name;
-    document.title = brand.name + " — " + (brand.tagline || "People operations");
-    const initial = (brand.name || "M").trim().charAt(0).toUpperCase();
-    const glyphEl = document.getElementById("brand-glyph");
-    if (glyphEl && !brand.logo_url) glyphEl.textContent = initial;
-    const crumbLogo = document.getElementById("crumb-logo");
-    if (crumbLogo && !brand.logo_url) crumbLogo.textContent = initial;
-  }
-  if (brand.tagline) document.getElementById("brand-sub").textContent = brand.tagline;
+  const name = (brand.name || "Meridian HR").trim();
+  const tagline = (brand.tagline || "People operations").trim();
+  const initial = (name.charAt(0) || "M").toUpperCase();
+
+  const brandNameEl = document.getElementById("brand-name");
+  if (brandNameEl) brandNameEl.textContent = name;
+  const loginBrandName = document.getElementById("login-brand-name");
+  if (loginBrandName) loginBrandName.textContent = name;
+  const crumbCompany = document.getElementById("crumb-company");
+  if (crumbCompany) crumbCompany.textContent = name;
+
+  const brandSubEl = document.getElementById("brand-sub");
+  if (brandSubEl) brandSubEl.textContent = tagline;
+  const loginBrandSub = document.getElementById("login-brand-sub");
+  if (loginBrandSub) loginBrandSub.textContent = tagline;
+
+  const activeSection = Store.route && PAGES[Store.route] ? PAGES[Store.route] : tagline;
+  document.title = name + " — " + (Store.user ? activeSection : tagline);
+
   const pillText = document.getElementById("site-pill-text");
   if (pillText) {
     const loc = brand.location_name || (brand.city ? brand.city + " HQ" : "Accra HQ");
-    pillText.textContent = (brand.name || "Meridian") + " · " + loc;
+    pillText.textContent = name + " · " + loc;
   }
-  if (brand.favicon_url) {
-    const link = document.getElementById("favicon-link");
-    if (link) link.href = brand.favicon_url;
-  }
-  if (brand.logo_url) {
-    const glyph = document.getElementById("brand-glyph");
-    if (glyph) {
-      glyph.innerHTML = '<img src="' + esc(brand.logo_url) + '" alt="logo" style="width:100%;height:100%;object-fit:cover;border-radius:10px">';
-      glyph.style.background = "transparent";
-    }
-    const cl = document.getElementById("crumb-logo");
-    if (cl) {
-      cl.innerHTML = '<img src="' + esc(brand.logo_url) + '" alt="logo" style="width:100%;height:100%;object-fit:cover;border-radius:7px">';
-      cl.style.background = "transparent";
-    }
-  }
+
+  renderGlyphElement(document.getElementById("brand-glyph"), brand.logo_url, initial, name + " logo");
+  renderGlyphElement(document.getElementById("crumb-logo"), brand.logo_url, initial, name + " logo");
+  renderGlyphElement(document.getElementById("login-brand-glyph"), brand.logo_url, initial, name + " logo");
+  setBrowserFavicon(brand.favicon_url, initial);
+
   // Portal colour theme is controlled by ThemeManager (Settings → Appearance / top bar).
   if (window.ThemeManager) window.ThemeManager.init();
 }

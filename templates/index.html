@@ -3,24 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Meridian HR — People Operations</title>
+  <title>{{ brand.name }} — {{ brand.tagline }}</title>
   <meta name="description" content="Meridian HR: a modern human resource management system for people, payroll and performance.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/app.css?v=1.0.1">
-  <link rel="stylesheet" href="/static/css/themes.css?v=1.0.2">
-  <link id="favicon-link" rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310201f'/%3E%3Ctext x='32' y='44' font-family='Georgia' font-size='34' fill='%23c2703d' text-anchor='middle'%3EM%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/css/app.css?v=1.0.3">
+  <link rel="stylesheet" href="/static/css/themes.css?v=1.0.3">
+  <link id="favicon-link" rel="icon" href="{{ brand.favicon_url }}">
 </head>
 <body>
 
 <div id="login-view" class="login-shell hidden">
   <section class="login-brand">
     <div class="brand-mark">
-      <div class="glyph">M</div>
+      <div class="glyph{% if brand.logo_url %} has-logo{% endif %}" id="login-brand-glyph">{% if brand.logo_url %}<img src="{{ brand.logo_url }}" alt="{{ brand.name }} logo">{% else %}{{ brand.initial }}{% endif %}</div>
       <div>
-        <div class="name">Meridian HR</div>
-        <div class="sub">People operations</div>
+        <div class="name" id="login-brand-name">{{ brand.name }}</div>
+        <div class="sub" id="login-brand-sub">{{ brand.tagline }}</div>
       </div>
     </div>
     <div class="login-copy">
@@ -94,14 +94,14 @@
 <div id="app-view" class="app-shell hidden">
   <aside class="sidebar" id="sidebar">
     <div class="brand">
-      <div class="glyph" id="brand-glyph">M</div>
+      <div class="glyph{% if brand.logo_url %} has-logo{% endif %}" id="brand-glyph">{% if brand.logo_url %}<img src="{{ brand.logo_url }}" alt="{{ brand.name }} logo">{% else %}{{ brand.initial }}{% endif %}</div>
       <div class="brand-text">
-        <div class="name" id="brand-name">Meridian HR</div>
-        <div class="sub" id="brand-sub">People operations</div>
+        <div class="name" id="brand-name">{{ brand.name }}</div>
+        <div class="sub" id="brand-sub">{{ brand.tagline }}</div>
       </div>
       <button class="sidebar-toggle" id="sidebar-toggle" title="Collapse sidebar" aria-label="Collapse sidebar"></button>
     </div>
-    <div class="site-pill" id="site-pill"><span class="dot"></span> <span id="site-pill-text">Meridian Ghana Ltd · Accra HQ</span></div>
+    <div class="site-pill" id="site-pill"><span class="dot"></span> <span id="site-pill-text">{{ brand.location_label }}</span></div>
     <nav class="nav-scroll" id="nav"></nav>
     <div class="sidebar-foot">
       <div class="side-user" id="side-user">
@@ -120,7 +120,7 @@
     <header class="topbar">
       <div class="topbar-start">
         <button class="icon-btn menu-btn" id="menu-btn" aria-label="Toggle menu"></button>
-        <div class="crumb"><span class="crumb-logo" id="crumb-logo">M</span><span id="crumb-company">Meridian</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg><b id="crumb-current">Dashboard</b></div>
+        <div class="crumb"><span class="crumb-logo{% if brand.logo_url %} has-logo{% endif %}" id="crumb-logo">{% if brand.logo_url %}<img src="{{ brand.logo_url }}" alt="{{ brand.name }} logo">{% else %}{{ brand.initial }}{% endif %}</span><span id="crumb-company">{{ brand.name }}</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg><b id="crumb-current">Dashboard</b></div>
       </div>
       <div class="topbar-center">
         <div class="global-search" id="global-search-trigger" title="Quick jump to people, modules & actions (Ctrl+K / ⌘K)">
@@ -191,17 +191,17 @@
 </div>
 <div class="toast-root" id="toast-root"></div>
 
-<script src="/static/js/api.js"></script>
-<script src="/static/js/theme.js?v=1.0.2"></script>
-<script src="/static/js/theme-settings.js"></script>
-<script src="/static/js/ui.js"></script>
-<script src="/static/js/datatable.js"></script>
+<script src="/static/js/api.js?v=1.0.3"></script>
+<script src="/static/js/theme.js?v=1.0.3"></script>
+<script src="/static/js/theme-settings.js?v=1.0.3"></script>
+<script src="/static/js/ui.js?v=1.0.3"></script>
+<script src="/static/js/datatable.js?v=1.0.3"></script>
 <script src="/static/js/views.js?v=1.0.3"></script>
-<script src="/static/js/views2.js"></script>
-<script src="/static/js/views3.js"></script>
-<script src="/static/js/profile.js"></script>
-<script src="/static/js/settings_notifications.js"></script>
-<script src="/static/js/operations.js"></script>
-<script src="/static/js/app.js?v=1.0.4"></script>
+<script src="/static/js/views2.js?v=1.0.3"></script>
+<script src="/static/js/views3.js?v=1.0.3"></script>
+<script src="/static/js/profile.js?v=1.0.3"></script>
+<script src="/static/js/settings_notifications.js?v=1.0.3"></script>
+<script src="/static/js/operations.js?v=1.0.3"></script>
+<script src="/static/js/app.js?v=1.0.5"></script>
 </body>
 </html>
