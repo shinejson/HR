@@ -70,6 +70,12 @@ const ICONS = {
   sortUp: '<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>',
   sortDown: '<path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/>',
   zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+  home: '<path d="M3 10l9-8 9 8v10a2 2 0 01-2 2h-4v-7h-6v7H5a2 2 0 01-2-2z"/>',
+  chevronsLeft: '<polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/>',
+  chevronsRight: '<polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/>',
+  folder: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+  circle: '<circle cx="12" cy="12" r="3"/>',
+  dot: '<circle cx="12" cy="12" r="3" fill="currentColor"/>',
 };
 
 function icon(name, size) {

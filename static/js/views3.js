@@ -542,52 +542,7 @@ async function openTicketDrawer(id, root) {
   } catch (e) { handleErr(e); }
 }
 
-/* ============================================================ ANNOUNCEMENTS */
-Views.announcements = async function (root) {
-  root.innerHTML = pageHead("Announcements", "Loading feed…") + spinners(3);
-  try {
-    const res = await API.get("/announcements", { per_page: 50 });
-    const items = res.data;
-    const canPost = Store.canManage();
-    const feed = items.map(a => '<div class="card card-pad" style="margin-bottom:14px"><div class="row-between"><div class="row" style="gap:10px">' + avatarHTML("HR Team", "avatar-sm") + '<div><b class="small">' + esc(a.audience === "all" ? "Company-wide" : a.audience) + '</b><div class="tiny muted">' + fmtDateTime(a.publish_at || a.created_at) + '</div></div></div>'
-      + '<div class="row">' + (a.pinned ? '<span class="chip chip-amber">Pinned</span>' : "") + (canPost ? '<button class="icon-btn" style="width:28px;height:28px" data-pin="' + a.id + '" data-pinned="' + (a.pinned ? 1 : 0) + '">' + icon("star", 13) + '</button>' : "") + '</div></div>'
-      + '<h3 style="font-family:var(--serif);font-size:21px;font-weight:500;margin-top:12px">' + esc(a.title) + '</h3>'
-      + '<p class="small muted" style="margin-top:6px;line-height:1.65">' + esc(a.body || "") + '</p></div>').join("");
-    root.innerHTML = pageHead("Announcements", "Company news, events and the things everyone needs to know.",
-      canPost ? '<button class="btn btn-accent" id="ann-add">' + icon("plus", 15) + ' New announcement</button>' : "", "Communication")
-      + '<div class="grid grid-2"><div>' + (feed || '<div class="card">' + emptyState("No announcements", "Company updates will appear here.", "megaphone") + '</div>') + '</div>'
-      + '<div><div class="card card-pad" style="margin-bottom:14px"><div class="section-title">This week</div>'
-      + '<div class="list-row">' + icon("sparkle", 16) + '<div class="body"><b>Birthdays</b><span>Celebrate your colleagues</span></div><span class="link" onclick="go(\'dashboard\')">View</span></div>'
-      + '<div class="list-row">' + icon("calendar", 16) + '<div class="body"><b>Company events</b><span>Q4 town hall · 28 Oct</span></div><span class="link" onclick="go(\'leave\')">Calendar</span></div>'
-      + '<div class="list-row">' + icon("shield", 16) + '<div class="body"><b>Policy reminders</b><span>Data protection acknowledgement</span></div><span class="link" onclick="go(\'documents\')">Review</span></div></div>'
-      + '<div class="card card-pad"><div class="section-title">Pinned</div>' + (items.filter(a => a.pinned).map(a => '<div class="list-row"><div class="body"><b>' + esc(a.title) + '</b><span>' + fmtDate(a.publish_at || a.created_at) + '</span></div></div>').join("") || '<p class="small muted">Nothing pinned.</p>') + '</div></div></div>';
-
-    const add = root.querySelector("#ann-add");
-    if (add) add.onclick = openAnnouncementForm;
-    root.querySelectorAll("[data-pin]").forEach(b => b.onclick = async () => {
-      try { await API.put("/announcements/" + b.dataset.pin, { pinned: b.dataset.pinned !== "1" }); toast("Announcement updated", "success"); Views.announcements(root); }
-      catch (e) { handleErr(e); }
-    });
-  } catch (e) {
-    root.innerHTML = pageHead("Announcements", "Unavailable") + emptyState("Could not load announcements", e.message, "alert");
-  }
-};
-
-function openAnnouncementForm() {
-  formModal({
-    title: "New announcement",
-    wide: true,
-    fields: [
-      { name: "title", label: "Title", required: true, full: true },
-      { name: "audience", label: "Audience", type: "select", options: [{ value: "all", label: "Company-wide" }, { value: "department", label: "Specific department" }, { value: "branch", label: "Specific branch" }], value: "all" },
-      { name: "department_id", label: "Department (if targeted)", type: "select", options: deptOptions() },
-      { name: "body", label: "Message", type: "textarea", rows: 6, required: true, full: true },
-      { name: "pinned", label: "Pin to top", type: "checkbox" },
-    ],
-    onSubmit: async (data) => { data.publish_at = new Date().toISOString(); data.author_id = Store.user.id; await API.post("/announcements", data); navigate(); },
-  });
-}
-
+/* Announcements & Events view is provided in settings_notifications.js */
 /* ============================================================ DOCUMENTS */
 const docState = { tab: "documents" };
 
