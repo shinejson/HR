@@ -313,6 +313,7 @@ async function drawEmployees(root) {
   const res = await API.get("/employees", { per_page: 500 });
   const rows = res.data || [];
   const canEdit = Store.canManage();
+  const canManage = canEdit;
 
   const viewToggle = '<div class="segmented" role="group" aria-label="View mode">'
     + '<button type="button" class="seg-btn ' + (empState.viewMode === "table" ? "active" : "") + '" data-emp-view="table">' + icon("list", 14) + ' Table</button>'
