@@ -70,6 +70,16 @@ class Company(db.Model, TimestampMixin):
     website = db.Column(db.String(180))
 
 
+class BrandingAsset(db.Model, TimestampMixin):
+    __tablename__ = "branding_assets"
+    id = db.Column(db.Integer, primary_key=True)
+    kind = db.Column(db.String(32), nullable=False)
+    stored_name = db.Column(db.String(180), unique=True, nullable=False, index=True)
+    orig_filename = db.Column(db.String(255))
+    mime_type = db.Column(db.String(80), nullable=False)
+    content = db.Column(db.LargeBinary, nullable=False)
+
+
 class Branch(db.Model, TimestampMixin):
     __tablename__ = "branches"
     id = db.Column(db.Integer, primary_key=True)

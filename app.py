@@ -8,13 +8,15 @@ from datetime import datetime, date, timedelta
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 
-from flask import Flask, request, jsonify, render_template, send_file, abort
+from urllib.parse import quote as url_quote
+from flask import Flask, request, jsonify, render_template, send_file, send_from_directory, abort
 from flask_cors import CORS
 from sqlalchemy import or_, func, false, text, inspect as sqla_inspect
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 
 from models import (
-    db, Role, User, Company, Branch, Department, Designation, Grade, Employee,
+    db, Role, User, Company, BrandingAsset, Branch, Department, Designation, Grade, Employee,
     EmployeeContact, Dependant, BankAccount, EmploymentHistory, EmployeeSkill,
     EmployeeEducation, Contract, Document, Policy, PolicyAck, JobRequisition,
     JobPosting, Candidate, Application, Interview, OnboardingTemplate, OnboardingTask,
@@ -30,6 +32,9 @@ import messaging
 from seed import seed, _paye
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
+BRANDING_UPLOAD_DIR = os.path.join(UPLOADS_DIR, "branding")
+MAX_BRANDING_BYTES = 5 * 1024 * 1024
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + os.path.join(BASE_DIR, "instance", "hrms.db")
@@ -37,7 +42,7 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["JSON_SORT_KEYS"] = False
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 os.makedirs(os.path.join(BASE_DIR, "instance"), exist_ok=True)
-os.makedirs(os.path.join(BASE_DIR, "uploads"), exist_ok=True)
+os.makedirs(BRANDING_UPLOAD_DIR, exist_ok=True)
 
 db.init_app(app)
 CORS(app)
@@ -2983,6 +2988,150 @@ def get_company_settings():
     }})
 
 
+_UPLOAD_MIMES = {
+    ".ico": "image/x-icon",
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
+    ".avif": "image/avif",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+}
+
+
+def _detect_image_ext(raw, orig_filename=""):
+    """Validate raw image bytes and return a safe file extension, or None if invalid."""
+    if not raw or len(raw) < 4:
+        return None
+    orig_ext = os.path.splitext(orig_filename or "")[1].lower()
+    if raw[:8] == b"\x89PNG\r\n\x1a\n":
+        return ".ico" if orig_ext == ".ico" else ".png"
+    if raw[:3] == b"\xff\xd8\xff":
+        return ".jpg"
+    if raw[:6] in (b"GIF87a", b"GIF89a"):
+        return ".gif"
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return ".webp"
+    if raw[:4] in (b"\x00\x00\x01\x00", b"\x00\x00\x02\x00"):
+        return ".ico"
+    if raw[:2] == b"BM":
+        return ".bmp"
+    if len(raw) >= 12 and raw[4:8] == b"ftyp":
+        return ".avif"
+    # SVG vector check (UTF-8 text containing an <svg element)
+    try:
+        head = raw[:8192].decode("utf-8", errors="ignore").lstrip("\ufeff \t\r\n")
+        if "<svg" in head.lower():
+            return ".svg"
+    except Exception:
+        pass
+    return None
+
+
+def _cleanup_branding_file(url_path, comp=None):
+    """Remove a previously uploaded branding asset if no longer referenced."""
+    if not url_path or not isinstance(url_path, str):
+        return
+    clean_url = url_path.split("?", 1)[0].strip()
+    if not clean_url.startswith("/uploads/branding/"):
+        return
+    if comp:
+        still_used = {
+            (comp.logo_url or "").split("?", 1)[0].strip(),
+            (comp.favicon_url or "").split("?", 1)[0].strip(),
+        }
+        if clean_url in still_used:
+            return
+    rel_name = os.path.basename(clean_url)
+    asset = BrandingAsset.query.filter_by(stored_name=rel_name).first()
+    if asset:
+        db.session.delete(asset)
+        db.session.commit()
+    candidate = os.path.realpath(os.path.join(BRANDING_UPLOAD_DIR, rel_name))
+    root_real = os.path.realpath(BRANDING_UPLOAD_DIR)
+    if candidate.startswith(root_real + os.sep) and os.path.isfile(candidate):
+        try:
+            os.remove(candidate)
+        except OSError:
+            pass
+
+
+@app.post("/api/v1/uploads/branding")
+@login_required
+def upload_branding_asset():
+    if role_of(request.user) not in ("super_admin", "hr_admin"):
+        return error("Forbidden", 403)
+    kind = (request.form.get("kind") or "logo").strip().lower()
+    if kind not in ("logo", "favicon"):
+        return error("Invalid branding asset type", 400)
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return error("Please select an image file to upload", 400)
+    raw = f.read(MAX_BRANDING_BYTES + 1)
+    if not raw:
+        return error("Uploaded file is empty", 400)
+    if len(raw) > MAX_BRANDING_BYTES:
+        return error("Image must be 5 MB or smaller", 400)
+    ext = _detect_image_ext(raw, f.filename)
+    if not ext:
+        return error("Unsupported image format. Please upload PNG, JPG, SVG, WEBP, GIF, or ICO.", 400)
+
+    safe_stem = secure_filename(os.path.splitext(f.filename)[0])[:32] or kind
+    stored_name = f"{kind}_{safe_stem}_{secrets.token_hex(6)}{ext}"
+    mime_type = _UPLOAD_MIMES.get(ext, "application/octet-stream")
+    db.session.add(BrandingAsset(
+        kind=kind,
+        stored_name=stored_name,
+        orig_filename=f.filename,
+        mime_type=mime_type,
+        content=raw,
+    ))
+
+    url = f"/uploads/branding/{stored_name}"
+    comp = Company.query.first()
+    if not comp:
+        comp = Company(name="Meridian Ghana Ltd")
+        db.session.add(comp)
+
+    attr = "logo_url" if kind == "logo" else "favicon_url"
+    old_url = getattr(comp, attr, None)
+    if request.form.get("save", "1") != "0":
+        setattr(comp, attr, url)
+        audit(request.user, f"company_{kind}_uploaded", "companies", comp.id or 1, new={attr: url})
+    db.session.commit()
+    _cleanup_branding_file(old_url, comp)
+
+    return jsonify({"data": {
+        "kind": kind,
+        "url": url,
+        "filename": f.filename,
+        "size": len(raw),
+        "company": serialize(comp, "companies") if comp.id else {},
+    }})
+
+
+@app.delete("/api/v1/uploads/branding/<string:kind>")
+@login_required
+def delete_branding_asset(kind):
+    if role_of(request.user) not in ("super_admin", "hr_admin"):
+        return error("Forbidden", 403)
+    kind = (kind or "").strip().lower()
+    if kind not in ("logo", "favicon"):
+        return error("Invalid branding asset type", 400)
+    comp = Company.query.first()
+    if not comp:
+        return jsonify({"data": {"company": {}}})
+    attr = "logo_url" if kind == "logo" else "favicon_url"
+    old_url = getattr(comp, attr, None)
+    setattr(comp, attr, None)
+    audit(request.user, f"company_{kind}_removed", "companies", comp.id or 1)
+    db.session.commit()
+    _cleanup_branding_file(old_url, comp)
+    return jsonify({"data": {"company": serialize(comp, "companies")}})
+
+
 @app.put("/api/v1/settings/company")
 @login_required
 def update_company_settings():
@@ -2995,6 +3144,8 @@ def update_company_settings():
     if not comp:
         comp = Company(name=comp_in.get("name") or "Meridian Ghana Ltd")
         db.session.add(comp)
+    old_logo = comp.logo_url
+    old_favicon = comp.favicon_url
     for k in ("name", "legal_name", "country", "city", "location_name", "tagline", "currency", "timezone", "address",
               "phone", "email", "tax_id", "logo_url", "favicon_url", "theme", "website"):
         if k in comp_in:
@@ -3019,6 +3170,8 @@ def update_company_settings():
             cn.value = comp.name
     audit(request.user, "company_settings_updated", "companies", comp.id or 1)
     db.session.commit()
+    _cleanup_branding_file(old_logo, comp)
+    _cleanup_branding_file(old_favicon, comp)
     return get_company_settings()
 
 
@@ -3269,7 +3422,58 @@ def meta():
     }})
 
 
-# ---------------------------------------------------------------- pages
+# ---------------------------------------------------------------- pages & uploads
+
+@app.get("/uploads/<path:filename>")
+def serve_uploaded_file(filename):
+    ext = os.path.splitext(filename)[1].lower()
+    if filename.startswith("branding/") and "/" not in filename[len("branding/"):]:
+        asset = BrandingAsset.query.filter_by(stored_name=filename[len("branding/"):]).first()
+        if asset:
+            resp = send_file(io.BytesIO(asset.content), mimetype=asset.mime_type or _UPLOAD_MIMES.get(ext))
+            resp.headers["X-Content-Type-Options"] = "nosniff"
+            if ext == ".svg":
+                resp.headers["Content-Security-Policy"] = "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox"
+            resp.headers["Cache-Control"] = "public, max-age=86400"
+            return resp
+    resp = send_from_directory(UPLOADS_DIR, filename, mimetype=_UPLOAD_MIMES.get(ext))
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    if ext == ".svg":
+        resp.headers["Content-Security-Policy"] = "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox"
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
+def _brand_template_ctx():
+    try:
+        comp = Company.query.first()
+    except Exception:
+        comp = None
+    name = (comp.name if comp and comp.name else "Meridian HR").strip()
+    tagline = (comp.tagline if comp and comp.tagline else "People operations").strip()
+    initial = (name[:1] or "M").upper()
+    svg = (
+        f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
+        f"<rect width='64' height='64' rx='14' fill='#10201f'/>"
+        f"<text x='32' y='44' font-family='Georgia' font-size='34' fill='#c2703d' text-anchor='middle'>{url_quote(initial[:1])}</text>"
+        f"</svg>"
+    )
+    default_favicon = "data:image/svg+xml," + url_quote(svg, safe=":/,='")
+    return {
+        "name": name,
+        "tagline": tagline,
+        "initial": initial,
+        "logo_url": (comp.logo_url or "").strip() if comp else "",
+        "favicon_url": ((comp.favicon_url or "").strip() if comp else "") or default_favicon,
+        "default_favicon": default_favicon,
+        "location_label": f"{name} · {(comp.location_name if comp and comp.location_name else ((comp.city + ' HQ') if comp and comp.city else 'Accra HQ'))}",
+    }
+
+
+@app.context_processor
+def inject_brand_context():
+    return {"brand": _brand_template_ctx()}
+
 
 @app.get("/")
 def index():
@@ -3306,9 +3510,9 @@ def health():
 
 @app.errorhandler(404)
 def not_found(e):
-    if request.path.startswith("/api/"):
+    if request.path.startswith("/api/") or request.path.startswith("/uploads/"):
         return error("Not found", 404)
-    return render_template("index.html")
+    return render_template("index.html", brand=_brand_template_ctx())
 
 
 @app.errorhandler(413)
