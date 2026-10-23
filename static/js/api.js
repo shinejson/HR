@@ -8,10 +8,15 @@ const API = (() => {
     else localStorage.removeItem("hrms_token");
   }
 
+  function isFormDataBody(body) {
+    return (typeof FormData !== "undefined" && body instanceof FormData)
+      || !!(body && typeof body.append === "function" && typeof body.getAll === "function");
+  }
+
   async function request(path, options = {}) {
     const headers = { ...(options.headers || {}) };
     if (token) headers.Authorization = "Bearer " + token;
-    if (options.body && !(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
+    if (options.body && !isFormDataBody(options.body)) headers["Content-Type"] = "application/json";
     const res = await fetch(BASE + path, { ...options, headers });
     let body = null;
     const text = await res.text();

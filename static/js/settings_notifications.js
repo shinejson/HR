@@ -504,9 +504,307 @@ Views.settings = async function (root, params) {
       return;
     }
 
+    function renderBrandingUploaderHTML(c, includeFormControls) {
+      const name = (c.name || "Meridian HR").trim();
+      const tagline = (c.tagline || "People operations").trim();
+      const initial = (name.charAt(0) || "M").toUpperCase();
+      const logoUrl = (c.logo_url || "").trim();
+      const faviconUrl = (c.favicon_url || "").trim();
+      const defaultFav = typeof buildDefaultFaviconHref === "function"
+        ? buildDefaultFaviconHref(initial)
+        : "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310201f'/%3E%3Ctext x='32' y='44' font-family='Georgia' font-size='34' fill='%23c2703d' text-anchor='middle'%3E" + encodeURIComponent(initial) + "%3C/text%3E%3C/svg%3E";
+      const favSrc = faviconUrl || defaultFav;
+
+      return '<div class="card">'
+        + '<div class="card-head"><div><h3>Branding — logo &amp; favicon</h3><div class="sub">Upload your company image and browser tab icon directly — updates apply immediately across the portal</div></div>'
+        + (includeFormControls ? '<div class="right"><button class="btn btn-accent" type="submit">' + icon("check", 14) + ' Save branding</button></div>' : '')
+        + '</div>'
+        + '<div class="card-body stack">'
+        + '  <div class="brand-upload-grid">'
+        // Company Logo / Image Uploader
+        + '    <div class="brand-upload-box">'
+        + '      <div class="field"><label>Company image / logo <span class="muted" style="font-weight:400">(sidebar, top bar &amp; sign-in)</span></label></div>'
+        + '      <div class="brand-dropzone" data-brand-drop="logo" tabindex="0" role="button" aria-label="Upload company logo">'
+        + '        <div class="brand-preview-tile ' + (logoUrl ? "" : "is-initial") + '" data-brand-preview="logo">'
+        +            (logoUrl ? '<img src="' + esc(logoUrl) + '" alt="Company logo" onerror="this.parentElement.classList.add(\'is-initial\');this.parentElement.textContent=\'' + esc(initial) + '\'">' : esc(initial))
+        + '        </div>'
+        + '        <div class="brand-dropzone-body">'
+        + '          <div class="brand-dropzone-actions">'
+        + '            <button class="btn btn-sm btn-accent" type="button" data-brand-pick="logo">' + icon("upload", 13) + ' <span data-brand-btn-label="logo">' + (logoUrl ? "Replace image" : "Upload image") + '</span></button>'
+        + '            <button class="btn btn-sm btn-danger ' + (logoUrl ? "" : "hidden") + '" type="button" data-brand-remove="logo">' + icon("trash", 13) + ' Remove</button>'
+        + '          </div>'
+        + '          <div class="tiny muted">Click or drag &amp; drop an image file here · PNG, JPG, SVG, WEBP or GIF (max 5 MB)</div>'
+        + '        </div>'
+        + '      </div>'
+        + '      <input type="file" class="hidden" data-brand-file="logo" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/avif">'
+        + '      <button type="button" class="brand-url-toggle" data-brand-url-toggle="logo">' + icon("link", 12) + ' Or paste an image URL instead</button>'
+        + '      <div class="hidden" data-brand-url-box="logo">'
+        + '        <input class="input" name="c_logo_url" value="' + esc(logoUrl) + '" placeholder="https://… or /uploads/branding/…">'
+        + '      </div>'
+        + '    </div>'
+
+        // Browser Favicon Uploader
+        + '    <div class="brand-upload-box">'
+        + '      <div class="field"><label>Browser favicon <span class="muted" style="font-weight:400">(browser tab &amp; bookmark icon)</span></label></div>'
+        + '      <div class="brand-dropzone" data-brand-drop="favicon" tabindex="0" role="button" aria-label="Upload browser favicon">'
+        + '        <div class="brand-preview-tile is-favicon" data-brand-preview="favicon">'
+        + '          <img src="' + esc(favSrc) + '" alt="Favicon preview" data-default-fav="' + esc(defaultFav) + '" onerror="if(this.src!==this.dataset.defaultFav)this.src=this.dataset.defaultFav">'
+        + '        </div>'
+        + '        <div class="brand-dropzone-body">'
+        + '          <div class="brand-dropzone-actions">'
+        + '            <button class="btn btn-sm btn-accent" type="button" data-brand-pick="favicon">' + icon("upload", 13) + ' <span data-brand-btn-label="favicon">' + (faviconUrl ? "Replace favicon" : "Upload favicon") + '</span></button>'
+        + '            <button class="btn btn-sm btn-danger ' + (faviconUrl ? "" : "hidden") + '" type="button" data-brand-remove="favicon">' + icon("trash", 13) + ' Remove</button>'
+        + '          </div>'
+        + '          <div><span class="brand-tab-mockup"><img data-brand-tab-icon src="' + esc(favSrc) + '" alt="" data-default-fav="' + esc(defaultFav) + '" onerror="if(this.src!==this.dataset.defaultFav)this.src=this.dataset.defaultFav"><span data-brand-tab-title>' + esc(name + " — Dashboard") + '</span></span></div>'
+        + '          <div class="tiny muted">Click or drag &amp; drop · ICO, PNG, SVG or WEBP (32×32 or 64×64, max 5 MB)</div>'
+        + '        </div>'
+        + '      </div>'
+        + '      <input type="file" class="hidden" data-brand-file="favicon" accept=".ico,image/x-icon,image/vnd.microsoft.icon,image/png,image/svg+xml,image/webp,image/gif,image/jpeg">'
+        + '      <button type="button" class="brand-url-toggle" data-brand-url-toggle="favicon">' + icon("link", 12) + ' Or paste a favicon URL instead</button>'
+        + '      <div class="hidden" data-brand-url-box="favicon">'
+        + '        <input class="input" name="c_favicon_url" value="' + esc(faviconUrl) + '" placeholder="https://… or /uploads/branding/…">'
+        + '      </div>'
+        + '    </div>'
+        + '  </div>'
+
+        + (includeFormControls
+            ? '<div class="divider"></div><div class="form-grid">'
+              + '<div class="field"><label>Theme accent</label><select class="select" name="c_theme">'
+              + [["meridian","Meridian (terracotta)"],["teal","Teal"],["navy","Navy blue"],["plum","Plum"],["emerald","Emerald"]].map(([v,l]) => '<option value="' + v + '"' + ((c.theme || "meridian") === v ? " selected" : "") + '>' + l + '</option>').join("")
+              + '</select></div>'
+              + '<div class="field"><div class="tiny muted" style="margin-bottom:6px">Live portal preview</div>'
+              + '  <div class="row" style="gap:10px">'
+              + '    <div class="brand-preview-tile ' + (logoUrl ? "" : "is-initial") + '" data-brand-live-logo style="width:44px;height:44px;flex:0 0 44px;border-radius:10px;font-size:20px">'
+              +        (logoUrl ? '<img src="' + esc(logoUrl) + '" alt="logo">' : esc(initial))
+              + '    </div>'
+              + '    <div><b data-brand-live-name style="font-family:var(--serif);font-size:18px">' + esc(name) + '</b><div class="tiny muted" data-brand-live-tagline>' + esc(tagline) + '</div></div>'
+              + '  </div>'
+              + '</div>'
+              + '</div>'
+            : '')
+        + '</div></div>';
+    }
+
+    function bindBrandingUploader(container, initialCompany) {
+      const state = {
+        name: (initialCompany && initialCompany.name) || "Meridian HR",
+        tagline: (initialCompany && initialCompany.tagline) || "People operations",
+        logo_url: (initialCompany && initialCompany.logo_url) || "",
+        favicon_url: (initialCompany && initialCompany.favicon_url) || "",
+      };
+
+      const logoUrlInput = container.querySelector('input[name="c_logo_url"]');
+      const favUrlInput = container.querySelector('input[name="c_favicon_url"]');
+      const nameInput = container.querySelector('input[name="c_name"]');
+      const taglineInput = container.querySelector('input[name="c_tagline"]');
+
+      function currentInitial() {
+        return ((state.name || "M").trim().charAt(0) || "M").toUpperCase();
+      }
+
+      function refreshPreviews() {
+        const init = currentInitial();
+        const logoUrl = (state.logo_url || "").trim();
+        const favUrl = (state.favicon_url || "").trim();
+        const fallbackFav = typeof buildDefaultFaviconHref === "function" ? buildDefaultFaviconHref(init) : "";
+        const favSrc = favUrl || fallbackFav;
+
+        if (logoUrlInput && logoUrlInput.value !== logoUrl) logoUrlInput.value = logoUrl;
+        if (favUrlInput && favUrlInput.value !== favUrl) favUrlInput.value = favUrl;
+
+        const logoTile = container.querySelector('[data-brand-preview="logo"]');
+        if (logoTile) {
+          logoTile.classList.toggle("is-initial", !logoUrl);
+          if (logoUrl) {
+            logoTile.innerHTML = '<img src="' + esc(logoUrl) + '" alt="Company logo">';
+            const img = logoTile.querySelector("img");
+            if (img) img.onerror = () => { logoTile.classList.add("is-initial"); logoTile.textContent = init; };
+          } else {
+            logoTile.textContent = init;
+          }
+        }
+
+        const liveLogo = container.querySelector("[data-brand-live-logo]");
+        if (liveLogo) {
+          liveLogo.classList.toggle("is-initial", !logoUrl);
+          if (logoUrl) {
+            liveLogo.innerHTML = '<img src="' + esc(logoUrl) + '" alt="logo">';
+            const img = liveLogo.querySelector("img");
+            if (img) img.onerror = () => { liveLogo.classList.add("is-initial"); liveLogo.textContent = init; };
+          } else {
+            liveLogo.textContent = init;
+          }
+        }
+
+        const favTileImg = container.querySelector('[data-brand-preview="favicon"] img');
+        if (favTileImg && favSrc) favTileImg.src = favSrc;
+        const tabIcon = container.querySelector("[data-brand-tab-icon]");
+        if (tabIcon && favSrc) tabIcon.src = favSrc;
+        const tabTitle = container.querySelector("[data-brand-tab-title]");
+        if (tabTitle) tabTitle.textContent = (state.name || "Meridian HR") + " — Dashboard";
+
+        const liveName = container.querySelector("[data-brand-live-name]");
+        if (liveName) liveName.textContent = state.name || "Meridian HR";
+        const liveTagline = container.querySelector("[data-brand-live-tagline]");
+        if (liveTagline) liveTagline.textContent = state.tagline || "People operations";
+
+        const logoBtnLbl = container.querySelector('[data-brand-btn-label="logo"]');
+        if (logoBtnLbl) logoBtnLbl.textContent = logoUrl ? "Replace image" : "Upload image";
+        const favBtnLbl = container.querySelector('[data-brand-btn-label="favicon"]');
+        if (favBtnLbl) favBtnLbl.textContent = favUrl ? "Replace favicon" : "Upload favicon";
+
+        const logoRem = container.querySelector('[data-brand-remove="logo"]');
+        if (logoRem) logoRem.classList.toggle("hidden", !logoUrl);
+        const favRem = container.querySelector('[data-brand-remove="favicon"]');
+        if (favRem) favRem.classList.toggle("hidden", !favUrl);
+      }
+
+      function syncGlobalBrand(compData) {
+        if (!Store.meta) Store.meta = {};
+        Store.meta.company = { ...(Store.meta.company || {}), ...(compData || {}) };
+        if (typeof applyBrand === "function") applyBrand(Store.meta.company);
+      }
+
+      async function handleUploadFile(kind, file) {
+        if (!file) return;
+        if (file.size > 5 * 1024 * 1024) {
+          toast("Image must be 5 MB or smaller", "error");
+          return;
+        }
+        const drop = container.querySelector('[data-brand-drop="' + kind + '"]');
+        const lbl = container.querySelector('[data-brand-btn-label="' + kind + '"]');
+        const prevText = lbl ? lbl.textContent : "";
+        if (drop) drop.classList.add("is-uploading");
+        if (lbl) lbl.textContent = "Uploading…";
+
+        try {
+          const fd = new FormData();
+          fd.append("kind", kind);
+          fd.append("file", file);
+          const res = await API.upload("/uploads/branding", fd);
+          const uploadedUrl = res.data.url;
+          if (kind === "logo") state.logo_url = uploadedUrl;
+          else state.favicon_url = uploadedUrl;
+          refreshPreviews();
+          syncGlobalBrand(res.data.company || { logo_url: state.logo_url, favicon_url: state.favicon_url, name: state.name, tagline: state.tagline });
+          toast(kind === "logo" ? "Company logo uploaded & applied" : "Browser favicon uploaded & applied", "success");
+        } catch (err) {
+          if (lbl) lbl.textContent = prevText;
+          handleErr(err);
+        } finally {
+          if (drop) drop.classList.remove("is-uploading");
+        }
+      }
+
+      ["logo", "favicon"].forEach(kind => {
+        const drop = container.querySelector('[data-brand-drop="' + kind + '"]');
+        const fileInput = container.querySelector('[data-brand-file="' + kind + '"]');
+        const pickBtn = container.querySelector('[data-brand-pick="' + kind + '"]');
+        const remBtn = container.querySelector('[data-brand-remove="' + kind + '"]');
+        const urlToggle = container.querySelector('[data-brand-url-toggle="' + kind + '"]');
+        const urlBox = container.querySelector('[data-brand-url-box="' + kind + '"]');
+        const urlInput = kind === "logo" ? logoUrlInput : favUrlInput;
+
+        const openPicker = () => { if (fileInput) { fileInput.value = ""; fileInput.click(); } };
+
+        if (pickBtn) pickBtn.onclick = (e) => { e.stopPropagation(); openPicker(); };
+        if (drop) {
+          drop.onclick = (e) => {
+            if (e.target.closest("button")) return;
+            openPicker();
+          };
+          drop.onkeydown = (e) => {
+            if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPicker(); }
+          };
+          ["dragenter", "dragover"].forEach(evName => {
+            drop.addEventListener(evName, (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              drop.classList.add("is-dragover");
+            });
+          });
+          ["dragleave", "dragend", "drop"].forEach(evName => {
+            drop.addEventListener(evName, (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              drop.classList.remove("is-dragover");
+            });
+          });
+          drop.addEventListener("drop", (e) => {
+            const files = e.dataTransfer && e.dataTransfer.files;
+            if (files && files[0]) handleUploadFile(kind, files[0]);
+          });
+        }
+
+        if (fileInput) {
+          fileInput.onchange = () => {
+            if (fileInput.files && fileInput.files[0]) handleUploadFile(kind, fileInput.files[0]);
+          };
+        }
+
+        if (remBtn) {
+          remBtn.onclick = async (e) => {
+            e.stopPropagation();
+            try {
+              const res = await API.del("/uploads/branding/" + kind);
+              if (kind === "logo") state.logo_url = "";
+              else state.favicon_url = "";
+              refreshPreviews();
+              syncGlobalBrand(res.data.company || { logo_url: state.logo_url, favicon_url: state.favicon_url, name: state.name, tagline: state.tagline });
+              toast(kind === "logo" ? "Company logo removed" : "Browser favicon removed", "success");
+            } catch (err) { handleErr(err); }
+          };
+        }
+
+        if (urlToggle && urlBox) {
+          urlToggle.onclick = () => {
+            urlBox.classList.toggle("hidden");
+            if (!urlBox.classList.contains("hidden") && urlInput) urlInput.focus();
+          };
+        }
+
+        if (urlInput) {
+          urlInput.oninput = () => {
+            if (kind === "logo") state.logo_url = urlInput.value.trim();
+            else state.favicon_url = urlInput.value.trim();
+            refreshPreviews();
+          };
+          // If standalone (Appearance tab, outside #company-settings-form), apply URL on blur/Enter too
+          if (!container.querySelector("#company-settings-form")) {
+            urlInput.onchange = async () => {
+              const val = urlInput.value.trim();
+              try {
+                const payload = kind === "logo" ? { logo_url: val } : { favicon_url: val };
+                const res = await API.put("/settings/company", { company: payload, platform: {} });
+                syncGlobalBrand(res.data.company);
+                toast("Branding link saved", "success");
+              } catch (err) { handleErr(err); }
+            };
+          }
+        }
+      });
+
+      if (nameInput) nameInput.addEventListener("input", () => { state.name = nameInput.value; refreshPreviews(); });
+      if (taglineInput) taglineInput.addEventListener("input", () => { state.tagline = taglineInput.value; refreshPreviews(); });
+
+      return { syncGlobalBrand, refreshPreviews, state };
+    }
+
     /* ---------------- TAB: APPEARANCE ---------------- */
     if (tab === "appearance") {
-      stage.innerHTML = window.ThemeSettings ? window.ThemeSettings.render() : '<div class="card"><div class="card-body">Theme settings are unavailable.</div></div>';
+      const themeHtml = window.ThemeSettings ? window.ThemeSettings.render() : '<div class="card"><div class="card-body">Theme settings are unavailable.</div></div>';
+      if (isAdmin) {
+        try {
+          const res = await API.get("/settings/company");
+          const c = res.data.company || {};
+          stage.innerHTML = '<div class="stack">' + themeHtml + renderBrandingUploaderHTML(c, false) + '</div>';
+          bindBrandingUploader(stage, c);
+        } catch (err) {
+          stage.innerHTML = themeHtml;
+        }
+      } else {
+        stage.innerHTML = themeHtml;
+      }
       return;
     }
 
@@ -542,15 +840,7 @@ Views.settings = async function (root, params) {
           + '<div class="field full"><label>Headquarters address</label><input class="input" name="c_address" value="' + esc(c.address || "") + '"></div>'
           + '</div></div></div>'
 
-          + '<div class="card"><div class="card-head"><div><h3>Branding — logo, favicon & theme</h3><div class="sub">These update the sidebar, topnav and browser tab instantly</div></div></div>'
-          + '<div class="card-body"><div class="form-grid">'
-          + '<div class="field full"><label>Logo URL (displayed in sidebar and topnav)</label><input class="input" name="c_logo_url" value="' + esc(c.logo_url || "") + '" placeholder="https://…/logo.svg or data:image/…"></div>'
-          + '<div class="field full"><label>Favicon URL (browser tab icon)</label><input class="input" name="c_favicon_url" value="' + esc(c.favicon_url || "") + '" placeholder="https://…/favicon.ico or data:image/…"></div>'
-          + '<div class="field"><label>Theme accent</label><select class="select" name="c_theme">'
-          + [["meridian","Meridian (terracotta)"],["teal","Teal"],["navy","Navy blue"],["plum","Plum"],["emerald","Emerald"]].map(([v,l]) => '<option value="' + v + '"' + ((c.theme || "meridian") === v ? " selected" : "") + '>' + l + '</option>').join("")
-          + '</select></div>'
-          + '<div class="field"><div class="tiny muted" style="margin-bottom:6px">Live preview</div><div class="row" style="gap:10px"><div style="width:44px;height:44px;border-radius:10px;background:var(--accent);display:grid;place-items:center;color:#fff;font-family:var(--serif);font-size:20px">' + esc((c.name || "M").charAt(0)) + '</div><div><b style="font-family:var(--serif);font-size:18px">' + esc(c.name || "Meridian HR") + '</b><div class="tiny muted">' + esc(c.tagline || "People operations") + '</div></div></div></div>'
-          + '</div></div></div>'
+          + renderBrandingUploaderHTML(c, true)
 
           + '<div class="card"><div class="card-head"><div><h3>HR, Attendance & Statutory Payroll Rules</h3><div class="sub">Platform-wide policy parameters applied across modules</div></div></div>'
           + '<div class="card-body"><div class="form-grid">'
@@ -563,6 +853,8 @@ Views.settings = async function (root, params) {
           + '</div></div></div>'
           + '</form>';
 
+        const uploaderCtrl = bindBrandingUploader(stage, c);
+
         stage.querySelector("#company-settings-form").onsubmit = async (ev) => {
           ev.preventDefault();
           const fd = Object.fromEntries(new FormData(ev.target).entries());
@@ -574,7 +866,10 @@ Views.settings = async function (root, params) {
           });
           platform.default_currency = company.currency || "GHS";
           try {
-            await API.put("/settings/company", { company, platform });
+            const saved = await API.put("/settings/company", { company, platform });
+            if (saved && saved.data && saved.data.company) {
+              uploaderCtrl.syncGlobalBrand(saved.data.company);
+            }
             toast("Organisation & policy settings saved", "success");
           } catch (err) { handleErr(err); }
         };
