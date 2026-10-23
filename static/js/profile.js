@@ -132,9 +132,11 @@ function openHrEmployeeEditModal(e, onSaved) {
       { name: "tax_number", label: "TIN / Tax number" },
       { name: "ssnit_number", label: "SSNIT / Pension number" },
       { name: "hire_date", label: "Hire date", type: "date", required: true },
+      { name: "end_date", label: "Contract / attachment end date", type: "date" },
       { name: "probation_end", label: "Probation end date", type: "date" },
       { name: "confirmation_date", label: "Confirmation date", type: "date" },
-      { name: "contract_type", label: "Contract type", type: "select", options: ["permanent", "fixed_term", "casual", "intern"] },
+      { name: "contract_type", label: "Employment Category", type: "select", options: window.EMPLOYMENT_CATEGORY_OPTIONS || ["permanent", "probation", "fixed_term", "part_time", "casual", "intern", "national_service", "consultant"] },
+      { name: "staff_category", label: "Staff Category / Cadre", type: "select", options: window.STAFF_CATEGORY_OPTIONS || ["General / Junior Staff"] },
       { name: "work_location", label: "Work mode", type: "select", options: ["Office", "Hybrid", "Remote"] },
       { name: "status", label: "Employment status", type: "select", options: ["active", "probation", "suspended", "resigned", "terminated"] },
       { name: "department_id", label: "Department", type: "select", options: [{ value: "", label: "—" }, ...deptOptions()] },
@@ -317,9 +319,23 @@ async function viewEmployeeDetail(root, id, initialTab) {
                 + '<div class="progress"><i style="width:' + Math.min(100, Number(g.progress || 0)) + '%"></i></div></div>').join("")
               : '<p class="small muted" style="margin-bottom:12px">No active goals assigned for the current cycle.</p>')
           + '<div class="divider"></div>'
+          + '<div class="row-between"><span class="small">Official Employment Letter</span>'
+          + '<button class="btn btn-sm btn-teal" id="overview-open-letter">' + icon("printer", 12) + ' ' + esc((e.employment_letter && e.employment_letter.category_label) || "View Letter") + '</button></div>'
+          + '<div class="divider"></div>'
           + '<div class="row-between"><span class="small">Company policies acknowledged</span>'
           + '<button class="btn btn-sm btn-ghost" data-switch-tab="documents">' + ackedCount + ' / ' + policyList.length + ' signed →</button></div>'
-          + (e.account ? '<div class="divider"></div><div class="row-between"><span class="small">Portal access & MFA</span><span class="row" style="gap:6px"><span class="chip teal">' + esc(e.account.role || "User") + '</span>' + (e.account.mfa_enabled ? '<span class="chip green">MFA On</span>' : '<span class="chip grey">MFA Off</span>') + '</span></div>' : '')
+          + (e.account
+              ? '<div class="divider"></div><div class="row-between"><span class="small">Portal login (<span class="mono">@' + esc(e.account.username || "") + '</span>)</span>'
+                + '<span class="row" style="gap:6px"><span class="chip teal">' + esc(e.account.role || "User") + '</span>'
+                + (canManage ? '<button class="btn btn-sm btn-ghost" id="overview-send-creds">' + icon("key", 12) + ' Send Login</button>' : '')
+                + '</span></div>'
+              : (canManage
+                  ? '<div class="divider"></div><div class="row-between"><span class="small">Portal account</span><button class="btn btn-sm btn-accent" id="overview-send-creds">' + icon("key", 12) + ' Create & Email Login</button></div>'
+                  : ''))
+          + ((e.credential_deliveries && e.credential_deliveries.length)
+              ? '<div class="divider"></div><div class="row-between"><span class="tiny muted">Last email: ' + esc(e.credential_deliveries[0].recipient) + ' (' + esc(e.credential_deliveries[0].status) + ')</span>'
+                + '<button class="btn btn-sm btn-ghost" data-prev-cred-del="' + e.credential_deliveries[0].id + '">View Email</button></div>'
+              : '')
           + '</div></div>'
           + '</div>';
       }
@@ -651,11 +667,12 @@ async function viewEmployeeDetail(root, id, initialTab) {
       /* ===================== HERO + PAGE SHELL ===================== */
       const topActions = '<div class="row" style="flex-wrap:wrap;gap:8px">'
         + (!e.is_self ? '<button class="btn btn-ghost" onclick="go(\'employees\')">' + icon("arrowLeft", 14) + ' Directory</button>' : '')
-        + '<button class="btn btn-ghost" id="btn-print-profile">' + icon("printer", 14) + ' Print summary</button>'
-        + (e.is_self ? '<button class="btn btn-ghost" onclick="go(\'settings/notifications\')">' + icon("bell", 14) + ' Alert prefs</button>' : '')
+        + '<button class="btn btn-teal" id="btn-emp-letter">' + icon("printer", 14) + ' Employment Letter</button>'
+        + (canManage ? '<button class="btn btn-soft" id="btn-emp-send-creds">' + icon("key", 14) + ' Send Credentials</button>' : '')
+        + '<button class="btn btn-ghost" id="btn-print-profile">' + icon("file", 14) + ' Print summary</button>'
         + (canSelfOrHr ? '<button class="btn btn-ghost" id="btn-self-edit">' + icon("user", 14) + ' Edit personal</button>' : '')
         + (canManage ? '<button class="btn btn-accent" id="btn-hr-edit">' + icon("edit", 14) + ' Edit HR record</button>' : '')
-        + (canManage && !e.is_self ? '<button class="btn btn-soft" id="btn-status-change">' + icon("refresh", 14) + ' Status</button>' : '')
+        + (canManage && !e.is_self ? '<button class="btn btn-ghost" id="btn-status-change">' + icon("refresh", 14) + ' Status</button>' : '')
         + '</div>';
 
       root.innerHTML = '<div class="page-enter">'
@@ -720,6 +737,22 @@ async function viewEmployeeDetail(root, id, initialTab) {
 
       const printBtn = root.querySelector("#btn-print-profile");
       if (printBtn) printBtn.onclick = () => printProfileSummary(e);
+
+      const empLetterBtn = root.querySelector("#btn-emp-letter");
+      if (empLetterBtn) empLetterBtn.onclick = () => openEmploymentLetterModal(e.id, loadAndRender);
+      const ovLetterBtn = root.querySelector("#overview-open-letter");
+      if (ovLetterBtn) ovLetterBtn.onclick = () => openEmploymentLetterModal(e.id, loadAndRender);
+
+      const empCredsBtn = root.querySelector("#btn-emp-send-creds");
+      if (empCredsBtn) empCredsBtn.onclick = () => openSendCredentialsModal({
+        ...e, username: e.account ? e.account.username : "",
+      }, loadAndRender);
+      const ovCredsBtn = root.querySelector("#overview-send-creds");
+      if (ovCredsBtn) ovCredsBtn.onclick = () => openSendCredentialsModal({
+        ...e, username: e.account ? e.account.username : "",
+      }, loadAndRender);
+
+      root.querySelectorAll("[data-prev-cred-del]").forEach(b => b.onclick = () => openDeliveryPreviewModal(b.dataset.prevCredDel, loadAndRender));
 
       const selfBtn = root.querySelector("#btn-self-edit");
       if (selfBtn) selfBtn.onclick = () => openSelfEditModal(e, loadAndRender);

@@ -97,15 +97,29 @@ Views.dashboard = async function (root) {
       + '<div class="body"><b>' + esc(u.title) + '</b><span>' + esc(u.sub) + '</span></div></div>').join("")
       : '<p class="small muted">Nothing upcoming in the next 45 days.</p>';
 
+    const onboardingBanner = (user.must_change_password || user.role_slug === "employee")
+      ? '<div class="callout-banner ' + (user.must_change_password ? "amber" : "green") + '" style="margin-bottom:16px;flex-wrap:wrap">'
+        + '<div><b>' + (user.must_change_password ? "Welcome to " + esc(d.company.name) + "! Temporary Password Active:" : "Your Official Appointment Documents:") + '</b> '
+        + (user.must_change_password
+            ? 'You signed in using a temporary password. You can view and print your official category Employment Letter now, and set your personal password at any time.'
+            : 'View, digitally countersign, or print your official Employment Letter at any time.')
+        + '</div>'
+        + '<div class="row" style="gap:8px">'
+        + '  <button class="btn btn-sm btn-teal" id="dash-open-my-letter">' + icon("printer", 13) + ' My Employment Letter</button>'
+        +    (user.must_change_password ? '<button class="btn btn-sm btn-accent" id="dash-change-pw">' + icon("lock", 13) + ' Update Password</button>' : '')
+        + '</div></div>'
+      : '';
+
     const quickLaunch = '<div class="quick-launch-bar" style="margin-bottom:18px">'
       + '<button class="quick-tile" id="ql-profile"><span class="qt-icon teal">' + icon("user", 16) + '</span><div><b>My 360° File</b><span>Contracts & skills</span></div></button>'
-      + '<button class="quick-tile" id="ql-leave"><span class="qt-icon accent">' + icon("calendar", 16) + '</span><div><b>Request Leave</b><span>Book time off</span></div></button>'
-      + '<button class="quick-tile" id="ql-claim"><span class="qt-icon blue">' + icon("receipt", 16) + '</span><div><b>Expense Claim</b><span>Submit receipt</span></div></button>'
+      + '<button class="quick-tile" id="ql-letter"><span class="qt-icon accent">' + icon("file", 16) + '</span><div><b>Employment Letter</b><span>View, sign & print PDF</span></div></button>'
+      + '<button class="quick-tile" id="ql-leave"><span class="qt-icon blue">' + icon("calendar", 16) + '</span><div><b>Request Leave</b><span>Book time off</span></div></button>'
       + '<button class="quick-tile" id="ql-payslips"><span class="qt-icon purple">' + icon("wallet", 16) + '</span><div><b>Payslips</b><span>Compensation & tax</span></div></button>'
       + '<button class="quick-tile" id="ql-cmd"><span class="qt-icon teal">' + icon("zap", 16) + '</span><div><b>Quick Jump</b><span>Press Ctrl+K / ⌘K</span></div></button>'
       + '</div>';
 
     root.innerHTML = pageHead("Overview", greeting + ", " + user.name.split(" ")[0] + " — here is the people pulse for today.", "", "Workspace")
+      + onboardingBanner
       + '<div class="hero-strip" style="margin-bottom:16px"><div class="row-between wrap" style="gap:16px"><div>'
       + '<div class="eyebrow">' + new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) + '</div>'
       + '<h2>' + esc(d.company.name) + ' · people at a glance</h2>'
@@ -140,8 +154,13 @@ Views.dashboard = async function (root) {
     const qa = root.querySelector("#quick-approvals");
     if (qa) qa.onclick = () => go("approvals");
     root.querySelector("#ql-profile").onclick = () => { if (Store.user && Store.user.employee_id) openEmployeeProfile(Store.user.employee_id); else go("settings"); };
+    const qlLet = root.querySelector("#ql-letter");
+    if (qlLet) qlLet.onclick = () => go("employment-letters");
+    const dashLet = root.querySelector("#dash-open-my-letter");
+    if (dashLet) dashLet.onclick = () => go("employment-letters");
+    const dashPw = root.querySelector("#dash-change-pw");
+    if (dashPw) dashPw.onclick = () => go("settings/account");
     root.querySelector("#ql-leave").onclick = () => openLeaveForm();
-    root.querySelector("#ql-claim").onclick = () => { go("expenses"); setTimeout(() => { if (typeof openClaimForm === "function") openClaimForm(); }, 180); };
     root.querySelector("#ql-payslips").onclick = () => { if (typeof payState !== "undefined") payState.tab = "payslips"; go("payroll"); };
     root.querySelector("#ql-cmd").onclick = () => { if (typeof openCommandPalette === "function") openCommandPalette(""); };
     bindApprovalButtons(root);
@@ -391,10 +410,17 @@ async function drawEmployees(root) {
         { label: "Designation", key: "designation_title", render: r => '<b>' + esc(r.designation_title || "—") + '</b>' + (r.grade_name ? '<div class="tiny muted">' + esc(r.grade_name) + '</div>' : '') },
         { label: "Location", key: "branch_name", render: r => esc(r.branch_name || "—") },
         { label: "Work mode", key: "work_location", render: r => '<span class="pill-tag" style="text-transform:capitalize">' + esc(r.work_location || "office") + '</span>' },
-        { label: "Contract", key: "contract_type", render: r => '<span style="text-transform:capitalize">' + esc((r.contract_type || "").replace("_", " ")) + '</span>' },
+        { label: "Category", key: "contract_type", render: r => '<span class="chip teal" style="font-size:10.5px">' + esc(r.category_label || (r.contract_type || "").replace("_", " ")) + '</span>' + (r.staff_category ? '<div class="tiny muted" style="margin-top:2px">' + esc(r.staff_category) + '</div>' : '') },
         { label: "Joined", key: "hire_date", render: r => fmtDate(r.hire_date) },
         { label: "Status", key: "status", render: r => chip(r.status) },
-        { label: "", class: "right", sortable: false, render: r => '<button class="btn btn-sm btn-ghost" data-open-emp="' + r.id + '">360° File ' + icon("arrowRight", 12) + '</button>' },
+        {
+          label: "", class: "right", sortable: false,
+          render: r => '<div class="row" style="justify-content:flex-end;gap:4px">'
+            + '<button class="btn btn-sm btn-soft" title="View & print category employment letter" data-emp-letter="' + r.id + '">' + icon("printer", 12) + ' Letter</button>'
+            + (canManage ? '<button class="btn btn-sm btn-ghost" title="Send or reset portal username & password" data-emp-creds="' + r.id + '">' + icon("key", 12) + '</button>' : '')
+            + '<button class="btn btn-sm btn-ghost" data-open-emp="' + r.id + '">360° ' + icon("arrowRight", 12) + '</button>'
+            + '</div>',
+        },
       ],
       rows: rows,
       onRowClick: (row) => go("employees/" + row.id),
@@ -455,6 +481,15 @@ async function drawEmployees(root) {
     ev.stopPropagation();
     go("employees/" + el.dataset.openEmp);
   });
+  onDelegate(root, "click", "[data-emp-letter]", (el, ev) => {
+    ev.stopPropagation();
+    openEmploymentLetterModal(Number(el.dataset.empLetter), () => drawEmployees(root));
+  });
+  onDelegate(root, "click", "[data-emp-creds]", (el, ev) => {
+    ev.stopPropagation();
+    const row = rows.find(x => Number(x.id) === Number(el.dataset.empCreds));
+    if (row) openSendCredentialsModal(row, () => drawEmployees(root));
+  });
   const add = root.querySelector("#emp-add");
   if (add) add.onclick = () => openEmployeeForm();
   const imp = root.querySelector("#emp-import");
@@ -473,46 +508,74 @@ async function drawEmployees(root) {
 
 function openEmployeeForm(existing) {
   const e = existing || {};
+  const catOpts = window.EMPLOYMENT_CATEGORY_OPTIONS || ["permanent", "probation", "fixed_term", "part_time", "casual", "intern", "national_service", "consultant"];
+  const staffCatOpts = window.STAFF_CATEGORY_OPTIONS || ["Executive / Leadership", "Management / Senior Staff", "Supervisory / Mid-Level", "Technical / Specialist", "Operations / Frontline", "General / Junior Staff", "Trainee / Attachment"];
+  const roleOpts = [{ value: "", label: "Employee (Standard Self-Service)" }]
+    .concat((Store.meta && Store.meta.roles ? Store.meta.roles : []).map(r => ({ value: r.id, label: r.name })));
+
+  const baseFields = [
+    { name: "first_name", label: "First name", required: true, value: e.first_name },
+    { name: "last_name", label: "Last name", required: true, value: e.last_name },
+    { name: "email", label: "Registered login email (work or personal)", type: "email", required: true, value: e.email, placeholder: "employee@gmail.com or name@company.com" },
+    { name: "personal_email", label: "Secondary / personal email (optional)", type: "email", value: e.personal_email, placeholder: "backup@gmail.com" },
+    { name: "phone", label: "Mobile phone", value: e.phone, placeholder: "+233 24 000 0000" },
+    { name: "gender", label: "Gender", type: "select", options: ["female", "male", "other"], value: e.gender, placeholder: "Select…" },
+    { name: "dob", label: "Date of birth", type: "date", value: e.dob },
+    { name: "marital_status", label: "Marital status", type: "select", options: ["single", "married", "divorced", "widowed"], value: e.marital_status, placeholder: "Select…" },
+    { name: "nationality", label: "Nationality", value: e.nationality || "Ghanaian" },
+    { name: "department_id", label: "Department", type: "select", options: deptOptions(), value: e.department_id, required: true, placeholder: "Select…" },
+    { name: "designation_id", label: "Designation / Job Title", type: "select", options: designationOptions(), value: e.designation_id, placeholder: "Select…" },
+    { name: "branch_id", label: "Branch", type: "select", options: optionsFrom(Store.meta.branches, "name", "id"), value: e.branch_id },
+    { name: "manager_id", label: "Reports to", type: "select", options: employeeOptions(), value: e.manager_id, placeholder: "No manager" },
+    { name: "grade_id", label: "Pay Grade", type: "select", options: optionsFrom(Store.meta.grades, "name", "id"), value: e.grade_id },
+    { name: "contract_type", label: "Employment Category (determines Employment Letter)", type: "select", options: catOpts, value: e.contract_type || "permanent", required: true },
+    { name: "staff_category", label: "Staff Category / Cadre", type: "select", options: staffCatOpts, value: e.staff_category || "General / Junior Staff" },
+    { name: "work_location", label: "Work arrangement", type: "select", options: ["office", "hybrid", "remote"], value: e.work_location || "office" },
+    { name: "hire_date", label: "Effective start / hire date", type: "date", value: e.hire_date || todayISO(), required: true },
+    { name: "end_date", label: "Contract / attachment end date (optional)", type: "date", value: e.end_date },
+    { name: "status", label: "Employment status", type: "select", options: ["active", "probation", "suspended", "resigned", "terminated"], value: e.status || "active" },
+    { name: "basic_salary", label: "Monthly basic salary / stipend (GHS)", type: "number", value: e.basic_salary, step: "0.01", min: 0 },
+    { name: "city", label: "City", value: e.city || "Accra" },
+    { name: "address", label: "Residential address", value: e.address, full: true },
+    { name: "national_id", label: "National ID (Ghana Card)", value: e.national_id },
+    { name: "tax_number", label: "TIN / Tax number", value: e.tax_number },
+    { name: "ssnit_number", label: "SSNIT number", value: e.ssnit_number },
+    { name: "photo_url", label: "Photo URL (optional)", value: e.photo_url },
+  ];
+
+  if (!existing) {
+    baseFields.push(
+      { name: "role_id", label: "Portal Access Role", type: "select", options: roleOpts, value: "" },
+      { name: "username", label: "Portal Username (blank = auto-generate)", placeholder: "e.g. firstname.lastname" },
+      { name: "password", label: "Initial Password (blank = auto-generate)", placeholder: "Leave blank to generate secure password" },
+      { name: "send_credentials", label: "Create portal login account & email Username + Password + Employment Letter link immediately", type: "checkbox", value: true, full: true }
+    );
+  }
+
   formModal({
-    title: existing ? "Edit employee" : "Add employee",
-    sub: existing ? "Update " + (e.first_name + " " + e.last_name) : "Create a new employee master record",
+    title: existing ? "Edit employee" : "Add employee & issue appointment letter",
+    sub: existing
+      ? "Update " + (e.first_name + " " + e.last_name)
+      : "Creates employee profile, category-specific Employment Letter, and emails portal login credentials.",
     wide: true,
-    submitLabel: existing ? "Save changes" : "Create employee",
-    successMessage: existing ? "Employee updated" : "Employee created",
-    fields: [
-      { name: "first_name", label: "First name", required: true, value: e.first_name },
-      { name: "last_name", label: "Last name", required: true, value: e.last_name },
-      { name: "email", label: "Work email", type: "email", value: e.email },
-      { name: "phone", label: "Phone", value: e.phone },
-      { name: "gender", label: "Gender", type: "select", options: ["female", "male", "other"], value: e.gender, placeholder: "Select…" },
-      { name: "dob", label: "Date of birth", type: "date", value: e.dob },
-      { name: "marital_status", label: "Marital status", type: "select", options: ["single", "married", "divorced", "widowed"], value: e.marital_status, placeholder: "Select…" },
-      { name: "nationality", label: "Nationality", value: e.nationality || "Ghanaian" },
-      { name: "department_id", label: "Department", type: "select", options: deptOptions(), value: e.department_id, required: true, placeholder: "Select…" },
-      { name: "designation_id", label: "Designation", type: "select", options: designationOptions(), value: e.designation_id, placeholder: "Select…" },
-      { name: "branch_id", label: "Branch", type: "select", options: optionsFrom(Store.meta.branches, "name", "id"), value: e.branch_id },
-      { name: "manager_id", label: "Reports to", type: "select", options: employeeOptions(), value: e.manager_id, placeholder: "No manager" },
-      { name: "grade_id", label: "Grade", type: "select", options: optionsFrom(Store.meta.grades, "name", "id"), value: e.grade_id },
-      { name: "contract_type", label: "Contract type", type: "select", options: ["permanent", "fixed_term", "casual", "intern"], value: e.contract_type || "permanent" },
-      { name: "work_location", label: "Work arrangement", type: "select", options: ["office", "hybrid", "remote"], value: e.work_location || "office" },
-      { name: "hire_date", label: "Hire date", type: "date", value: e.hire_date || todayISO(), required: true },
-      { name: "status", label: "Status", type: "select", options: ["active", "probation", "suspended", "resigned", "terminated"], value: e.status || "active" },
-      { name: "basic_salary", label: "Basic salary (GHS)", type: "number", value: e.basic_salary, step: "0.01", min: 0 },
-      { name: "city", label: "City", value: e.city || "Accra" },
-      { name: "address", label: "Address", value: e.address, full: true },
-      { name: "national_id", label: "National ID", value: e.national_id },
-      { name: "tax_number", label: "Tax number", value: e.tax_number },
-      { name: "ssnit_number", label: "SSNIT number", value: e.ssnit_number },
-      { name: "photo_url", label: "Photo URL", value: e.photo_url },
-    ],
+    submitLabel: existing ? "Save changes" : "Create employee & send credentials",
+    successMessage: existing ? "Employee updated" : "Employee created & onboarding prepared",
+    fields: baseFields,
     onSubmit: async (data) => {
       const payload = { ...data };
-      ["department_id", "designation_id", "branch_id", "manager_id", "grade_id"].forEach(k => { if (!payload[k]) delete payload[k]; });
-      if (payload.basic_salary === null) payload.basic_salary = 0;
-      if (existing) await API.put("/employees/" + existing.id, payload);
-      else await API.post("/employees", payload);
+      ["department_id", "designation_id", "branch_id", "manager_id", "grade_id", "role_id"].forEach(k => { if (!payload[k]) delete payload[k]; });
+      if (payload.basic_salary === null || payload.basic_salary === "") payload.basic_salary = 0;
+      let savedRes = null;
+      if (existing) {
+        savedRes = await API.put("/employees/" + existing.id, payload);
+      } else {
+        savedRes = await API.post("/employees", payload);
+      }
       await Store.loadMeta();
-      navigate();
+      await navigate();
+      if (!existing && savedRes && savedRes.data && savedRes.data.credentials_dispatch) {
+        setTimeout(() => openCredentialsDispatchModal(savedRes.data.credentials_dispatch, savedRes.data), 120);
+      }
     },
   });
 }

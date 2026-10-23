@@ -18,7 +18,7 @@ from werkzeug.utils import secure_filename
 from models import (
     db, Role, User, Company, BrandingAsset, Branch, Department, Designation, Grade, Employee,
     EmployeeContact, Dependant, BankAccount, EmploymentHistory, EmployeeSkill,
-    EmployeeEducation, Contract, Document, Policy, PolicyAck, JobRequisition,
+    EmployeeEducation, Contract, Document, EmploymentLetter, Policy, PolicyAck, JobRequisition,
     JobPosting, Candidate, Application, Interview, OnboardingTemplate, OnboardingTask,
     Offboarding, Shift, Attendance, AttendanceCorrection, LeaveType, LeaveBalance,
     LeaveRequest, Holiday, SalaryComponent, SalaryStructure, TaxBand, PayrollRun,
@@ -29,6 +29,7 @@ from models import (
     LoginHistory,
 )
 import messaging
+import letters
 from seed import seed, _paye
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -53,12 +54,17 @@ def ensure_schema():
     insp = sqla_inspect(db.engine)
     tables = set(insp.get_table_names())
     alterations = {
+        "users": [
+            ("username", "VARCHAR(80)"),
+        ],
         "employees": [
             ("bio", "TEXT"),
             ("personal_email", "VARCHAR(180)"),
             ("blood_group", "VARCHAR(10)"),
             ("linkedin_url", "VARCHAR(255)"),
             ("work_location", "VARCHAR(80) DEFAULT 'Office'"),
+            ("end_date", "DATE"),
+            ("staff_category", "VARCHAR(60) DEFAULT 'General Staff'"),
         ],
         "announcements": [
             ("branch_id", "INTEGER"),
@@ -76,6 +82,7 @@ def ensure_schema():
         "notification_deliveries": [
             ("event_id", "INTEGER"),
             ("body", "TEXT"),
+            ("html_body", "TEXT"),
         ],
         "companies": [
             ("city", "VARCHAR(80) DEFAULT 'Accra'"),
@@ -107,9 +114,22 @@ def ensure_delivery_settings():
         full = "delivery." + key
         if not Setting.query.filter_by(key=full).first():
             db.session.add(Setting(key=full, value=value, group_name="delivery"))
-    if not Setting.query.filter_by(key="delivery.event_routing").first():
+    routing_row = Setting.query.filter_by(key="delivery.event_routing").first()
+    if not routing_row:
         db.session.add(Setting(key="delivery.event_routing",
                                value=json.dumps(messaging.DEFAULT_ROUTING), group_name="delivery"))
+    else:
+        try:
+            saved = json.loads(routing_row.value or "{}")
+        except ValueError:
+            saved = {}
+        updated = False
+        for k, v in messaging.DEFAULT_ROUTING.items():
+            if k not in saved:
+                saved[k] = dict(v)
+                updated = True
+        if updated:
+            routing_row.value = json.dumps(saved)
     db.session.commit()
 
 
@@ -144,14 +164,16 @@ def ensure_demo_enrichment():
         if not emp.blood_group:
             emp.blood_group = blood_groups[idx % len(blood_groups)]
             changed = True
-        if not emp.personal_email:
-            emp.personal_email = f"{emp.first_name.lower()}.{emp.last_name.lower()}@gmail.com"
+        slug_first = re.sub(r"[^a-z0-9]+", ".", (emp.first_name or "").lower()).strip(".") or "staff"
+        slug_last = re.sub(r"[^a-z0-9]+", ".", (emp.last_name or "").lower()).strip(".") or "member"
+        if not emp.personal_email or " " in emp.personal_email:
+            emp.personal_email = f"{slug_first}.{slug_last}@gmail.com"
             changed = True
         if not emp.work_location or emp.work_location == "Office":
             emp.work_location = work_locs[idx % len(work_locs)]
             changed = True
-        if not emp.linkedin_url:
-            emp.linkedin_url = f"https://linkedin.com/in/{emp.first_name.lower()}-{emp.last_name.lower()}"
+        if not emp.linkedin_url or " " in emp.linkedin_url:
+            emp.linkedin_url = f"https://linkedin.com/in/{slug_first.replace('.', '-')}-{slug_last.replace('.', '-')}"
             changed = True
 
     if EmployeeSkill.query.count() == 0:
@@ -321,6 +343,53 @@ def ensure_demo_enrichment():
                 n.category = "General"
                 changed = True
 
+    # Ensure every existing user has a clean unique username
+    for u in User.query.filter(User.deleted_at.is_(None)).order_by(User.id.asc()).all():
+        if not u.username:
+            u.username = generate_unique_username(emp=u.employee, email=u.email, exclude_user_id=u.id)
+            changed = True
+
+    # Ensure every active/probation employee has staff_category, contract, employment letter, and user account
+    for emp in employees:
+        inferred_sc = letters.infer_staff_category(emp)
+        if not emp.staff_category or emp.staff_category == "General Staff":
+            emp.staff_category = inferred_sc
+            changed = True
+            let_existing = EmploymentLetter.query.filter_by(employee_id=emp.id).first()
+            if let_existing and (not let_existing.staff_category or let_existing.staff_category == "General Staff"):
+                let_existing.staff_category = inferred_sc
+        existing_user = User.query.filter_by(employee_id=emp.id).first()
+        if not existing_user and (emp.email or emp.personal_email):
+            init_pw = f"Awh@2026#{emp.id:02d}"
+            provision_employee_onboarding(
+                emp,
+                data={"password": init_pw, "must_change_password": True},
+                portal_base="http://localhost:5000",
+                send_email_flag=True,
+            )
+            changed = True
+        else:
+            if not Contract.query.filter_by(employee_id=emp.id).first():
+                db.session.add(Contract(
+                    employee_id=emp.id,
+                    type=emp.contract_type or "permanent",
+                    start_date=emp.hire_date or date.today(),
+                    end_date=emp.end_date,
+                    status="active",
+                ))
+                changed = True
+            letter_obj = letters.ensure_letter_for_employee(emp)
+            if not Document.query.filter_by(employee_id=emp.id, category="employment_letter").first():
+                tpl = letters.get_merged_templates().get(letter_obj.category_key, {})
+                db.session.add(Document(
+                    employee_id=emp.id,
+                    category="employment_letter",
+                    title=f"{tpl.get('letter_title', 'Employment Letter').title()} ({letter_obj.reference_no})",
+                    file_name=f"{emp.employee_no}-{letter_obj.category_key}-letter.pdf",
+                    notes=f"Official {tpl.get('label', emp.contract_type)} appointment letter",
+                ))
+                changed = True
+
     if changed:
         db.session.commit()
 
@@ -338,9 +407,9 @@ def bootstrap_database():
 READ_ONLY = {"auditor"}
 
 READ_PERMS = {
-    "users": {"super_admin"},
-    "roles": {"super_admin"},
-    "settings": {"super_admin"},
+    "users": {"super_admin", "hr_admin"},
+    "roles": {"super_admin", "hr_admin"},
+    "settings": {"super_admin", "hr_admin"},
     "audit-logs": {"super_admin", "auditor"},
     "payroll-runs": {"super_admin", "hr_admin", "payroll", "auditor"},
     "salary-components": {"super_admin", "hr_admin", "payroll", "auditor"},
@@ -384,7 +453,7 @@ WRITE_PERMS = {
     "grades": {"super_admin", "hr_admin"},
     "branches": {"super_admin", "hr_admin"},
     "companies": {"super_admin", "hr_admin"},
-    "users": {"super_admin"},
+    "users": {"super_admin", "hr_admin"},
     "roles": {"super_admin"},
     "settings": {"super_admin", "hr_admin"},
     "documents": {"super_admin", "hr_admin", "hr_officer"},
@@ -614,28 +683,340 @@ def notify(user_id, title, body, link="/app", category="general", event_key=None
                                     category=category, event_key=event_key))
 
 
-def public_app_link(link):
-    host = request.headers.get("X-Forwarded-Host") or request.host
-    scheme = request.headers.get("X-Forwarded-Proto") or request.scheme
+def public_app_link(link, base_override=None):
+    if base_override:
+        base = base_override.rstrip("/")
+    else:
+        try:
+            host = request.headers.get("X-Forwarded-Host") or request.host
+            scheme = request.headers.get("X-Forwarded-Proto") or request.scheme
+            base = f"{scheme}://{host}"
+        except RuntimeError:
+            base = os.environ.get("PUBLIC_APP_URL", "http://localhost:5000").rstrip("/")
     if link.startswith("/app"):
         path = link[4:] or "/"
     elif link.startswith("/"):
         path = link
     else:
         path = "/" + link
-    return f"{scheme}://{host}/#{path}"
+    return f"{base}/#{path}"
 
 
 def _record_delivery(result, user, event_key, channel, recipient, subject,
-                     body=None, notification_id=None, announcement_id=None, event_id=None):
-    db.session.add(NotificationDelivery(
+                     body=None, html_body=None, notification_id=None, announcement_id=None, event_id=None):
+    rec = NotificationDelivery(
         notification_id=notification_id, announcement_id=announcement_id, event_id=event_id,
         user_id=user.id if user else None, event_key=event_key, channel=channel,
-        recipient=recipient, subject=(subject or "")[:255], body=body,
+        recipient=recipient, subject=(subject or "")[:255], body=body, html_body=html_body,
         status=result.get("status", "failed"),
         error=result.get("error"), provider_ref=result.get("ref"),
         sent_at=datetime.utcnow() if result.get("ok") else None,
-    ))
+    )
+    db.session.add(rec)
+    db.session.flush()
+    return rec
+
+
+_VALID_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _clean_username_token(raw):
+    cleaned = re.sub(r"[^a-z0-9._-]+", "", (raw or "").strip().lower())
+    cleaned = re.sub(r"[._-]{2,}", ".", cleaned).strip("._-")
+    return cleaned[:60]
+
+
+def generate_unique_username(emp=None, email=None, preferred=None, exclude_user_id=None):
+    candidates = []
+    if preferred:
+        candidates.append(_clean_username_token(preferred))
+    if emp:
+        first_tok = _clean_username_token((emp.first_name or "").split()[0] if emp.first_name else "")
+        last_tok = _clean_username_token((emp.last_name or "").split()[-1] if emp.last_name else "")
+        if first_tok and last_tok:
+            candidates.append(f"{first_tok}.{last_tok}")
+            candidates.append(f"{first_tok[0]}{last_tok}")
+    raw_mail = email or (emp.email if emp else "") or ""
+    if "@" in raw_mail:
+        candidates.append(_clean_username_token(raw_mail.split("@", 1)[0]))
+    if emp and emp.employee_no:
+        candidates.append(_clean_username_token(emp.employee_no))
+    base = next((c for c in candidates if len(c) >= 3), "staff.user")
+    attempt = base
+    n = 2
+    while True:
+        q = User.query.filter(func.lower(User.username) == attempt.lower())
+        if exclude_user_id:
+            q = q.filter(User.id != exclude_user_id)
+        if not q.first():
+            return attempt
+        attempt = f"{base}{n}"
+        n += 1
+
+
+def generate_temp_password(comp=None):
+    comp = comp or Company.query.first()
+    prefix = "".join(ch for ch in (comp.name if comp and comp.name else "Mhr") if ch.isalpha())[:3].capitalize() or "Mhr"
+    alphabet_digits = "23456789"
+    alphabet_upper = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+    digits = "".join(secrets.choice(alphabet_digits) for _ in range(4))
+    tail = "".join(secrets.choice(alphabet_upper) for _ in range(2))
+    return f"{prefix}@{digits}{tail}"
+
+
+def provision_employee_onboarding(emp, data=None, actor=None, portal_base=None,
+                                  reset_existing=False, send_email_flag=True):
+    """Create or update portal login account, employment letter, contract & dispatch welcome email."""
+    data = data or {}
+    comp = Company.query.first()
+    company_name = (comp.name if comp and comp.name else "Meridian HR").strip()
+    company_legal = (comp.legal_name if comp and comp.legal_name else company_name).strip()
+
+    if not emp.staff_category:
+        emp.staff_category = letters.infer_staff_category(emp)
+
+    # Ensure Contract record exists
+    contract = Contract.query.filter_by(employee_id=emp.id).order_by(Contract.id.desc()).first()
+    if not contract:
+        contract = Contract(
+            employee_id=emp.id,
+            type=emp.contract_type or "permanent",
+            start_date=emp.hire_date or date.today(),
+            end_date=emp.end_date,
+            status="active",
+        )
+        db.session.add(contract)
+    else:
+        contract.type = emp.contract_type or contract.type
+        if emp.end_date:
+            contract.end_date = emp.end_date
+
+    # Ensure Employment Letter + Document Vault entry exist
+    letter_obj = letters.ensure_letter_for_employee(emp, sync_category=True)
+    tpl = letters.get_merged_templates().get(letter_obj.category_key, {})
+    cat_label = tpl.get("label", (emp.contract_type or "Permanent").replace("_", " ").title())
+    doc_entry = Document.query.filter_by(employee_id=emp.id, category="employment_letter").first()
+    doc_title = f"{tpl.get('letter_title', 'Employment Letter').title()} ({letter_obj.reference_no})"
+    if not doc_entry:
+        db.session.add(Document(
+            employee_id=emp.id,
+            category="employment_letter",
+            title=doc_title,
+            file_name=f"{emp.employee_no}-{letter_obj.category_key}-letter.pdf",
+            notes=f"Official {cat_label} appointment letter ({emp.staff_category})",
+            uploaded_by=actor.id if actor else None,
+        ))
+    else:
+        doc_entry.title = doc_title
+
+    # Ensure initial EmploymentHistory hired entry exists
+    if EmploymentHistory.query.filter_by(employee_id=emp.id).count() == 0:
+        role_desc = emp.designation.title if emp.designation else "Staff Member"
+        dept_desc = emp.department.name if emp.department else "General"
+        db.session.add(EmploymentHistory(
+            employee_id=emp.id,
+            effective_date=emp.hire_date or date.today(),
+            event_type="hired",
+            to_value=f"{role_desc} · {dept_desc}",
+            notes=f"Appointed under {cat_label} ({emp.staff_category})",
+        ))
+
+    # Ensure standard leave balances exist for current year
+    yr = date.today().year
+    for lt in LeaveType.query.all():
+        if not LeaveBalance.query.filter_by(employee_id=emp.id, leave_type_id=lt.id, year=yr).first():
+            db.session.add(LeaveBalance(
+                employee_id=emp.id, leave_type_id=lt.id, year=yr,
+                entitled=lt.days_per_year or 0, taken=0, pending=0,
+            ))
+
+    # Determine whether to create/update User login account
+    create_account = data.get("create_account")
+    if create_account is None:
+        create_account = True
+    else:
+        create_account = str(create_account).lower() not in ("0", "false", "no", "off")
+
+    login_email = (emp.email or emp.personal_email or "").strip().lower()
+    if not create_account or not login_email:
+        return {
+            "account_created": False,
+            "email_sent": False,
+            "reason": "Account creation skipped or no email address provided",
+            "letter_reference": letter_obj.reference_no,
+            "category_label": cat_label,
+        }
+
+    linked_user = User.query.filter_by(employee_id=emp.id).first()
+    if not linked_user:
+        linked_user = User.query.filter(func.lower(User.email) == login_email).first()
+
+    role_id = data.get("role_id")
+    if role_id:
+        role_obj = db.session.get(Role, int(role_id))
+    elif data.get("role_slug"):
+        role_obj = Role.query.filter_by(slug=data["role_slug"]).first()
+    else:
+        role_obj = None
+    if not role_obj:
+        role_obj = Role.query.filter_by(slug="employee").first()
+
+    supplied_password = (data.get("password") or "").strip()
+    plain_password = None
+    account_created = False
+
+    if not linked_user:
+        plain_password = supplied_password or generate_temp_password(comp)
+        uname = generate_unique_username(emp=emp, email=login_email, preferred=data.get("username"))
+        must_change = data.get("must_change_password")
+        if must_change is None:
+            must_change = True
+        else:
+            must_change = str(must_change).lower() not in ("0", "false", "no", "off")
+        linked_user = User(
+            username=uname,
+            email=login_email,
+            password_hash=generate_password_hash(plain_password),
+            employee_id=emp.id,
+            role_id=role_obj.id if role_obj else 7,
+            status="active",
+            must_change_password=bool(must_change),
+        )
+        db.session.add(linked_user)
+        db.session.flush()
+        account_created = True
+    else:
+        linked_user.employee_id = emp.id
+        linked_user.status = "active"
+        if not linked_user.username or data.get("username"):
+            linked_user.username = generate_unique_username(
+                emp=emp, email=login_email,
+                preferred=data.get("username") or linked_user.username,
+                exclude_user_id=linked_user.id,
+            )
+        if login_email and linked_user.email.lower() != login_email:
+            clash = User.query.filter(func.lower(User.email) == login_email, User.id != linked_user.id).first()
+            if not clash:
+                linked_user.email = login_email
+        if role_id and role_obj:
+            linked_user.role_id = role_obj.id
+        if reset_existing or supplied_password:
+            plain_password = supplied_password or generate_temp_password(comp)
+            linked_user.password_hash = generate_password_hash(plain_password)
+            linked_user.failed_attempts = 0
+            linked_user.locked_until = None
+            must_change = data.get("must_change_password")
+            linked_user.must_change_password = True if must_change is None else (
+                str(must_change).lower() not in ("0", "false", "no", "off")
+            )
+            db.session.flush()
+
+    result_info = {
+        "account_created": account_created,
+        "user_id": linked_user.id,
+        "username": linked_user.username,
+        "email": linked_user.email,
+        "employee_no": emp.employee_no,
+        "temporary_password": plain_password,
+        "letter_reference": letter_obj.reference_no,
+        "category_key": letter_obj.category_key,
+        "category_label": cat_label,
+        "staff_category": emp.staff_category,
+        "email_sent": False,
+        "email_status": "skipped",
+        "email_mode": messaging.config().get("email_mode", "sandbox"),
+        "email_error": None,
+        "delivery_id": None,
+    }
+
+    if send_email_flag and plain_password:
+        portal_link = public_app_link("/employment-letters", base_override=portal_base)
+        designation = emp.designation.title if emp.designation else "Staff Member"
+        department = emp.department.name if emp.department else "General Operations"
+        subject = f"Welcome to {company_legal} — Portal Login Credentials & {cat_label} Letter"
+        body_text = (
+            f"Dear {emp.full_name},\n\n"
+            f"Welcome to {company_legal}! Your employee portal account and official {cat_label} "
+            f"Employment Letter (Ref: {letter_obj.reference_no}) are now ready.\n\n"
+            f"Use the credentials below to sign in, view, accept, and print your Employment Letter:\n"
+            f"  • Portal URL: {portal_link}\n"
+            f"  • Username: {linked_user.username}\n"
+            f"  • Registered Email: {linked_user.email}\n"
+            f"  • Employee ID: {emp.employee_no}\n"
+            f"  • Temporary Password: {plain_password}\n\n"
+            f"Note: You can sign in using your Username ({linked_user.username}), Registered Email ({linked_user.email}), "
+            f"or Employee ID ({emp.employee_no}). For security, please update your password after your first sign-in."
+        )
+        meta_rows = [
+            ("Employee Name", emp.full_name),
+            ("Position & Department", f"{designation} · {department}"),
+            ("Employment Category", f"{cat_label} ({emp.staff_category})"),
+            ("Letter Reference", letter_obj.reference_no),
+            ("Username", linked_user.username),
+            ("Registered Email", linked_user.email),
+            ("Employee ID", emp.employee_no),
+            ("Temporary Password", plain_password),
+            ("Portal Sign-In URL", portal_link),
+        ]
+        html_doc = messaging.html_email(
+            f"Welcome aboard, {emp.first_name}! Your Portal Account is Ready",
+            f"Congratulations on your appointment with {company_legal} as {designation} ({cat_label}).\n\n"
+            f"Your self-service HR account has been created so you can view, digitally sign, and print your "
+            f"official Employment Letter, access payslips, request leave, and manage your profile.",
+            link=portal_link,
+            meta_rows=meta_rows,
+            badge=f"{cat_label} · Onboarding",
+            action_label="Sign In & View Employment Letter",
+        )
+        notif = Notification(
+            user_id=linked_user.id,
+            title=f"Welcome to {company_name} — View Your {cat_label} Letter",
+            body=f"Your official {cat_label} letter ({letter_obj.reference_no}) is ready to view, accept, and print.",
+            link="/employment-letters",
+            category="Onboarding",
+            event_key="account_credentials",
+        )
+        db.session.add(notif)
+        db.session.flush()
+
+        recipients_to_mail = [linked_user.email]
+        also_cc = str(data.get("also_personal_email", "")).lower() in ("1", "true", "yes", "on")
+        if also_cc and emp.personal_email and _VALID_EMAIL_RE.match(emp.personal_email.strip()):
+            pe = emp.personal_email.strip().lower()
+            if pe not in [x.lower() for x in recipients_to_mail]:
+                recipients_to_mail.append(pe)
+
+        primary_res = None
+        primary_rec = None
+        for idx_mail, target_email in enumerate(recipients_to_mail):
+            mail_res = messaging.send_email(target_email, subject, body_text, html_doc)
+            rec = _record_delivery(
+                mail_res, linked_user, "account_credentials", "email", target_email, subject,
+                body=body_text, html_body=html_doc, notification_id=notif.id,
+            )
+            if idx_mail == 0:
+                primary_res = mail_res
+                primary_rec = rec
+
+        letter_obj.emailed_at = datetime.utcnow()
+        cfg = messaging.config()
+        if cfg.get("sms_enabled") == "1" and emp.phone:
+            sms_msg = (
+                f"{company_name}: Welcome {emp.first_name}! Login at {portal_link} | "
+                f"User: {linked_user.username} | Pass: {plain_password}"
+            )[:320]
+            sms_res = messaging.send_sms(emp.phone, sms_msg)
+            _record_delivery(sms_res, linked_user, "account_credentials", "sms", emp.phone,
+                             "Portal Login Credentials", body=sms_msg, notification_id=notif.id)
+
+        if primary_res:
+            result_info["email_sent"] = bool(primary_res.get("ok"))
+            result_info["email_status"] = primary_res.get("status", "failed")
+            result_info["email_error"] = primary_res.get("error")
+            result_info["delivery_id"] = primary_rec.id if primary_rec else None
+            result_info["recipients"] = recipients_to_mail
+
+    return result_info
 
 
 def dispatch_event(event_key, users, title, body, link="/app", email_subject=None,
@@ -687,7 +1068,8 @@ def dispatch_event(event_key, users, title, body, link="/app", email_subject=Non
                 result = messaging.send_email(target, email_subject, body, html_doc)
                 _record_delivery(
                     result, user, event_key, "email", target, email_subject,
-                    body=body, notification_id=notification.id if notification else None,
+                    body=body, html_body=html_doc,
+                    notification_id=notification.id if notification else None,
                     announcement_id=announcement_id, event_id=event_id,
                 )
                 if result.get("ok"):
@@ -792,7 +1174,7 @@ def employee_of(user):
 # ---------------------------------------------------------------- resources
 
 RESOURCES = {
-    "employees": dict(model=Employee, order="id", search=["first_name", "last_name", "employee_no", "email", "phone", "work_location", "contract_type"],
+    "employees": dict(model=Employee, order="id", search=["first_name", "last_name", "employee_no", "email", "phone", "work_location", "contract_type", "staff_category"],
                       labels={"employee_name": "full_name", "department_name": "department.name", "designation_title": "designation.title",
                               "branch_name": "branch.name", "manager_name": "manager.full_name",
                               "grade_name": "grade.name"}),
@@ -802,7 +1184,7 @@ RESOURCES = {
     "grades": dict(model=Grade, order="level", search=["name"]),
     "branches": dict(model=Branch, order="name", search=["name", "city"]),
     "companies": dict(model=Company, order="name", search=["name"]),
-    "users": dict(model=User, order="id", search=["email"], hide=["password_hash", "token"],
+    "users": dict(model=User, order="id", search=["email", "username"], hide=["password_hash", "token"],
                   labels={"role_name": "role.name", "employee_name": "employee.full_name"}),
     "roles": dict(model=Role, order="id", search=["name"]),
     "documents": dict(model=Document, order="id", search=["title", "category"],
@@ -966,14 +1348,30 @@ def apply_filters(query, model, cfg):
 @app.post("/api/v1/auth/login")
 def login():
     data = request.get_json(silent=True) or {}
-    email = (data.get("email") or "").strip().lower()
+    ident = (data.get("email") or data.get("username") or "").strip()
+    ident_low = ident.lower()
     password = data.get("password") or ""
-    user = User.query.filter_by(email=email).first()
+    user = None
+    if ident_low:
+        user = User.query.filter(
+            User.deleted_at.is_(None),
+            or_(
+                func.lower(User.email) == ident_low,
+                func.lower(User.username) == ident_low,
+            ),
+        ).first()
+        if not user:
+            emp_match = Employee.query.filter(
+                Employee.deleted_at.is_(None),
+                func.lower(Employee.employee_no) == ident_low,
+            ).first()
+            if emp_match:
+                user = User.query.filter_by(employee_id=emp_match.id).filter(User.deleted_at.is_(None)).first()
     if not user:
         db.session.add(LoginHistory(ip=request.remote_addr, user_agent=request.user_agent.string[:255],
                                     success=False))
         db.session.commit()
-        return error("Invalid email or password", 401)
+        return error("Invalid username/email or password", 401)
     if user.locked_until and user.locked_until > datetime.utcnow():
         return error("Account temporarily locked. Try again later.", 423)
     if not check_password_hash(user.password_hash, password):
@@ -984,7 +1382,7 @@ def login():
         db.session.add(LoginHistory(user_id=user.id, ip=request.remote_addr,
                                     user_agent=request.user_agent.string[:255], success=False))
         db.session.commit()
-        return error("Invalid email or password", 401)
+        return error("Invalid username/email or password", 401)
     if user.status != "active":
         return error("This account is inactive", 403)
     user.token = secrets.token_hex(32)
@@ -1033,13 +1431,19 @@ def change_password():
 def public_user(user):
     emp = user.employee
     return {
-        "id": user.id, "email": user.email, "status": user.status,
+        "id": user.id,
+        "username": user.username or (user.email.split("@")[0] if user.email else None),
+        "email": user.email,
+        "status": user.status,
         "mfa_enabled": bool(user.mfa_enabled),
+        "must_change_password": bool(user.must_change_password),
         "role": user.role.name if user.role else None,
         "role_slug": user.role.slug if user.role else None,
         "permissions": user.role.permissions if user.role else "",
         "employee_id": emp.id if emp else None,
         "employee_no": emp.employee_no if emp else None,
+        "contract_type": emp.contract_type if emp else None,
+        "staff_category": emp.staff_category if emp else None,
         "name": emp.full_name if emp else user.email.split("@")[0].title(),
         "phone": emp.phone if emp else None,
         "job_title": emp.designation.title if emp and emp.designation else "",
@@ -1117,6 +1521,18 @@ def list_resource(resource):
     per_page = min(max(int(request.args.get("per_page", 25)), 1), 500)
     total = query.count()
     rows = query.offset((page - 1) * per_page).limit(per_page).all()
+    emp_users_map = {}
+    emp_letters_map = {}
+    if resource == "employees" and rows:
+        eids = [r.id for r in rows]
+        emp_users_map = {
+            u.employee_id: u
+            for u in User.query.filter(User.employee_id.in_(eids), User.deleted_at.is_(None)).all()
+        }
+        emp_letters_map = {
+            l.employee_id: l
+            for l in EmploymentLetter.query.filter(EmploymentLetter.employee_id.in_(eids)).order_by(EmploymentLetter.id.asc()).all()
+        }
     data = []
     for r in rows:
         item = serialize(r, resource)
@@ -1124,6 +1540,16 @@ def list_resource(resource):
             item.pop(h, None)
         if resource == "announcements":
             enrich_announcement(item)
+        elif resource == "employees":
+            lu = emp_users_map.get(r.id)
+            el = emp_letters_map.get(r.id)
+            item["has_account"] = bool(lu)
+            item["username"] = lu.username if lu else None
+            item["letter_reference"] = el.reference_no if el else None
+            item["letter_status"] = el.status if el else None
+            item["category_label"] = letters.EMPLOYMENT_CATEGORIES.get(
+                el.category_key if el else letters.infer_category_key(r), {}
+            ).get("label", r.contract_type)
         data.append(item)
     return jsonify({
         "data": data,
@@ -1187,14 +1613,24 @@ def _create(resource, model):
         fields = writable_fields(model, data)
     except ValueError as e:
         return error(str(e), 422)
+    raw_user_pwd = None
     if model is User:
-        pwd = data.get("password") or "ChangeMe@123"
-        fields["password_hash"] = generate_password_hash(pwd)
+        raw_user_pwd = (data.get("password") or "").strip() or generate_temp_password()
+        fields["password_hash"] = generate_password_hash(raw_user_pwd)
+        linked_emp_for_user = db.session.get(Employee, fields["employee_id"]) if fields.get("employee_id") else None
+        fields["username"] = generate_unique_username(
+            emp=linked_emp_for_user,
+            email=fields.get("email"),
+            preferred=data.get("username"),
+        )
+        if "must_change_password" not in fields:
+            fields["must_change_password"] = True
     if model is Employee and not fields.get("employee_no"):
         fields["employee_no"] = next_employee_no()
     if model is Employee:
         fields.setdefault("company_id", 1)
         fields.setdefault("status", "active")
+        fields.setdefault("contract_type", "permanent")
     if hasattr(model, "created_by"):
         fields["created_by"] = request.user.id
     obj = model(**fields)
@@ -1209,6 +1645,56 @@ def _create(resource, model):
             obj.approver_id = emp.manager_id
     db.session.add(obj)
     db.session.flush()
+    credentials_dispatch = None
+    if model is Employee:
+        send_creds = data.get("send_credentials")
+        send_creds_flag = True if send_creds is None else (str(send_creds).lower() not in ("0", "false", "no", "off"))
+        credentials_dispatch = provision_employee_onboarding(
+            obj, data=data, actor=request.user, send_email_flag=send_creds_flag,
+        )
+    elif model is User and raw_user_pwd:
+        send_creds = data.get("send_credentials")
+        if send_creds is None or str(send_creds).lower() not in ("0", "false", "no", "off"):
+            comp = Company.query.first()
+            comp_name = (comp.legal_name or comp.name) if comp else "Meridian HR"
+            portal_link = public_app_link("/")
+            subj = f"Your {comp_name} Portal Login Credentials"
+            body_txt = (
+                f"Hello {obj.employee.full_name if obj.employee else obj.username},\n\n"
+                f"Your {comp_name} portal login account has been provisioned.\n\n"
+                f"  • Portal URL: {portal_link}\n"
+                f"  • Username: {obj.username}\n"
+                f"  • Login Email: {obj.email}\n"
+                f"  • Temporary Password: {raw_user_pwd}\n"
+            )
+            html_doc = messaging.html_email(
+                f"Your {comp_name} Login Credentials",
+                "Use the account details below to sign in to the HR portal.",
+                link=portal_link,
+                meta_rows=[
+                    ("Username", obj.username),
+                    ("Registered Email", obj.email),
+                    ("Temporary Password", raw_user_pwd),
+                    ("Portal URL", portal_link),
+                ],
+                badge="Account Access",
+                action_label="Sign In Now",
+            )
+            m_res = messaging.send_email(obj.email, subj, body_txt, html_doc)
+            rec = _record_delivery(m_res, obj, "account_credentials", "email", obj.email, subj,
+                                   body=body_txt, html_body=html_doc)
+            credentials_dispatch = {
+                "account_created": True,
+                "user_id": obj.id,
+                "username": obj.username,
+                "email": obj.email,
+                "temporary_password": raw_user_pwd,
+                "email_sent": bool(m_res.get("ok")),
+                "email_status": m_res.get("status"),
+                "email_mode": messaging.config().get("email_mode", "sandbox"),
+                "email_error": m_res.get("error"),
+                "delivery_id": rec.id if rec else None,
+            }
     if model is LeaveRequest:
         if not obj.days or not data.get("days"):
             obj.days = working_days(obj.start_date, obj.end_date)
@@ -1258,6 +1744,8 @@ def _create(resource, model):
         enrich_announcement(payload)
     if delivery:
         payload["delivery"] = delivery
+    if credentials_dispatch:
+        payload["credentials_dispatch"] = credentials_dispatch
     return jsonify({"data": payload}), 201
 
 
@@ -1308,6 +1796,21 @@ def update_resource(resource, rid):
     if model is User and data.get("password"):
         obj.password_hash = generate_password_hash(data["password"])
         obj.token = None
+    if model is Employee:
+        db.session.flush()
+        letters.ensure_letter_for_employee(
+            obj,
+            sync_category=any(k in fields for k in ("contract_type", "status", "staff_category", "end_date")),
+        )
+        c_row = Contract.query.filter_by(employee_id=obj.id).order_by(Contract.id.desc()).first()
+        if c_row and "contract_type" in fields:
+            c_row.type = obj.contract_type or c_row.type
+        if c_row and "end_date" in fields:
+            c_row.end_date = obj.end_date
+        lu = User.query.filter_by(employee_id=obj.id).first()
+        if lu and obj.email and lu.email.lower() != obj.email.lower():
+            if not User.query.filter(func.lower(User.email) == obj.email.lower(), User.id != lu.id).first():
+                lu.email = obj.email.strip().lower()
     if hasattr(obj, "updated_by"):
         obj.updated_by = request.user.id
     audit(request.user, "update", resource, obj.id, old=old, new=fields)
@@ -1532,13 +2035,53 @@ def employee_profile(eid):
     linked_user = User.query.filter_by(employee_id=eid).first()
     data["account"] = {
         "id": linked_user.id,
+        "username": linked_user.username or linked_user.email.split("@")[0],
         "email": linked_user.email,
         "role": linked_user.role.name if linked_user.role else None,
         "role_slug": linked_user.role.slug if linked_user.role else None,
         "status": linked_user.status,
         "mfa_enabled": bool(linked_user.mfa_enabled),
+        "must_change_password": bool(linked_user.must_change_password),
         "last_login_at": conv(linked_user.last_login_at),
     } if linked_user else None
+
+    letter_obj = letters.ensure_letter_for_employee(emp)
+    tpl_meta = letters.get_merged_templates().get(letter_obj.category_key, {})
+    data["employment_letter"] = {
+        "id": letter_obj.id,
+        "reference_no": letter_obj.reference_no,
+        "category_key": letter_obj.category_key,
+        "category_label": tpl_meta.get("label", emp.contract_type),
+        "letter_title": letter_obj.letter_title or tpl_meta.get("letter_title", "Employment Letter"),
+        "staff_category": letter_obj.staff_category or emp.staff_category,
+        "status": letter_obj.status,
+        "accepted_at": conv(letter_obj.accepted_at),
+        "accepted_signature": letter_obj.accepted_signature,
+        "emailed_at": conv(letter_obj.emailed_at),
+        "issue_date": conv(letter_obj.issue_date),
+    }
+    if linked_user and (is_self or role_of(request.user) in ("super_admin", "hr_admin", "hr_officer")):
+        cred_dels = (
+            NotificationDelivery.query.filter_by(user_id=linked_user.id)
+            .filter(NotificationDelivery.event_key.in_(["account_credentials", "employment_letter"]))
+            .order_by(NotificationDelivery.id.desc())
+            .limit(5)
+            .all()
+        )
+        data["credential_deliveries"] = [
+            {
+                "id": cd.id,
+                "event_key": cd.event_key,
+                "channel": cd.channel,
+                "recipient": cd.recipient,
+                "subject": cd.subject,
+                "status": cd.status,
+                "sent_at": conv(cd.sent_at or cd.created_at),
+            }
+            for cd in cred_dels
+        ]
+    else:
+        data["credential_deliveries"] = []
 
     data["contacts"] = [serialize(c) for c in EmployeeContact.query.filter_by(employee_id=eid).all()]
     data["dependants"] = [serialize(d) for d in Dependant.query.filter_by(employee_id=eid).all()]
@@ -1706,6 +2249,360 @@ def employee_self_update(eid):
     return jsonify({"data": serialize(emp, "employees")})
 
 
+# ---------------------------------------------------------------- credentials & employment letters
+
+def _can_access_employee_letter(user, emp):
+    role = role_of(user)
+    if role in ("super_admin", "hr_admin", "hr_officer", "payroll", "auditor"):
+        return True
+    if user.employee_id == emp.id:
+        return True
+    if role == "manager" and emp.manager_id == user.employee_id:
+        return True
+    return False
+
+
+@app.post("/api/v1/employees/<int:eid>/send-credentials")
+@login_required
+def send_employee_credentials(eid):
+    if role_of(request.user) not in ("super_admin", "hr_admin", "hr_officer"):
+        return error("You do not have permission to send login credentials", 403)
+    emp = db.session.get(Employee, eid)
+    if not emp or emp.deleted_at is not None:
+        return error("Employee not found", 404)
+    if not (emp.email or emp.personal_email):
+        return error("Employee does not have a registered email address on file", 422)
+    data = request.get_json(silent=True) or {}
+    dispatch = provision_employee_onboarding(
+        emp,
+        data=data,
+        actor=request.user,
+        reset_existing=True,
+        send_email_flag=True,
+    )
+    audit(request.user, "send_credentials", "employees", emp.id,
+          new={"email": dispatch.get("email"), "username": dispatch.get("username"), "status": dispatch.get("email_status")})
+    db.session.commit()
+    return jsonify({"data": dispatch})
+
+
+@app.post("/api/v1/employees/send-credentials-bulk")
+@login_required
+def send_credentials_bulk():
+    if role_of(request.user) not in ("super_admin", "hr_admin", "hr_officer"):
+        return error("Forbidden", 403)
+    data = request.get_json(silent=True) or {}
+    ids = data.get("ids")
+    only_missing = bool(data.get("only_missing_accounts", True))
+    q = Employee.query.filter(Employee.deleted_at.is_(None), Employee.status.in_(["active", "probation"]))
+    if isinstance(ids, list) and ids:
+        q = q.filter(Employee.id.in_([int(x) for x in ids]))
+    results = []
+    for emp in q.all():
+        if only_missing and User.query.filter_by(employee_id=emp.id).first():
+            continue
+        if not (emp.email or emp.personal_email):
+            continue
+        res = provision_employee_onboarding(
+            emp, data={}, actor=request.user, reset_existing=not only_missing, send_email_flag=True
+        )
+        results.append(res)
+    audit(request.user, "send_credentials_bulk", "employees", None, new={"count": len(results)})
+    db.session.commit()
+    return jsonify({"data": {"sent": len(results), "results": results}})
+
+
+@app.get("/api/v1/employment-letters")
+@login_required
+def list_employment_letters():
+    role = role_of(request.user)
+    q = Employee.query.filter(Employee.deleted_at.is_(None))
+    if role == "employee":
+        q = q.filter(Employee.id == (request.user.employee_id or 0))
+    elif role == "manager":
+        team_ids = [request.user.employee_id] + [
+            e.id for e in Employee.query.filter_by(manager_id=request.user.employee_id).all()
+        ]
+        q = q.filter(Employee.id.in_([i for i in team_ids if i]))
+    category_filter = (request.args.get("category") or "").strip().lower()
+    staff_filter = (request.args.get("staff_category") or "").strip()
+    search_q = (request.args.get("q") or "").strip().lower()
+
+    emps = q.order_by(Employee.id.desc()).all()
+    templates = letters.get_merged_templates()
+    user_map = {u.employee_id: u for u in User.query.filter(User.deleted_at.is_(None)).all()}
+    items = []
+    summary_by_cat = {k: 0 for k in templates.keys()}
+    dirty = False
+    for emp in emps:
+        let = EmploymentLetter.query.filter_by(employee_id=emp.id).order_by(EmploymentLetter.id.desc()).first()
+        if not let:
+            let = letters.ensure_letter_for_employee(emp)
+            dirty = True
+        cat_key = let.category_key if let.category_key in templates else letters.infer_category_key(emp)
+        tpl = templates[cat_key]
+        summary_by_cat[cat_key] = summary_by_cat.get(cat_key, 0) + 1
+        staff_cat = let.staff_category or emp.staff_category or letters.infer_staff_category(emp)
+        if category_filter and cat_key != category_filter:
+            continue
+        if staff_filter and staff_cat != staff_filter:
+            continue
+        hay = " ".join([
+            emp.full_name, emp.employee_no, emp.email or "", let.reference_no or "",
+            tpl["label"], staff_cat, emp.department.name if emp.department else "",
+            emp.designation.title if emp.designation else "",
+        ]).lower()
+        if search_q and search_q not in hay:
+            continue
+        lu = user_map.get(emp.id)
+        items.append({
+            "id": let.id,
+            "employee_id": emp.id,
+            "employee_no": emp.employee_no,
+            "employee_name": emp.full_name,
+            "email": emp.email,
+            "photo_url": emp.photo_url,
+            "department_name": emp.department.name if emp.department else "—",
+            "designation_title": emp.designation.title if emp.designation else "—",
+            "reference_no": let.reference_no,
+            "category_key": cat_key,
+            "category_label": tpl["label"],
+            "category_badge": tpl["badge"],
+            "category_tone": tpl["tone"],
+            "staff_category": staff_cat,
+            "letter_title": let.letter_title or tpl["letter_title"],
+            "effective_date": conv(let.effective_date or emp.hire_date),
+            "end_date": conv(let.end_date or emp.end_date),
+            "basic_salary": float(emp.basic_salary or 0) if (role in ("super_admin", "hr_admin", "hr_officer", "payroll", "auditor") or request.user.employee_id == emp.id) else None,
+            "status": let.status or "issued",
+            "accepted_at": conv(let.accepted_at),
+            "accepted_signature": let.accepted_signature,
+            "emailed_at": conv(let.emailed_at),
+            "has_account": bool(lu),
+            "username": lu.username if lu else None,
+        })
+    if dirty:
+        db.session.commit()
+    return jsonify({
+        "data": items,
+        "categories": letters.category_options(),
+        "staff_categories": letters.STAFF_CATEGORIES,
+        "summary_by_category": summary_by_cat,
+    })
+
+
+@app.get("/api/v1/employment-letters/templates")
+@login_required
+def get_letter_templates():
+    templates = letters.get_merged_templates()
+    return jsonify({
+        "data": [templates[k] for k in letters.EMPLOYMENT_CATEGORIES.keys()],
+        "staff_categories": letters.STAFF_CATEGORIES,
+    })
+
+
+@app.put("/api/v1/employment-letters/templates/<category_key>")
+@login_required
+def update_letter_template(category_key):
+    if role_of(request.user) not in ("super_admin", "hr_admin"):
+        return error("Forbidden", 403)
+    data = request.get_json(silent=True) or {}
+    try:
+        saved = letters.save_template_override(category_key, data)
+    except ValueError as e:
+        return error(str(e), 422)
+    audit(request.user, "update_letter_template", "settings", None, new={"category": category_key})
+    db.session.commit()
+    return jsonify({"data": saved})
+
+
+@app.get("/api/v1/employees/<int:eid>/employment-letter")
+@login_required
+def get_employee_letter(eid):
+    emp = db.session.get(Employee, eid)
+    if not emp or emp.deleted_at is not None:
+        return error("Employee not found", 404)
+    if not _can_access_employee_letter(request.user, emp):
+        return error("You do not have permission to view this employment letter", 403)
+    preview_cat = (request.args.get("category_key") or "").strip().lower()
+    letter_obj = letters.ensure_letter_for_employee(emp)
+    db.session.commit()
+    if preview_cat and preview_cat in letters.EMPLOYMENT_CATEGORIES and preview_cat != letter_obj.category_key:
+        # Non-destructive category preview for HR editing
+        orig_cat = letter_obj.category_key
+        letter_obj.category_key = preview_cat
+        payload = letters.build_letter_payload(emp, letter=letter_obj, standalone=False)
+        db.session.rollback()
+    else:
+        payload = letters.build_letter_payload(emp, letter=letter_obj, standalone=False)
+    payload["can_customize"] = role_of(request.user) in ("super_admin", "hr_admin", "hr_officer")
+    payload["can_accept"] = (request.user.employee_id == emp.id) or role_of(request.user) in ("super_admin", "hr_admin", "hr_officer")
+    payload["categories"] = letters.category_options()
+    payload["staff_categories"] = letters.STAFF_CATEGORIES
+    return jsonify({"data": payload})
+
+
+@app.put("/api/v1/employees/<int:eid>/employment-letter")
+@login_required
+def update_employee_letter(eid):
+    if role_of(request.user) not in ("super_admin", "hr_admin", "hr_officer"):
+        return error("Forbidden", 403)
+    emp = db.session.get(Employee, eid)
+    if not emp or emp.deleted_at is not None:
+        return error("Employee not found", 404)
+    data = request.get_json(silent=True) or {}
+    letter_obj = letters.ensure_letter_for_employee(emp)
+    if data.get("category_key") in letters.EMPLOYMENT_CATEGORIES:
+        new_cat = data["category_key"]
+        if letter_obj.category_key != new_cat:
+            tpl = letters.get_merged_templates()[new_cat]
+            letter_obj.category_key = new_cat
+            emp.contract_type = new_cat
+            if not data.get("letter_title"):
+                letter_obj.letter_title = tpl["letter_title"]
+            if not data.get("subject_line"):
+                letter_obj.subject_line = None
+            if not data.get("working_hours"):
+                letter_obj.working_hours = tpl["working_hours"]
+            if not data.get("notice_period"):
+                letter_obj.notice_period = tpl["notice_period"]
+            if data.get("probation_months") is None:
+                letter_obj.probation_months = tpl.get("probation_months", 0)
+    if "staff_category" in data and data["staff_category"]:
+        letter_obj.staff_category = str(data["staff_category"]).strip()
+        emp.staff_category = letter_obj.staff_category
+    for str_fld in ("letter_title", "subject_line", "working_hours", "notice_period",
+                    "custom_clauses", "signatory_name", "signatory_title"):
+        if str_fld in data:
+            val = data[str_fld]
+            setattr(letter_obj, str_fld, str(val).strip() if val is not None else None)
+    if "probation_months" in data and data["probation_months"] != "":
+        letter_obj.probation_months = int(data["probation_months"])
+    for dt_fld in ("issue_date", "effective_date", "end_date"):
+        if dt_fld in data:
+            setattr(letter_obj, dt_fld, date.fromisoformat(str(data[dt_fld])[:10]) if data[dt_fld] else None)
+    if "end_date" in data:
+        emp.end_date = letter_obj.end_date
+    audit(request.user, "update_employment_letter", "employment_letters", letter_obj.id)
+    db.session.commit()
+    return jsonify({"data": letters.build_letter_payload(emp, letter=letter_obj, standalone=False)})
+
+
+@app.post("/api/v1/employees/<int:eid>/employment-letter/accept")
+@login_required
+def accept_employee_letter(eid):
+    emp = db.session.get(Employee, eid)
+    if not emp or emp.deleted_at is not None:
+        return error("Employee not found", 404)
+    if request.user.employee_id != emp.id and role_of(request.user) not in ("super_admin", "hr_admin", "hr_officer"):
+        return error("Only the named employee or HR can sign this letter", 403)
+    data = request.get_json(silent=True) or {}
+    signature = (data.get("signature") or emp.full_name).strip()
+    if len(signature) < 2:
+        return error("Please enter your full name as signature", 422)
+    letter_obj = letters.ensure_letter_for_employee(emp)
+    letter_obj.status = "accepted"
+    letter_obj.accepted_at = datetime.utcnow()
+    letter_obj.accepted_signature = signature
+    letter_obj.accepted_ip = request.remote_addr
+    audit(request.user, "accept_employment_letter", "employment_letters", letter_obj.id,
+          new={"signature": signature})
+    db.session.commit()
+    return jsonify({"data": letters.build_letter_payload(emp, letter=letter_obj, standalone=False)})
+
+
+@app.post("/api/v1/employees/<int:eid>/employment-letter/send")
+@login_required
+def send_employee_letter_email(eid):
+    if role_of(request.user) not in ("super_admin", "hr_admin", "hr_officer"):
+        return error("Forbidden", 403)
+    emp = db.session.get(Employee, eid)
+    if not emp or emp.deleted_at is not None:
+        return error("Employee not found", 404)
+    target = (emp.email or emp.personal_email or "").strip()
+    if not target:
+        return error("Employee has no email address on file", 422)
+    letter_obj = letters.ensure_letter_for_employee(emp)
+    payload = letters.build_letter_payload(emp, letter=letter_obj, standalone=False)
+    comp = Company.query.first()
+    comp_legal = (comp.legal_name or comp.name) if comp else "Meridian HR"
+    portal_link = public_app_link("/employment-letters")
+    subj = f"{payload['letter_title']} — {emp.full_name} ({letter_obj.reference_no})"
+    body_txt = (
+        f"Dear {emp.full_name},\n\n"
+        f"Please find attached/linked your official {payload['category_label']} Employment Letter "
+        f"(Ref: {letter_obj.reference_no}) from {comp_legal} for your appointment as "
+        f"{payload['designation_title']} in {payload['department_name']}.\n\n"
+        f"Open your HR portal to view, digitally accept, and print or save your Employment Letter as PDF:\n"
+        f"{portal_link}"
+    )
+    html_doc = messaging.html_email(
+        payload["letter_title"],
+        f"Dear {emp.first_name}, your official {payload['category_label']} Appointment Letter "
+        f"from {comp_legal} has been issued and is enclosed below. Sign in to the HR Portal at any time "
+        f"to countersign and print or save a PDF copy.",
+        link=portal_link,
+        meta_rows=[
+            ("Reference No.", letter_obj.reference_no),
+            ("Employment Category", f"{payload['category_label']} ({payload['staff_category']})"),
+            ("Position & Department", f"{payload['designation_title']} · {payload['department_name']}"),
+            ("Effective Start Date", payload["effective_date"] or "—"),
+        ],
+        badge=payload["category_badge"],
+        action_label="Open Portal to Sign & Print PDF",
+        extra_html=f'<div style="margin-top:20px;border-top:2px solid #e6e0d5;padding-top:18px">{payload["html"]}</div>',
+    )
+    linked_user = User.query.filter_by(employee_id=emp.id).first()
+    notif = None
+    if linked_user:
+        notif = Notification(
+            user_id=linked_user.id,
+            title=f"Official {payload['category_label']} Letter Sent",
+            body=f"Ref {letter_obj.reference_no} was emailed to {target}. Click to view or print.",
+            link="/employment-letters",
+            category="Onboarding",
+            event_key="employment_letter",
+        )
+        db.session.add(notif)
+        db.session.flush()
+    res = messaging.send_email(target, subj, body_txt, html_doc)
+    rec = _record_delivery(
+        res, linked_user, "employment_letter", "email", target, subj,
+        body=body_txt, html_body=html_doc, notification_id=notif.id if notif else None,
+    )
+    letter_obj.emailed_at = datetime.utcnow()
+    audit(request.user, "email_employment_letter", "employment_letters", letter_obj.id,
+          new={"recipient": target, "status": res.get("status")})
+    db.session.commit()
+    return jsonify({
+        "data": {
+            "ok": bool(res.get("ok")),
+            "status": res.get("status"),
+            "error": res.get("error"),
+            "recipient": target,
+            "delivery_id": rec.id if rec else None,
+            "mode": messaging.config().get("email_mode", "sandbox"),
+        }
+    })
+
+
+@app.get("/api/v1/employees/<int:eid>/employment-letter/print")
+@login_required
+def print_employee_letter(eid):
+    emp = db.session.get(Employee, eid)
+    if not emp or emp.deleted_at is not None:
+        return error("Employee not found", 404)
+    if not _can_access_employee_letter(request.user, emp):
+        return error("Forbidden", 403)
+    letter_obj = letters.ensure_letter_for_employee(emp)
+    db.session.commit()
+    auto_p = str(request.args.get("auto_print", "1")).lower() in ("1", "true", "yes")
+    payload = letters.build_letter_payload(emp, letter=letter_obj, standalone=True, auto_print=auto_p)
+    resp = app.make_response(payload["standalone_html"])
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    return resp
+
+
 @app.post("/api/v1/employees/<int:eid>/confirm")
 @login_required
 def confirm_employee_probation(eid):
@@ -1804,9 +2701,13 @@ def employee_import():
                 hire_date=date.fromisoformat(row["hire_date"]) if row.get("hire_date") else date.today(),
                 department_id=row.get("department_id"), designation_id=row.get("designation_id"),
                 basic_salary=Decimal(str(row.get("basic_salary") or 0)),
-                company_id=1, status="active", contract_type=row.get("contract_type", "permanent"),
+                company_id=1, status="active",
+                contract_type=row.get("contract_type", "permanent"),
+                staff_category=row.get("staff_category") or None,
             )
             db.session.add(emp)
+            db.session.flush()
+            provision_employee_onboarding(emp, data=row, actor=request.user, send_email_flag=True)
             created += 1
         except Exception as e:
             errors.append({"row": idx, "error": str(e)})
@@ -2208,9 +3109,12 @@ def hire_candidate(aid):
     for title, owner, days in tasks:
         db.session.add(OnboardingTask(employee_id=emp.id, title=title, owner_role=owner,
                                       due_date=date.today() + timedelta(days=days)))
+    creds = provision_employee_onboarding(emp, actor=request.user, send_email_flag=True)
     audit(request.user, "candidate_hired", "applications", aid)
     db.session.commit()
-    return jsonify({"data": serialize(emp, "employees")}), 201
+    out = serialize(emp, "employees")
+    out["credentials_dispatch"] = creds
+    return jsonify({"data": out}), 201
 
 
 @app.get("/api/v1/recruitment/board")
@@ -2948,19 +3852,41 @@ def list_deliveries():
     return jsonify({"data": items, "summary": summary})
 
 
+@app.get("/api/v1/messaging/deliveries/<int:did>")
+@login_required
+def get_delivery_detail(did):
+    rec = db.session.get(NotificationDelivery, did)
+    if not rec:
+        return error("Not found", 404)
+    role = role_of(request.user)
+    if role not in ("super_admin", "hr_admin", "hr_officer", "auditor") and rec.user_id != request.user.id:
+        return error("Forbidden", 403)
+    d = serialize(rec)
+    if rec.user_id:
+        u = db.session.get(User, rec.user_id)
+        d["recipient_name"] = u.employee.full_name if u and u.employee else (u.email if u else None)
+    if not d.get("html_body") and rec.channel == "email":
+        d["html_body"] = messaging.html_email(
+            rec.subject or "Notification", rec.body or "", public_app_link("/notifications")
+        )
+    return jsonify({"data": d})
+
+
 @app.post("/api/v1/messaging/deliveries/<int:did>/retry")
 @login_required
 def retry_delivery(did):
-    if role_of(request.user) not in ("super_admin", "hr_admin"):
+    if role_of(request.user) not in ("super_admin", "hr_admin", "hr_officer"):
         return error("Forbidden", 403)
     rec = db.session.get(NotificationDelivery, did)
     if not rec:
         return error("Not found", 404)
     body = rec.body or rec.subject or "Meridian HR notification"
     if rec.channel == "email":
+        html_content = rec.html_body or messaging.html_email(
+            rec.subject or "Notification", body, public_app_link("/notifications")
+        )
         res = messaging.send_email(
-            rec.recipient, rec.subject or "Meridian HR Notification", body,
-            messaging.html_email(rec.subject or "Notification", body, public_app_link("/notifications")),
+            rec.recipient, rec.subject or "Meridian HR Notification", body, html_content,
         )
     else:
         res = messaging.send_sms(rec.recipient, body)
@@ -3419,6 +4345,8 @@ def meta():
         "assets": [{"id": a.id, "name": a.name, "tag": a.tag, "status": a.status}
                    for a in Asset.query.order_by(Asset.name)],
         "tax_bands": [serialize(t) for t in TaxBand.query.order_by(TaxBand.min_amount)],
+        "employment_categories": letters.category_options(),
+        "staff_categories": letters.STAFF_CATEGORIES,
     }})
 
 

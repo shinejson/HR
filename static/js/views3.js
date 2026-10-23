@@ -557,9 +557,15 @@ Views.documents = async function (root) {
       columns: [
         { label: "Document", render: r => '<div class="row">' + icon("file", 16) + '<div><b>' + esc(r.title) + '</b><div class="tiny muted mono">' + esc(r.file_name || "—") + '</div></div></div>' },
         { label: "Employee", render: r => esc(r.employee_name || "Company") },
-        { label: "Category", render: r => '<span class="pill-tag">' + esc(r.category) + '</span>' },
+        { label: "Category", render: r => '<span class="pill-tag">' + esc((r.category || "").replace(/_/g, " ")) + '</span>' },
         { label: "Expires", render: r => r.expires_at ? fmtDate(r.expires_at) + (r.expires_at < today ? ' <span class="chip chip-red">Expired</span>' : "") : "—" },
         { label: "Added", render: r => fmtDate(r.created_at) },
+        {
+          label: "", class: "right", sortable: false,
+          render: r => (r.category === "employment_letter" && r.employee_id)
+            ? '<button class="btn btn-sm btn-accent" data-doc-open-letter="' + r.employee_id + '">' + icon("printer", 12) + ' View / Print</button>'
+            : "",
+        },
       ], rows: docs, emptyTitle: "No documents", emptyText: "Upload contracts, IDs and certificates.",
     });
     const acks = await Promise.all(policies.map(p => API.get("/policies/" + p.id + "/acks").then(r => r.data).catch(() => ({ count: 0, employee_ids: [] }))));
@@ -574,7 +580,8 @@ Views.documents = async function (root) {
     }).join("");
 
     root.innerHTML = pageHead("Documents", "Secure storage and lifecycle management of HR documents.",
-      canManage ? '<button class="btn btn-accent" id="doc-add">' + icon("plus", 15) + ' Add document</button>' : "", "Core HR")
+      '<div class="row" style="gap:8px"><button class="btn btn-teal" onclick="go(\'employment-letters\')">' + icon("printer", 15) + ' Employment Letters</button>'
+      + (canManage ? '<button class="btn btn-accent" id="doc-add">' + icon("plus", 15) + ' Add document</button>' : "") + '</div>', "Core HR")
       + '<div class="grid grid-4" style="margin-bottom:18px">'
       + kpiCard({ label: "Documents on file", value: docs.length, icon: "file", tone: "teal", foot: "Employee & company records" })
       + kpiCard({ label: "Expiring soon", value: docs.filter(d => d.expires_at && d.expires_at >= today).length, icon: "alert", tone: "accent", foot: "Renewal reminders active" })
@@ -586,6 +593,7 @@ Views.documents = async function (root) {
 
     root.querySelectorAll("[data-dtab]").forEach(b => b.onclick = () => { docState.tab = b.dataset.dtab; Views.documents(root); });
     const add = root.querySelector("#doc-add"); if (add) add.onclick = () => openDocumentForm();
+    onDelegate(root, "click", "[data-doc-open-letter]", (b) => openEmploymentLetterModal(Number(b.dataset.docOpenLetter), () => Views.documents(root)));
     root.querySelectorAll("[data-ack]").forEach(b => b.onclick = async () => {
       try { await API.post("/policies/" + b.dataset.ack + "/acknowledge"); toast("Policy acknowledged", "success"); Views.documents(root); }
       catch (e) { handleErr(e); }

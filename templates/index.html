@@ -39,12 +39,12 @@
     <div class="login-card">
       <div class="eyebrow">Secure sign in</div>
       <h2>Welcome back</h2>
-      <p class="hint">Use your work email to access the HR portal.</p>
+      <p class="hint">Sign in using your registered email, username, or employee ID.</p>
       <form id="login-form" autocomplete="on">
         <div id="login-error" class="form-error hidden"></div>
         <div class="field" style="margin-bottom:12px">
-          <label for="login-email">Work email</label>
-          <input class="input" id="login-email" type="email" placeholder="you@company.com" autocomplete="username" required>
+          <label for="login-email">Email, Username or Employee ID</label>
+          <input class="input" id="login-email" type="text" placeholder="e.g. name@gmail.com, username, or EMP-2026-0001" autocomplete="username" required>
         </div>
         <div class="field" style="margin-bottom:8px">
           <label for="login-password">Password</label>
@@ -94,7 +94,7 @@
 <div id="app-view" class="app-shell hidden">
   <aside class="sidebar" id="sidebar">
     <div class="brand">
-      <div class="glyph{% if brand.logo_url %} has-logo{% endif %}" id="brand-glyph">{% if brand.logo_url %}<img src="{{ brand.logo_url }}" alt="{{ brand.name }} logo">{% else %}{{ brand.initial }}{% endif %}</div>
+      <div class="glyph{% if brand.logo_url %} has-logo{% endif %}" id="brand-glyph">{% if brand.logo_url %}<img src="{{ brand.logo_url }}" alt="{{ brand.name }} logo" onerror="this.parentElement.classList.remove('has-logo');this.parentElement.textContent='{{ brand.initial }}'">{% else %}{{ brand.initial }}{% endif %}</div>
       <div class="brand-text">
         <div class="name" id="brand-name">{{ brand.name }}</div>
         <div class="sub" id="brand-sub">{{ brand.tagline }}</div>
@@ -120,7 +120,7 @@
     <header class="topbar">
       <div class="topbar-start">
         <button class="icon-btn menu-btn" id="menu-btn" aria-label="Toggle menu"></button>
-        <div class="crumb"><span class="crumb-logo{% if brand.logo_url %} has-logo{% endif %}" id="crumb-logo">{% if brand.logo_url %}<img src="{{ brand.logo_url }}" alt="{{ brand.name }} logo">{% else %}{{ brand.initial }}{% endif %}</span><span id="crumb-company">{{ brand.name }}</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg><b id="crumb-current">Dashboard</b></div>
+        <div class="crumb"><span class="crumb-logo{% if brand.logo_url %} has-logo{% endif %}" id="crumb-logo">{% if brand.logo_url %}<img src="{{ brand.logo_url }}" alt="{{ brand.name }} logo" onerror="this.parentElement.classList.remove('has-logo');this.parentElement.textContent='{{ brand.initial }}'">{% else %}{{ brand.initial }}{% endif %}</span><span id="crumb-company">{{ brand.name }}</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg><b id="crumb-current">Dashboard</b></div>
       </div>
       <div class="topbar-center">
         <div class="global-search" id="global-search-trigger" title="Quick jump to people, modules & actions (Ctrl+K / ⌘K)">
@@ -169,6 +169,7 @@
               <div id="dd-role" class="tiny" style="margin-top:5px;color:var(--accent)">—</div>
             </div>
             <div class="dropdown-item" data-go="profile">My profile</div>
+            <div class="dropdown-item" data-go="employment-letters">My employment letter</div>
             <div class="dropdown-item" data-go="notifications">Notifications</div>
             <div class="dropdown-item" data-go="settings/appearance">Appearance</div>
             <div class="dropdown-item" data-go="settings">Settings & preferences</div>
@@ -191,17 +192,18 @@
 </div>
 <div class="toast-root" id="toast-root"></div>
 
-<script src="/static/js/api.js?v=1.0.3"></script>
-<script src="/static/js/theme.js?v=1.0.3"></script>
-<script src="/static/js/theme-settings.js?v=1.0.3"></script>
-<script src="/static/js/ui.js?v=1.0.3"></script>
-<script src="/static/js/datatable.js?v=1.0.3"></script>
-<script src="/static/js/views.js?v=1.0.3"></script>
-<script src="/static/js/views2.js?v=1.0.3"></script>
-<script src="/static/js/views3.js?v=1.0.3"></script>
-<script src="/static/js/profile.js?v=1.0.3"></script>
-<script src="/static/js/settings_notifications.js?v=1.0.3"></script>
-<script src="/static/js/operations.js?v=1.0.3"></script>
-<script src="/static/js/app.js?v=1.0.5"></script>
+<script src="/static/js/api.js?v=1.0.6"></script>
+<script src="/static/js/theme.js?v=1.0.6"></script>
+<script src="/static/js/theme-settings.js?v=1.0.6"></script>
+<script src="/static/js/ui.js?v=1.0.6"></script>
+<script src="/static/js/datatable.js?v=1.0.6"></script>
+<script src="/static/js/views.js?v=1.0.6"></script>
+<script src="/static/js/views2.js?v=1.0.6"></script>
+<script src="/static/js/views3.js?v=1.0.6"></script>
+<script src="/static/js/profile.js?v=1.0.6"></script>
+<script src="/static/js/settings_notifications.js?v=1.0.6"></script>
+<script src="/static/js/letters.js?v=1.0.6"></script>
+<script src="/static/js/operations.js?v=1.0.6"></script>
+<script src="/static/js/app.js?v=1.0.6"></script>
 </body>
 </html>
