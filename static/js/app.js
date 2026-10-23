@@ -164,6 +164,8 @@ function renderNav() {
     renderNav();
   });
 
+  if (collapsed) bindCollapsedFlyouts(nav);
+
   // Collapse toggle
   const toggle = document.getElementById("sidebar-toggle");
   if (toggle) {
@@ -175,6 +177,36 @@ function renderNav() {
       renderNav();
     };
   }
+}
+
+function bindCollapsedFlyouts(navEl) {
+  navEl.querySelectorAll(".nav-group-collapsed").forEach(group => {
+    const flyout = group.querySelector(".nav-flyout");
+    const head = group.querySelector(".nav-group-head");
+    if (!flyout || !head) return;
+
+    let hideTimer = null;
+    const positionFlyout = () => {
+      const r = head.getBoundingClientRect();
+      const maxTop = Math.max(8, window.innerHeight - flyout.offsetHeight - 8);
+      const top = Math.min(Math.round(r.top), maxTop);
+      flyout.style.left = Math.round(r.right + 8) + "px";
+      flyout.style.top = top + "px";
+    };
+    const show = () => {
+      clearTimeout(hideTimer);
+      flyout.classList.add("is-open");
+      positionFlyout();
+    };
+    const scheduleHide = () => {
+      hideTimer = setTimeout(() => flyout.classList.remove("is-open"), 130);
+    };
+
+    group.addEventListener("mouseenter", show);
+    group.addEventListener("mouseleave", scheduleHide);
+    flyout.addEventListener("mouseenter", () => clearTimeout(hideTimer));
+    flyout.addEventListener("mouseleave", scheduleHide);
+  });
 }
 
 function setActiveNav(section) {
@@ -273,13 +305,8 @@ function applyBrand(brand) {
       cl.style.background = "transparent";
     }
   }
-  // Theme color variables
-  const root = document.documentElement;
-  if (brand.theme === "teal") { root.style.setProperty("--accent", "#0f766e"); root.style.setProperty("--accent-dark", "#0c5f59"); root.style.setProperty("--accent-soft", "#e2f0ed"); }
-  else if (brand.theme === "navy") { root.style.setProperty("--accent", "#2c5d8f"); root.style.setProperty("--accent-dark", "#214a73"); root.style.setProperty("--accent-soft", "#e6eef7"); }
-  else if (brand.theme === "plum") { root.style.setProperty("--accent", "#6b4a86"); root.style.setProperty("--accent-dark", "#553a6b"); root.style.setProperty("--accent-soft", "#f0e9f6"); }
-  else if (brand.theme === "emerald") { root.style.setProperty("--accent", "#2f7d5d"); root.style.setProperty("--accent-dark", "#25634a"); root.style.setProperty("--accent-soft", "#e4f2ea"); }
-  else { root.style.setProperty("--accent", "#c2703d"); root.style.setProperty("--accent-dark", "#a85c2d"); root.style.setProperty("--accent-soft", "#f7e9de"); }
+  // Portal colour theme is controlled by ThemeManager (Settings → Appearance / top bar).
+  if (window.ThemeManager) window.ThemeManager.init();
 }
 
 async function loadBrand() {
@@ -308,7 +335,9 @@ function showApp() {
   set("search-icon", icon("search", 15));
   set("bell-icon", icon("bell", 17));
   set("settings-btn", icon("settings", 17));
+  set("theme-btn", icon("palette", 17));
   set("menu-btn", icon("menu", 18));
+  refreshThemeMenu();
   document.getElementById("logout-btn").innerHTML = icon("logout", 16);
   loadBrand();
   if (Store.meta && Store.meta.company) applyBrand(Store.meta.company);
@@ -359,12 +388,39 @@ async function loadNotifications() {
   } catch (e) { /* silent */ }
 }
 
+function refreshThemeMenu() {
+  const list = document.getElementById("theme-menu-list");
+  if (list && window.ThemeManager) list.innerHTML = window.ThemeManager.renderMenu();
+  document.querySelectorAll("[data-theme-pick]").forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      window.ThemeManager.set(btn.dataset.themePick);
+      refreshThemeMenu();
+      document.getElementById("theme-dropdown")?.classList.add("hidden");
+    };
+  });
+}
+
 function bindChrome() {
   document.getElementById("menu-btn").onclick = () => document.getElementById("sidebar").classList.toggle("open");
   document.getElementById("sidebar-scrim").onclick = () => document.getElementById("sidebar").classList.remove("open");
+  document.getElementById("theme-btn").onclick = (e) => {
+    e.stopPropagation();
+    refreshThemeMenu();
+    document.getElementById("theme-dropdown").classList.toggle("hidden");
+    document.getElementById("notif-dropdown").classList.add("hidden");
+    document.getElementById("user-dropdown").classList.add("hidden");
+  };
+  document.querySelectorAll("[data-go-theme]").forEach(el => el.onclick = (e) => {
+    e.stopPropagation();
+    document.getElementById("theme-dropdown").classList.add("hidden");
+    go(el.dataset.goTheme);
+  });
+  document.addEventListener("hrms-theme-change", refreshThemeMenu);
   document.getElementById("notif-btn").onclick = (e) => {
     e.stopPropagation();
     document.getElementById("notif-dropdown").classList.toggle("hidden");
+    document.getElementById("theme-dropdown").classList.add("hidden");
     document.getElementById("user-dropdown").classList.add("hidden");
   };
   document.querySelectorAll("[data-go-notif]").forEach(el => el.onclick = (e) => {
@@ -382,6 +438,7 @@ function bindChrome() {
     e.stopPropagation();
     document.getElementById("user-dropdown").classList.toggle("hidden");
     document.getElementById("notif-dropdown").classList.add("hidden");
+    document.getElementById("theme-dropdown").classList.add("hidden");
   };
   document.querySelectorAll("#user-dropdown [data-go]").forEach(el => el.onclick = () => {
     document.getElementById("user-dropdown").classList.add("hidden");
@@ -398,6 +455,7 @@ function bindChrome() {
   });
   document.addEventListener("click", (e) => {
     if (!e.target.closest("#notif-btn") && !e.target.closest("#notif-dropdown")) document.getElementById("notif-dropdown").classList.add("hidden");
+    if (!e.target.closest("#theme-btn") && !e.target.closest("#theme-dropdown")) document.getElementById("theme-dropdown").classList.add("hidden");
     if (!e.target.closest("#top-user") && !e.target.closest("#user-dropdown")) document.getElementById("user-dropdown").classList.add("hidden");
   });
   const searchTrigger = document.getElementById("global-search-trigger") || document.getElementById("global-search");

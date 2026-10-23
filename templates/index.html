@@ -118,46 +118,62 @@
 
   <div class="main" id="main-wrap">
     <header class="topbar">
-      <button class="icon-btn menu-btn" id="menu-btn" aria-label="Toggle menu"></button>
-      <div class="crumb"><span class="crumb-logo" id="crumb-logo">M</span><span id="crumb-company">Meridian</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg><b id="crumb-current">Dashboard</b></div>
-      <div class="spacer"></div>
-      <div class="global-search" id="global-search-trigger" title="Quick jump to people, modules & actions (Ctrl+K / ⌘K)">
-        <span id="search-icon"></span>
-        <input id="global-search" placeholder="Search people, modules, actions…" aria-label="Search" readonly style="cursor:pointer">
-        <kbd class="search-kbd">⌘K</kbd>
+      <div class="topbar-start">
+        <button class="icon-btn menu-btn" id="menu-btn" aria-label="Toggle menu"></button>
+        <div class="crumb"><span class="crumb-logo" id="crumb-logo">M</span><span id="crumb-company">Meridian</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg><b id="crumb-current">Dashboard</b></div>
       </div>
-      <div class="position-rel">
-        <button class="icon-btn" id="notif-btn" aria-label="Notifications" title="Notifications">
-          <span id="bell-icon"></span>
-          <span class="dot-badge hidden" id="notif-count">0</span>
+      <div class="topbar-center">
+        <div class="global-search" id="global-search-trigger" title="Quick jump to people, modules & actions (Ctrl+K / ⌘K)">
+          <span id="search-icon"></span>
+          <input id="global-search" placeholder="Search people, modules, actions…" aria-label="Search" readonly style="cursor:pointer">
+          <kbd class="search-kbd">⌘K</kbd>
+        </div>
+      </div>
+      <div class="topbar-end">
+        <div class="position-rel">
+          <button class="icon-btn" id="theme-btn" aria-label="Theme" title="Change theme"></button>
+          <div class="dropdown hidden" id="theme-dropdown" style="width:240px">
+            <div class="dropdown-head">Theme</div>
+            <div id="theme-menu-list"></div>
+            <div class="dropdown-foot">
+              <span class="link" data-go-theme="settings/appearance">All appearance settings →</span>
+            </div>
+          </div>
+        </div>
+        <div class="position-rel">
+          <button class="icon-btn" id="notif-btn" aria-label="Notifications" title="Notifications">
+            <span id="bell-icon"></span>
+            <span class="dot-badge hidden" id="notif-count">0</span>
+          </button>
+          <div class="dropdown hidden" id="notif-dropdown">
+            <div class="dropdown-head">Notifications <span class="link" id="mark-all-read">Mark all read</span></div>
+            <div id="notif-list"></div>
+            <div class="dropdown-foot">
+              <span class="link" data-go-notif="notifications">Notification Centre →</span>
+              <span class="link" data-go-notif="notifications/preferences">Preferences</span>
+            </div>
+          </div>
+        </div>
+        <button class="icon-btn" id="settings-btn" aria-label="Settings" title="Settings & Preferences"></button>
+        <button class="icon-btn" id="help-btn" aria-label="Help" title="Help">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 115 0c0 1.5-2.5 2-2.5 3.5"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg>
         </button>
-        <div class="dropdown hidden" id="notif-dropdown">
-          <div class="dropdown-head">Notifications <span class="link" id="mark-all-read">Mark all read</span></div>
-          <div id="notif-list"></div>
-          <div class="dropdown-foot">
-            <span class="link" data-go-notif="notifications">Notification Centre →</span>
-            <span class="link" data-go-notif="notifications/preferences">Preferences</span>
+        <div class="position-rel">
+          <div class="side-user" id="top-user" style="padding:4px">
+            <div class="avatar" id="top-avatar" style="border-radius:10px;width:32px;height:32px">--</div>
           </div>
-        </div>
-      </div>
-      <button class="icon-btn" id="settings-btn" aria-label="Settings" title="Settings & Preferences"></button>
-      <button class="icon-btn" id="help-btn" aria-label="Help" title="Help">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 115 0c0 1.5-2.5 2-2.5 3.5"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg>
-      </button>
-      <div class="position-rel">
-        <div class="side-user" id="top-user" style="padding:4px">
-          <div class="avatar" id="top-avatar" style="border-radius:10px;width:32px;height:32px">--</div>
-        </div>
-        <div class="dropdown hidden" id="user-dropdown" style="width:230px">
-          <div style="padding:14px;border-bottom:1px solid var(--line)">
-            <b id="dd-name" style="font-size:13px">—</b>
-            <div id="dd-email" class="tiny muted">—</div>
-            <div id="dd-role" class="tiny" style="margin-top:5px;color:var(--accent)">—</div>
+          <div class="dropdown hidden" id="user-dropdown" style="width:230px">
+            <div style="padding:14px;border-bottom:1px solid var(--line)">
+              <b id="dd-name" style="font-size:13px">—</b>
+              <div id="dd-email" class="tiny muted">—</div>
+              <div id="dd-role" class="tiny" style="margin-top:5px;color:var(--accent)">—</div>
+            </div>
+            <div class="dropdown-item" data-go="profile">My profile</div>
+            <div class="dropdown-item" data-go="notifications">Notifications</div>
+            <div class="dropdown-item" data-go="settings/appearance">Appearance</div>
+            <div class="dropdown-item" data-go="settings">Settings & preferences</div>
+            <div class="dropdown-item" id="dd-logout">Sign out</div>
           </div>
-          <div class="dropdown-item" data-go="profile">My profile</div>
-          <div class="dropdown-item" data-go="notifications">Notifications</div>
-          <div class="dropdown-item" data-go="settings">Settings & preferences</div>
-          <div class="dropdown-item" id="dd-logout">Sign out</div>
         </div>
       </div>
     </header>

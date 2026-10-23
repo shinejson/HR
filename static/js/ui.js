@@ -14,6 +14,7 @@ const ICONS = {
   megaphone: '<path d="M3 11l17-6v14L3 13v-2z"/><path d="M7 13v5a2 2 0 002 2h1a2 2 0 002-2v-3"/>',
   file: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h6"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 01-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 01-4 0v-.1a1.7 1.7 0 00-1-1.5 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 01-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.9 1.7 1.7 0 00-1.5-1H3a2 2 0 010-4h.1a1.7 1.7 0 001.5-1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 012.8-2.8l.1.1a1.7 1.7 0 001.9.3H9a1.7 1.7 0 001-1.5V3a2 2 0 014 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1a2 2 0 012.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.9V9a1.7 1.7 0 001.5 1H21a2 2 0 010 4h-.1a1.7 1.7 0 00-1.5 1z"/>',
+  palette: '<circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="10.5" r="2.5"/><circle cx="8.5" cy="7.5" r="2.5"/><circle cx="6.5" cy="12.5" r="2.5"/><path d="M12 22a8 8 0 008-8c0-2.2-1.8-4-4-4h-1.5a2.5 2.5 0 010-5C17 5 19 7 19 10a8 8 0 01-8 12z"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
   bell: '<path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -477,26 +478,3 @@ function spinners(n) {
   return '<div class="loading-block">' + Array.from({ length: n || 3 }).map(() => '<div class="skeleton" style="height:42px"></div>').join("") + '</div>';
 }
 
-
-// Theme Management
-function initTheme() {
-  const savedTheme = localStorage.getItem('hrms-theme') || 'meridian';
-  document.documentElement.setAttribute('data-theme', savedTheme);
-}
-
-function setTheme(themeName) {
-  document.documentElement.setAttribute('data-theme', themeName);
-  localStorage.setItem('hrms-theme', themeName);
-  toast(`Theme changed to ${themeName}`, 'success');
-}
-
-function getCurrentTheme() {
-  return document.documentElement.getAttribute('data-theme') || 'meridian';
-}
-
-// Initialize theme on load
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initTheme);
-} else {
-  initTheme();
-}

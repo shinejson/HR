@@ -396,13 +396,14 @@ Views.notifications = async function (root, params) {
 ============================================================================ */
 Views.settings = async function (root, params) {
   const isAdmin = Store.isAdmin();
-  const validTabs = ["account", "notifications"];
+  const validTabs = ["account", "appearance", "notifications"];
   if (isAdmin) validTabs.push("company", "email_sms", "routing", "deliveries");
   let tab = (params && validTabs.includes(params[0])) ? params[0] : (isAdmin && params && params[0] === "gateways" ? "email_sms" : "account");
 
   async function renderShell() {
     const tabs = [
       ["account", "Account & Security"],
+      ["appearance", "Appearance"],
       ["notifications", "Notification Preferences"],
     ];
     if (isAdmin) {
@@ -500,6 +501,12 @@ Views.settings = async function (root, params) {
       } catch (err) {
         stage.innerHTML = emptyState("Could not load account settings", err.message, "alert");
       }
+      return;
+    }
+
+    /* ---------------- TAB: APPEARANCE ---------------- */
+    if (tab === "appearance") {
+      stage.innerHTML = window.ThemeSettings ? window.ThemeSettings.render() : '<div class="card"><div class="card-body">Theme settings are unavailable.</div></div>';
       return;
     }
 
