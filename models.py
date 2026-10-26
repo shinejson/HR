@@ -45,6 +45,7 @@ class User(db.Model, TimestampMixin, SoftDeleteMixin):
     locked_until = db.Column(db.DateTime)
     token = db.Column(db.String(64), unique=True)
     token_expires_at = db.Column(db.DateTime)
+    last_activity_at = db.Column(db.DateTime)
     must_change_password = db.Column(db.Boolean, default=False)
     role = db.relationship("Role")
     employee = db.relationship("Employee", foreign_keys=[employee_id], post_update=True)

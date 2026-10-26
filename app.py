@@ -56,6 +56,7 @@ def ensure_schema():
     alterations = {
         "users": [
             ("username", "VARCHAR(80)"),
+            ("last_activity_at", "DATETIME"),
         ],
         "employees": [
             ("bio", "TEXT"),
@@ -579,6 +580,9 @@ def error(msg, code=400, errors=None):
     return jsonify(payload), code
 
 
+SESSION_TIMEOUT_MINUTES = 30
+
+
 def auth_user():
     header = request.headers.get("Authorization", "")
     token = header.split(" ", 1)[1].strip() if header.lower().startswith("bearer ") else None
@@ -588,8 +592,24 @@ def auth_user():
     user = User.query.filter_by(token=token, status="active").first()
     if not user or user.deleted_at is not None:
         return None
-    if user.token_expires_at and user.token_expires_at < datetime.utcnow():
+    now = datetime.utcnow()
+    if user.token_expires_at and user.token_expires_at < now:
+        user.token = None
+        user.token_expires_at = None
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
         return None
+
+    threshold = now + timedelta(minutes=SESSION_TIMEOUT_MINUTES - 1)
+    if not user.token_expires_at or user.token_expires_at < threshold:
+        user.token_expires_at = now + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
+        user.last_activity_at = now
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
     return user
 
 
@@ -1385,9 +1405,11 @@ def login():
         return error("Invalid username/email or password", 401)
     if user.status != "active":
         return error("This account is inactive", 403)
+    now = datetime.utcnow()
     user.token = secrets.token_hex(32)
-    user.token_expires_at = datetime.utcnow() + timedelta(days=7)
-    user.last_login_at = datetime.utcnow()
+    user.token_expires_at = now + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
+    user.last_login_at = now
+    user.last_activity_at = now
     user.last_login_ip = request.remote_addr
     user.failed_attempts = 0
     user.locked_until = None
@@ -1404,6 +1426,25 @@ def logout():
     request.user.token_expires_at = None
     db.session.commit()
     return jsonify({"message": "Signed out"})
+
+
+@app.post("/api/v1/auth/ping")
+@login_required
+def ping_session():
+    now = datetime.utcnow()
+    request.user.token_expires_at = now + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
+    request.user.last_activity_at = now
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return jsonify({
+        "data": {
+            "status": "active",
+            "last_activity_at": conv(request.user.last_activity_at),
+            "session_timeout_seconds": SESSION_TIMEOUT_MINUTES * 60,
+        }
+    })
 
 
 @app.get("/api/v1/auth/me")
@@ -1450,6 +1491,8 @@ def public_user(user):
         "department": emp.department.name if emp and emp.department else "",
         "photo_url": emp.photo_url if emp else None,
         "last_login_at": conv(user.last_login_at),
+        "last_activity_at": conv(getattr(user, "last_activity_at", None)),
+        "session_timeout_minutes": SESSION_TIMEOUT_MINUTES,
     }
 
 
@@ -4418,6 +4461,7 @@ def meta():
         "assets": [{"id": a.id, "name": a.name, "tag": a.tag, "status": a.status}
                    for a in Asset.query.order_by(Asset.name)],
         "tax_bands": [serialize(t) for t in TaxBand.query.order_by(TaxBand.min_amount)],
+        "session_timeout_minutes": SESSION_TIMEOUT_MINUTES,
         "employment_categories": letters.category_options(),
         "staff_categories": letters.STAFF_CATEGORIES,
     }})

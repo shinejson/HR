@@ -291,7 +291,205 @@ function go(path) {
   else location.hash = target;
 }
 
+const SessionActivityManager = (() => {
+  const TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes inactivity timeout
+  const WARNING_MS = 2 * 60 * 1000;  // 2 minutes warning before logout (at 28 mins)
+  const THROTTLE_MS = 15 * 1000;     // Record activity at most once every 15s
+  const PING_INTERVAL_MS = 5 * 60 * 1000; // Keep backend alive every 5 mins during active use
+
+  let checkTimer = null;
+  let countdownTimer = null;
+  let lastRecordedTime = Date.now();
+  let lastPingTime = Date.now();
+  let isWarningOpen = false;
+  let initialized = false;
+
+  function getLastActivity() {
+    const raw = localStorage.getItem("hrms_last_activity");
+    const parsed = raw ? parseInt(raw, 10) : 0;
+    return parsed > 0 ? parsed : lastRecordedTime;
+  }
+
+  function setLastActivity(time) {
+    lastRecordedTime = time;
+    localStorage.setItem("hrms_last_activity", String(time));
+  }
+
+  function recordActivity(fromUser) {
+    if (!API.token) return;
+    const now = Date.now();
+    if (isWarningOpen && fromUser) {
+      extendSession();
+      return;
+    }
+    if (now - lastRecordedTime >= THROTTLE_MS) {
+      setLastActivity(now);
+      if (now - lastPingTime >= PING_INTERVAL_MS) {
+        lastPingTime = now;
+        API.ping().catch(() => {});
+      }
+    }
+  }
+
+  function formatTime(secs) {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s;
+  }
+
+  function showWarningModal(remainingMs) {
+    if (isWarningOpen) return;
+    isWarningOpen = true;
+    let secondsLeft = Math.max(1, Math.round(remainingMs / 1000));
+
+    const modalBody = '<div class="stack" style="text-align:center;padding:8px 4px;">' +
+      '<div style="font-size:36px;line-height:1;margin-bottom:8px;">&#9203;</div>' +
+      '<h4 style="margin:0 0 6px 0;font-size:17px;font-weight:600;">Session Expiring Soon</h4>' +
+      '<p class="small muted" style="margin:0 0 16px 0;">You have been inactive for 28 minutes. For security, your session will automatically log out in:</p>' +
+      '<div style="font-size:34px;font-weight:700;font-family:monospace;color:var(--accent);letter-spacing:1px;" id="session-countdown-display">' + formatTime(secondsLeft) + '</div>' +
+      '<p class="tiny muted" style="margin:14px 0 0 0;">Click <strong>Stay Signed In</strong> or interact with the screen to keep working.</p>' +
+      '</div>';
+
+    const modalFoot = '<button class="btn btn-ghost" id="session-logout-now-btn">Sign Out Now</button>' +
+      '<button class="btn btn-accent" id="session-stay-signed-in-btn">Stay Signed In</button>';
+
+    openModal({
+      title: "Inactivity Warning",
+      narrow: true,
+      body: modalBody,
+      footer: modalFoot,
+      onMount(card) {
+        const stayBtn = card.querySelector("#session-stay-signed-in-btn");
+        const logoutBtn = card.querySelector("#session-logout-now-btn");
+        const display = card.querySelector("#session-countdown-display");
+
+        if (stayBtn) {
+          stayBtn.onclick = () => {
+            extendSession();
+          };
+        }
+        if (logoutBtn) {
+          logoutBtn.onclick = () => {
+            closeWarningModal();
+            logout();
+          };
+        }
+
+        clearInterval(countdownTimer);
+        countdownTimer = setInterval(() => {
+          secondsLeft--;
+          if (display) display.textContent = formatTime(Math.max(0, secondsLeft));
+          if (secondsLeft <= 0) {
+            clearInterval(countdownTimer);
+            closeWarningModal();
+            performAutoLogout();
+          }
+        }, 1000);
+      }
+    });
+  }
+
+  function closeWarningModal() {
+    if (isWarningOpen) {
+      isWarningOpen = false;
+      clearInterval(countdownTimer);
+      if (typeof closeModal === "function") closeModal();
+    }
+  }
+
+  function extendSession() {
+    closeWarningModal();
+    const now = Date.now();
+    setLastActivity(now);
+    lastPingTime = now;
+    API.ping().then(() => {
+      toast("Session extended", "info");
+    }).catch(() => {});
+  }
+
+  function performAutoLogout() {
+    closeWarningModal();
+    stop();
+    API.logout().finally(() => {
+      Store.user = null;
+      document.getElementById("app-view").classList.add("hidden");
+      document.getElementById("login-view").classList.remove("hidden");
+      const pwd = document.getElementById("login-password");
+      if (pwd) pwd.value = "";
+      toast("You have been signed out due to 30 minutes of inactivity.", "warning");
+    });
+  }
+
+  function checkStatus() {
+    if (!API.token) return;
+    const now = Date.now();
+    const last = getLastActivity();
+    const idleMs = now - last;
+
+    if (idleMs >= TIMEOUT_MS) {
+      performAutoLogout();
+    } else if (idleMs >= TIMEOUT_MS - WARNING_MS) {
+      showWarningModal(TIMEOUT_MS - idleMs);
+    } else if (isWarningOpen) {
+      closeWarningModal();
+    }
+  }
+
+  function init() {
+    if (initialized) return;
+    initialized = true;
+    const userEvents = ["mousedown", "mousemove", "keydown", "touchstart", "scroll", "wheel"];
+    userEvents.forEach(evt => {
+      window.addEventListener(evt, () => recordActivity(true), { passive: true });
+    });
+
+    window.addEventListener("storage", (e) => {
+      if (e.key === "hrms_last_activity") {
+        if (isWarningOpen) closeWarningModal();
+      } else if (e.key === "hrms_token" && !e.newValue) {
+        closeWarningModal();
+        stop();
+        Store.user = null;
+        document.getElementById("app-view").classList.add("hidden");
+        document.getElementById("login-view").classList.remove("hidden");
+      }
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") checkStatus();
+    });
+    window.addEventListener("focus", checkStatus);
+  }
+
+  function start() {
+    init();
+    setLastActivity(Date.now());
+    lastPingTime = Date.now();
+    clearInterval(checkTimer);
+    checkTimer = setInterval(checkStatus, 5000);
+  }
+
+  function stop() {
+    clearInterval(checkTimer);
+    clearInterval(countdownTimer);
+    closeWarningModal();
+  }
+
+  return {
+    init,
+    start,
+    stop,
+    recordActivity,
+    extendSession,
+    performAutoLogout,
+    get isWarningOpen() { return isWarningOpen; }
+  };
+})();
+
 function logout() {
+  if (typeof SessionActivityManager !== "undefined") {
+    SessionActivityManager.stop();
+  }
   API.logout().finally(() => {
     Store.user = null;
     document.getElementById("app-view").classList.add("hidden");
@@ -389,6 +587,9 @@ async function loadBrand() {
 function showApp() {
   document.getElementById("login-view").classList.add("hidden");
   document.getElementById("app-view").classList.remove("hidden");
+  if (typeof SessionActivityManager !== "undefined") {
+    SessionActivityManager.start();
+  }
   renderNav();
   const u = Store.user;
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.innerHTML = val; };
@@ -533,11 +734,18 @@ function bindChrome() {
       if (typeof openCommandPalette === "function") openCommandPalette("");
     });
   }
-  document.addEventListener("auth:expired", () => {
+  document.addEventListener("auth:expired", (e) => {
+    if (typeof SessionActivityManager !== "undefined") {
+      SessionActivityManager.stop();
+    }
     Store.user = null;
     document.getElementById("app-view").classList.add("hidden");
     document.getElementById("login-view").classList.remove("hidden");
-    toast("Your session expired. Please sign in again.", "error");
+    if (e.detail && e.detail.reason === "timeout") {
+      toast("Your session has expired due to 30 minutes of inactivity. Please sign in again.", "warning");
+    } else {
+      toast("Your session expired. Please sign in again.", "error");
+    }
   });
 }
 
@@ -576,6 +784,9 @@ function bindLogin() {
 async function boot() {
   bindLogin();
   bindChrome();
+  if (typeof SessionActivityManager !== "undefined") {
+    SessionActivityManager.init();
+  }
   window.addEventListener("hashchange", renderRoute);
   const ok = await Store.boot();
   if (ok) {

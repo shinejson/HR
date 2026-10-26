@@ -4,8 +4,19 @@ const API = (() => {
 
   function setToken(t) {
     token = t;
-    if (t) localStorage.setItem("hrms_token", t);
-    else localStorage.removeItem("hrms_token");
+    if (t) {
+      localStorage.setItem("hrms_token", t);
+      localStorage.setItem("hrms_last_activity", String(Date.now()));
+    } else {
+      localStorage.removeItem("hrms_token");
+      localStorage.removeItem("hrms_last_activity");
+    }
+  }
+
+  function recordActivity() {
+    if (token) {
+      localStorage.setItem("hrms_last_activity", String(Date.now()));
+    }
   }
 
   function isFormDataBody(body) {
@@ -24,12 +35,15 @@ const API = (() => {
     if (!res.ok) {
       if (res.status === 401) {
         setToken(null);
-        document.dispatchEvent(new CustomEvent("auth:expired"));
+        document.dispatchEvent(new CustomEvent("auth:expired", { detail: { reason: "timeout" } }));
       }
       const err = new Error((body && body.message) || "Request failed (" + res.status + ")");
       err.status = res.status;
       err.errors = body && body.errors;
       throw err;
+    }
+    if (token && path !== "/auth/ping") {
+      recordActivity();
     }
     return body;
   }
@@ -45,6 +59,10 @@ const API = (() => {
     logout() {
       return request("/auth/logout", { method: "POST" }).catch(() => {}).finally(() => setToken(null));
     },
+    ping() {
+      return request("/auth/ping", { method: "POST" });
+    },
+    recordActivity,
     me() { return request("/auth/me").then(r => r.data); },
     get(path, params) {
       let qs = "";
@@ -70,6 +88,12 @@ const Store = {
   notifications: [],
   async boot() {
     if (!API.token) return false;
+    const lastActivity = parseInt(localStorage.getItem("hrms_last_activity") || "0", 10);
+    const timeoutMs = 30 * 60 * 1000;
+    if (lastActivity > 0 && (Date.now() - lastActivity > timeoutMs)) {
+      API.setToken(null);
+      return false;
+    }
     try {
       this.user = await API.me();
       await this.loadMeta();
