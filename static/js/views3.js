@@ -769,7 +769,7 @@ Views.reports = async function (root) {
 
 /* ============================================================ ADMIN */
 const adminState = { tab: "users" };
-const ADMIN_PERMISSIONS = ["employees", "org", "leave", "attendance", "payroll", "recruitment", "documents", "reports", "settings", "audit", "ess"];
+const ADMIN_PERMISSIONS = ["employees", "org", "leave", "attendance", "payroll", "recruitment", "documents", "reports", "settings", "audit", "ess", "operations"];
 const ADMIN_SETTING_GROUPS = ["general", "hr", "attendance", "payroll", "branding", "security", "notifications"];
 
 function reloadAdmin() {

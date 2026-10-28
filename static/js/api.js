@@ -110,6 +110,20 @@ const Store = {
   canManage() { return this.isRole("super_admin", "hr_admin", "hr_officer"); },
   canPayroll() { return this.isRole("super_admin", "hr_admin", "payroll"); },
   canAdmin() { return this.isRole("super_admin"); },
+  canOperations() {
+    if (!this.user) return false;
+    if (this.user.can_access_operations !== undefined) return Boolean(this.user.can_access_operations);
+    const role = this.role();
+    if (role === "super_admin") return true;
+    if (["operations_manager", "operations_officer", "hotel_manager", "hr_admin"].includes(role)) return true;
+    const perms = String((this.user && this.user.permissions) || "").split(",").map(p => p.trim());
+    if (perms.includes("*") || perms.includes("operations") || perms.includes("operations.view") || perms.includes("operations.manage")) return true;
+    const dept = ((this.user && this.user.department) || "").toLowerCase().trim();
+    if (dept === "operations" || dept === "hotel operations" || dept === "ops") return true;
+    const code = ((this.user && this.user.department_code) || "").toUpperCase().trim();
+    if (code === "OPS") return true;
+    return false;
+  },
   employeeName(id) {
     if (!this.meta) return "—";
     const e = this.meta.employees.find(x => x.id === id);

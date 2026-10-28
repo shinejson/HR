@@ -47,28 +47,30 @@ const NAV = [
     ],
   },
   {
-    label: "Operations", icon: "laptop",
+    label: "Hotel Operations", icon: "laptop", requiresOps: true,
     items: [
-      { id: "operations", label: "Overview", icon: "grid" },
+      { id: "operations", label: "Operations Dashboard", icon: "grid", requiresOps: true },
       {
-        id: "ops-resources", label: "Resources", icon: "laptop",
+        id: "ops-inventory-group", label: "Hotel Inventory", icon: "box", requiresOps: true,
         children: [
-          { id: "assets", label: "Assets" },
-          { id: "operations", label: "Ops inventory", subTab: "assets" },
+          { id: "operations", label: "Supplies & Amenities", subTab: "inventory" },
+          { id: "operations", label: "Storerooms & Hubs", subTab: "storerooms" },
+          { id: "operations", label: "Equipment Assets", subTab: "assets" },
         ],
       },
       {
-        id: "ops-service", label: "Service desk", icon: "lifebuoy",
+        id: "ops-service-group", label: "Service & Work Orders", icon: "lifebuoy", requiresOps: true,
         children: [
+          { id: "operations", label: "Work Orders Queue", subTab: "workorders" },
           { id: "helpdesk", label: "Helpdesk tickets" },
-          { id: "operations", label: "Ops queue", subTab: "helpdesk" },
         ],
       },
       {
-        id: "ops-comms", label: "Communications", icon: "megaphone",
+        id: "ops-safety-group", label: "Hospitality Standards", icon: "shield", requiresOps: true,
         children: [
-          { id: "announcements", label: "Announcements" },
-          { id: "operations", label: "Ops events", subTab: "announcements" },
+          { id: "operations", label: "Wings & Room Readiness", subTab: "readiness" },
+          { id: "operations", label: "Health, Safety & Hygiene", subTab: "safety" },
+          { id: "announcements", label: "Hotel Broadcasts" },
         ],
       },
     ],
@@ -99,7 +101,10 @@ const PAGES = {
 
 function currentRole() { return Store.role(); }
 
-function itemVisible(i, role) { return !i.roles || i.roles.includes(role); }
+function itemVisible(i, role) {
+  if (i.requiresOps && (!Store.canOperations || !Store.canOperations())) return false;
+  return !i.roles || i.roles.includes(role);
+}
 function itemBadge(id) {
   if (id === "approvals") return '<span class="badge hidden" id="nav-approvals-badge"></span>';
   if (id === "notifications") return '<span class="badge hidden" id="nav-notif-badge"></span>';
@@ -120,6 +125,7 @@ function renderNav() {
 
   let html = "";
   NAV.forEach(group => {
+    if (group.requiresOps && (!Store.canOperations || !Store.canOperations())) return;
     const visible = group.items.filter(i => itemVisible(i, role));
     if (!visible.length) return;
     if (collapsed) {

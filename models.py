@@ -890,3 +890,52 @@ class LoginHistory(db.Model):
     user_agent = db.Column(db.String(255))
     success = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=now, nullable=False)
+
+
+class HotelInventoryItem(db.Model, TimestampMixin):
+    __tablename__ = "hotel_inventory_items"
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(180), nullable=False)
+    sku = db.Column(db.String(40), unique=True, nullable=False)
+    category = db.Column(db.String(80), nullable=False)
+    location = db.Column(db.String(120), nullable=False)
+    current_stock = db.Column(db.Integer, default=0)
+    reorder_level = db.Column(db.Integer, default=20)
+    ideal_par_level = db.Column(db.Integer, default=100)
+    unit = db.Column(db.String(40), default="units")
+    unit_cost = db.Column(db.Numeric(10, 2), default=0)
+    supplier = db.Column(db.String(180))
+    status = db.Column(db.String(20), default="in_stock")
+    icon = db.Column(db.String(40), default="box")
+    notes = db.Column(db.Text)
+
+
+class HotelStockMovement(db.Model, TimestampMixin):
+    __tablename__ = "hotel_stock_movements"
+    id = db.Column(db.Integer, primary_key=True)
+    item_id = db.Column(db.Integer, db.ForeignKey("hotel_inventory_items.id"), nullable=False)
+    movement_type = db.Column(db.String(20), nullable=False)
+    quantity = db.Column(db.Integer, nullable=False)
+    source_dest = db.Column(db.String(180))
+    reference_no = db.Column(db.String(80))
+    performed_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    movement_date = db.Column(db.Date, default=date.today)
+    item = db.relationship("HotelInventoryItem")
+
+
+class HotelWorkOrder(db.Model, TimestampMixin):
+    __tablename__ = "hotel_work_orders"
+    id = db.Column(db.Integer, primary_key=True)
+    order_no = db.Column(db.String(40), unique=True, nullable=False)
+    category = db.Column(db.String(60), nullable=False)
+    location = db.Column(db.String(120), nullable=False)
+    wing = db.Column(db.String(60), default="West Wing")
+    floor = db.Column(db.String(20), default="Floor 4")
+    title = db.Column(db.String(180), nullable=False)
+    description = db.Column(db.Text)
+    priority = db.Column(db.String(20), default="medium")
+    status = db.Column(db.String(30), default="open")
+    reported_by = db.Column(db.String(120))
+    assigned_to_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=True)
+    completed_at = db.Column(db.DateTime, nullable=True)
+    assigned_to = db.relationship("Employee")

@@ -27,9 +27,12 @@ from models import (
     Ticket, TicketComment, Announcement, CompanyEvent, EventRsvp, Notification,
     NotificationPreference, NotificationDelivery, Approval, AuditLog, Setting,
     LoginHistory,
+    HotelInventoryItem, HotelStockMovement, HotelWorkOrder,
 )
+import models
 import messaging
 import letters
+import hotel_ops
 from seed import seed, _paye
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -403,12 +406,16 @@ def bootstrap_database():
             seed(app)
         ensure_delivery_settings()
         ensure_demo_enrichment()
+        hotel_ops.seed_hotel_operations(db, models)
 
 
 READ_ONLY = {"auditor"}
 
 READ_PERMS = {
     "users": {"super_admin", "hr_admin"},
+    "hotel-inventory": {"super_admin", "hr_admin", "operations_manager", "operations_officer", "hotel_manager", "manager", "employee", "auditor"},
+    "hotel-work-orders": {"super_admin", "hr_admin", "operations_manager", "operations_officer", "hotel_manager", "manager", "employee", "auditor"},
+    "hotel-stock-movements": {"super_admin", "hr_admin", "operations_manager", "operations_officer", "hotel_manager", "auditor"},
     "roles": {"super_admin", "hr_admin"},
     "settings": {"super_admin", "hr_admin"},
     "audit-logs": {"super_admin", "auditor"},
@@ -449,6 +456,9 @@ def can_read(user, resource):
 
 WRITE_PERMS = {
     "employees": {"super_admin", "hr_admin", "hr_officer"},
+    "hotel-inventory": {"super_admin", "hr_admin", "operations_manager", "operations_officer", "hotel_manager"},
+    "hotel-work-orders": {"super_admin", "hr_admin", "operations_manager", "operations_officer", "hotel_manager", "manager", "employee"},
+    "hotel-stock-movements": {"super_admin", "hr_admin", "operations_manager", "operations_officer", "hotel_manager"},
     "departments": {"super_admin", "hr_admin"},
     "designations": {"super_admin", "hr_admin"},
     "grades": {"super_admin", "hr_admin"},
@@ -1293,6 +1303,9 @@ RESOURCES = {
     "employee-skills": dict(model=EmployeeSkill, order="id", search=["name", "category"]),
     "employee-education": dict(model=EmployeeEducation, order="id", search=["qualification", "institution"]),
     "contracts": dict(model=Contract, order="id", search=["type", "status"]),
+    "hotel-inventory": dict(model=HotelInventoryItem, order="id", search=["name", "sku", "category", "location", "supplier"]),
+    "hotel-work-orders": dict(model=HotelWorkOrder, order="id", search=["order_no", "title", "location", "category"]),
+    "hotel-stock-movements": dict(model=HotelStockMovement, order="id", search=["reference_no", "source_dest"]),
 }
 
 
@@ -1469,6 +1482,37 @@ def change_password():
     return jsonify({"message": "Password updated"})
 
 
+def has_operations_access(user):
+    if not user or getattr(user, "deleted_at", None) is not None:
+        return False
+    role = role_of(user)
+    if role == "super_admin":
+        return True
+    if role in ("operations_manager", "operations_officer", "hotel_manager", "hr_admin"):
+        return True
+    perms = (user.role.permissions if user.role and user.role.permissions else "").split(",")
+    perms = [p.strip() for p in perms]
+    if "*" in perms or "operations" in perms or "operations.view" in perms:
+        return True
+    emp = user.employee
+    if emp and emp.department:
+        dept_name = (emp.department.name or "").lower()
+        dept_code = (emp.department.code or "").upper()
+        if "operations" in dept_name or dept_code == "OPS":
+            return True
+    return False
+
+
+def operations_required(fn):
+    @wraps(fn)
+    @login_required
+    def wrapper(*args, **kwargs):
+        if not has_operations_access(request.user):
+            return error("Access Denied: You do not have permission to access Hotel Operations. This section is restricted to the Operations department and authorized personnel.", 403)
+        return fn(*args, **kwargs)
+    return wrapper
+
+
 def public_user(user):
     emp = user.employee
     return {
@@ -1489,6 +1533,8 @@ def public_user(user):
         "phone": emp.phone if emp else None,
         "job_title": emp.designation.title if emp and emp.designation else "",
         "department": emp.department.name if emp and emp.department else "",
+        "department_code": emp.department.code if emp and emp.department else "",
+        "can_access_operations": has_operations_access(user),
         "photo_url": emp.photo_url if emp else None,
         "last_login_at": conv(user.last_login_at),
         "last_activity_at": conv(getattr(user, "last_activity_at", None)),
@@ -2025,6 +2071,259 @@ def dashboard():
         "announcements": announcements, "my_leave": my_balances,
         "company": {"name": (Company.query.first().name if Company.query.first() else "Company")},
     }})
+
+
+# ---------------------------------------------------------------- hotel operations endpoints
+
+@app.get("/api/v1/operations/dashboard")
+@operations_required
+def operations_dashboard():
+    period = request.args.get("period", "this_month")
+    data = hotel_ops.calculate_operations_dashboard(models, period=period)
+    return jsonify({"data": data})
+
+
+@app.get("/api/v1/operations/inventory")
+@operations_required
+def get_operations_inventory():
+    q = request.args.get("q", "").strip().lower()
+    location = request.args.get("location")
+    category = request.args.get("category")
+    status = request.args.get("status")
+
+    query = HotelInventoryItem.query
+    if location:
+        query = query.filter(HotelInventoryItem.location == location)
+    if category:
+        query = query.filter(HotelInventoryItem.category == category)
+    if status == "low_stock":
+        query = query.filter(HotelInventoryItem.current_stock <= HotelInventoryItem.reorder_level)
+    elif status == "out_of_stock":
+        query = query.filter(HotelInventoryItem.current_stock <= 0)
+    elif status == "in_stock":
+        query = query.filter(HotelInventoryItem.current_stock > HotelInventoryItem.reorder_level)
+
+    items = query.order_by(HotelInventoryItem.id.asc()).all()
+    if q:
+        items = [i for i in items if q in i.name.lower() or q in i.sku.lower() or q in (i.supplier or "").lower()]
+
+    return jsonify({"data": [
+        {
+            "id": i.id,
+            "name": i.name,
+            "sku": i.sku,
+            "category": i.category,
+            "location": i.location,
+            "current_stock": i.current_stock,
+            "reorder_level": i.reorder_level,
+            "ideal_par_level": i.ideal_par_level,
+            "unit": i.unit,
+            "unit_cost": float(i.unit_cost or 0),
+            "total_value": float(i.current_stock or 0) * float(i.unit_cost or 0),
+            "supplier": i.supplier,
+            "status": "out_of_stock" if i.current_stock <= 0 else ("low_stock" if i.current_stock <= i.reorder_level else "in_stock"),
+            "icon": i.icon or "box",
+            "notes": i.notes,
+        }
+        for i in items
+    ]})
+
+
+@app.post("/api/v1/operations/inventory/adjust")
+@operations_required
+def adjust_operations_inventory():
+    body = request.get_json(silent=True) or {}
+    item_id = body.get("item_id")
+    qty = int(body.get("quantity") or 0)
+    mtype = body.get("movement_type", "in")
+    reason = body.get("reason", "Manual adjustment")
+    ref = body.get("reference_no", f"ADJ-{datetime.utcnow().strftime('%Y%m%d%H%M')}")
+
+    if not item_id:
+        return error("Item ID is required", 422)
+    item = db.session.get(HotelInventoryItem, item_id)
+    if not item:
+        return error("Inventory item not found", 404)
+    if qty <= 0 and mtype != "set":
+        return error("Quantity must be greater than zero", 422)
+
+    old_stock = item.current_stock
+    if mtype == "in":
+        item.current_stock += qty
+    elif mtype == "out":
+        if item.current_stock < qty:
+            return error(f"Insufficient stock on hand ({item.current_stock} {item.unit} available)", 422)
+        item.current_stock -= qty
+    elif mtype == "set":
+        item.current_stock = max(0, qty)
+
+    if item.current_stock <= 0:
+        item.status = "out_of_stock"
+    elif item.current_stock <= item.reorder_level:
+        item.status = "low_stock"
+    else:
+        item.status = "in_stock"
+
+    movement = HotelStockMovement(
+        item_id=item.id,
+        movement_type=mtype,
+        quantity=qty,
+        source_dest=reason,
+        reference_no=ref,
+        performed_by=request.user.id,
+        movement_date=date.today(),
+    )
+    db.session.add(movement)
+    audit(request.user, "inventory_adjusted", "hotel_inventory_items", item.id,
+          {"old_stock": old_stock}, {"new_stock": item.current_stock, "type": mtype, "qty": qty})
+    db.session.commit()
+
+    return jsonify({
+        "message": f"Inventory updated for {item.name}. New stock: {item.current_stock} {item.unit}",
+        "data": {
+            "id": item.id,
+            "current_stock": item.current_stock,
+            "status": item.status,
+        }
+    })
+
+
+@app.post("/api/v1/operations/inventory")
+@operations_required
+def create_operations_inventory_item():
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    sku = (body.get("sku") or "").strip().upper()
+    if not name or not sku:
+        return error("Name and SKU are required", 422)
+    if HotelInventoryItem.query.filter_by(sku=sku).first():
+        return error("An item with this SKU already exists", 422)
+
+    item = HotelInventoryItem(
+        name=name,
+        sku=sku,
+        category=body.get("category", "General Supplies"),
+        location=body.get("location", "Central Linen & Laundry Store"),
+        current_stock=int(body.get("current_stock") or 0),
+        reorder_level=int(body.get("reorder_level") or 20),
+        ideal_par_level=int(body.get("ideal_par_level") or 100),
+        unit=body.get("unit", "units"),
+        unit_cost=Decimal(str(body.get("unit_cost") or 0)),
+        supplier=body.get("supplier"),
+        icon=body.get("icon", "box"),
+        notes=body.get("notes"),
+    )
+    if item.current_stock <= 0:
+        item.status = "out_of_stock"
+    elif item.current_stock <= item.reorder_level:
+        item.status = "low_stock"
+    else:
+        item.status = "in_stock"
+
+    db.session.add(item)
+    audit(request.user, "inventory_item_created", "hotel_inventory_items", None, None, {"sku": sku, "name": name})
+    db.session.commit()
+    return jsonify({"message": "Inventory item registered", "data": {"id": item.id, "sku": item.sku}}), 201
+
+
+@app.get("/api/v1/operations/work-orders")
+@operations_required
+def get_operations_work_orders():
+    status = request.args.get("status")
+    wing = request.args.get("wing")
+    priority = request.args.get("priority")
+    category = request.args.get("category")
+
+    query = HotelWorkOrder.query
+    if status:
+        query = query.filter(HotelWorkOrder.status == status)
+    if wing:
+        query = query.filter(HotelWorkOrder.wing == wing)
+    if priority:
+        query = query.filter(HotelWorkOrder.priority == priority)
+    if category:
+        query = query.filter(HotelWorkOrder.category == category)
+
+    orders = query.order_by(HotelWorkOrder.id.desc()).all()
+    return jsonify({"data": [
+        {
+            "id": w.id,
+            "order_no": w.order_no,
+            "category": w.category,
+            "location": w.location,
+            "wing": w.wing,
+            "floor": w.floor,
+            "title": w.title,
+            "description": w.description,
+            "priority": w.priority,
+            "status": w.status,
+            "reported_by": w.reported_by,
+            "assigned_to": w.assigned_to.full_name if w.assigned_to else "Unassigned",
+            "assigned_to_id": w.assigned_to_id,
+            "created_at": conv(w.created_at),
+            "completed_at": conv(w.completed_at),
+        }
+        for w in orders
+    ]})
+
+
+@app.post("/api/v1/operations/work-orders")
+@operations_required
+def create_operations_work_order():
+    body = request.get_json(silent=True) or {}
+    title = (body.get("title") or "").strip()
+    loc = (body.get("location") or "").strip()
+    if not title or not loc:
+        return error("Title and Location are required", 422)
+
+    count = HotelWorkOrder.query.count() + 1
+    order_no = f"WO-{420 + count}"
+
+    wo = HotelWorkOrder(
+        order_no=order_no,
+        category=body.get("category", "Maintenance"),
+        location=loc,
+        wing=body.get("wing", "East Wing"),
+        floor=body.get("floor", "Floor 1"),
+        title=title,
+        description=body.get("description"),
+        priority=body.get("priority", "medium"),
+        status="open",
+        reported_by=body.get("reported_by") or (request.user.employee.full_name if request.user.employee else request.user.email),
+        assigned_to_id=body.get("assigned_to_id"),
+        created_at=datetime.utcnow(),
+    )
+    db.session.add(wo)
+    audit(request.user, "work_order_created", "hotel_work_orders", None, None, {"order_no": order_no, "title": title})
+    db.session.commit()
+    return jsonify({"message": "Work order created", "data": {"id": wo.id, "order_no": wo.order_no}}), 201
+
+
+@app.put("/api/v1/operations/work-orders/<int:wo_id>/status")
+@operations_required
+def update_operations_work_order_status(wo_id):
+    wo = db.session.get(HotelWorkOrder, wo_id)
+    if not wo:
+        return error("Work order not found", 404)
+    body = request.get_json(silent=True) or {}
+    new_status = body.get("status")
+    if new_status not in ("open", "in_progress", "completed", "inspected", "cancelled"):
+        return error("Invalid status", 422)
+
+    old_status = wo.status
+    wo.status = new_status
+    if new_status in ("completed", "inspected") and not wo.completed_at:
+        wo.completed_at = datetime.utcnow()
+    audit(request.user, "work_order_status_updated", "hotel_work_orders", wo.id,
+          {"old_status": old_status}, {"new_status": new_status})
+    db.session.commit()
+    return jsonify({"message": f"Work order #{wo.order_no} status changed to {new_status}"})
+
+
+@app.get("/api/v1/operations/storerooms")
+@operations_required
+def get_operations_storerooms():
+    return jsonify({"data": hotel_ops.HOTEL_STOREROOMS})
 
 
 @app.get("/api/v1/reports/overview")
