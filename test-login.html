@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login Test - Meridian HR</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .test-card {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+    h1 { color: #333; margin-top: 0; }
+    button {
+      background: #0f766e;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      margin: 5px;
+    }
+    button:hover { background: #0d5f58; }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    .success { color: #10b981; font-weight: bold; }
+    .error { color: #ef4444; font-weight: bold; }
+    .info { color: #6b7280; font-size: 14px; }
+    #result {
+      margin-top: 20px;
+      padding: 15px;
+      border-radius: 8px;
+      font-family: monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+    }
+    .account-btn {
+      display: block;
+      width: 100%;
+      text-align: left;
+      margin: 10px 0;
+      padding: 15px;
+      background: #f0f9ff;
+      border: 2px solid #e0e7ff;
+    }
+    .account-btn:hover {
+      background: #dbeafe;
+      border-color: #0f766e;
+    }
+  </style>
+</head>
+<body>
+  <div class="test-card">
+    <h1>🔐 Meridian HR - Login Test</h1>
+    <p class="info">Click any demo account below to test login:</p>
+    
+    <button class="account-btn" onclick="testLogin('ama.mensah@meridian.gh', 'Admin@123')">
+      <strong>Super Admin</strong><br>
+      <small>ama.mensah@meridian.gh / Admin@123</small>
+    </button>
+    
+    <button class="account-btn" onclick="testLogin('kwame.boateng@meridian.gh', 'Hr@123')">
+      <strong>HR Admin</strong><br>
+      <small>kwame.boateng@meridian.gh / Hr@123</small>
+    </button>
+    
+    <button class="account-btn" onclick="testLogin('kofi.adjei@meridian.gh', 'Manager@123')">
+      <strong>Manager</strong><br>
+      <small>kofi.adjei@meridian.gh / Manager@123</small>
+    </button>
+    
+    <button class="account-btn" onclick="testLogin('abena.sarpong@meridian.gh', 'Employee@123')">
+      <strong>Employee</strong><br>
+      <small>abena.sarpong@meridian.gh / Employee@123</small>
+    </button>
+
+    <div id="result"></div>
+    
+    <hr style="margin: 30px 0;">
+    
+    <button onclick="window.location.href='http://127.0.0.1:5000'">
+      ➜ Go to Main Application
+    </button>
+  </div>
+
+  <script>
+    async function testLogin(email, password) {
+      const resultDiv = document.getElementById('result');
+      resultDiv.innerHTML = '⏳ Testing login...\n';
+      resultDiv.style.background = '#f3f4f6';
+      resultDiv.style.border = '1px solid #d1d5db';
+      
+      try {
+        const response = await fetch('http://127.0.0.1:5000/api/v1/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok && data.data && data.data.token) {
+          resultDiv.innerHTML = `✅ LOGIN SUCCESSFUL!\n\n` +
+            `Email: ${email}\n` +
+            `Token: ${data.data.token.substring(0, 30)}...\n` +
+            `User: ${data.data.user.name || 'Unknown'}\n` +
+            `Role: ${data.data.user.role || 'Unknown'}\n\n` +
+            `✨ Token has been saved to localStorage.\n` +
+            `You can now go to the main application!\n`;
+          resultDiv.style.background = '#d1fae5';
+          resultDiv.style.border = '2px solid #10b981';
+          resultDiv.className = 'success';
+          
+          // Save token to localStorage (same as main app)
+          localStorage.setItem('hrms_token', data.data.token);
+          localStorage.setItem('hrms_last_activity', String(Date.now()));
+          
+        } else {
+          resultDiv.innerHTML = `❌ LOGIN FAILED\n\n` +
+            `Status: ${response.status}\n` +
+            `Message: ${data.message || 'Unknown error'}\n\n` +
+            `Email: ${email}\n` +
+            `Password: ${password}\n`;
+          resultDiv.style.background = '#fee2e2';
+          resultDiv.style.border = '2px solid #ef4444';
+          resultDiv.className = 'error';
+        }
+      } catch (error) {
+        resultDiv.innerHTML = `❌ ERROR\n\n${error.message}\n\nIs the server running at http://127.0.0.1:5000?`;
+        resultDiv.style.background = '#fee2e2';
+        resultDiv.style.border = '2px solid #ef4444';
+        resultDiv.className = 'error';
+      }
+    }
+    
+    // Check if token exists
+    window.onload = () => {
+      const token = localStorage.getItem('hrms_token');
+      if (token) {
+        const resultDiv = document.getElementById('result');
+        resultDiv.innerHTML = `ℹ️ INFO: You have an existing session token.\nToken: ${token.substring(0, 30)}...\n\nYou can go directly to the main application.`;
+        resultDiv.style.background = '#dbeafe';
+        resultDiv.style.border = '1px solid #3b82f6';
+      }
+    };
+  </script>
+</body>
+</html>
