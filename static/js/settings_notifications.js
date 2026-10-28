@@ -397,7 +397,7 @@ Views.notifications = async function (root, params) {
 Views.settings = async function (root, params) {
   const isAdmin = Store.isAdmin();
   const validTabs = ["account", "appearance", "notifications"];
-  if (isAdmin) validTabs.push("company", "email_sms", "routing", "deliveries");
+  if (isAdmin) validTabs.push("organization", "company", "email_sms", "routing", "deliveries");
   let tab = (params && validTabs.includes(params[0])) ? params[0] : (isAdmin && params && params[0] === "gateways" ? "email_sms" : "account");
 
   async function renderShell() {
@@ -408,6 +408,7 @@ Views.settings = async function (root, params) {
     ];
     if (isAdmin) {
       tabs.push(
+        ["organization", "Organization Setup"],
         ["company", "Company & Defaults"],
         ["email_sms", "Email & SMS Gateways"],
         ["routing", "Event & Broadcast Routing"],
@@ -811,6 +812,131 @@ Views.settings = async function (root, params) {
     /* ---------------- TAB: NOTIFICATION PREFERENCES ---------------- */
     if (tab === "notifications") {
       await renderUserNotifPreferences(stage);
+      return;
+    }
+
+    /* ---------------- TAB: ORGANIZATION SETUP ---------------- */
+    if (tab === "organization" && isAdmin) {
+      try {
+        const [desigRes, deptRes, branchRes, gradeRes] = await Promise.all([
+          API.get("/designations", { per_page: 200 }),
+          API.get("/departments", { per_page: 200 }),
+          API.get("/branches", { per_page: 200 }),
+          API.get("/grades", { per_page: 200 })
+        ]);
+        
+        const designations = desigRes.data || [];
+        const departments = deptRes.data || [];
+        const branches = branchRes.data || [];
+        const grades = gradeRes.data || [];
+
+        stage.innerHTML = '<div class="grid grid-2" style="gap:18px">'
+          // Designations Card
+          + '<div class="card">'
+          + '  <div class="card-head">'
+          + '    <div><h3>Designations / Job Titles</h3><div class="sub">' + designations.length + ' titles defined</div></div>'
+          + '    <div class="right"><button class="btn btn-accent btn-sm" id="add-designation">' + icon("plus", 13) + ' Add Designation</button></div>'
+          + '  </div>'
+          + '  <div class="table-wrap"><table><thead><tr><th>Title</th><th>Department</th><th>Level</th><th class="right">Actions</th></tr></thead><tbody>'
+          +    designations.map(d => {
+                 const deptName = departments.find(dep => dep.id === d.department_id)?.name || '—';
+                 return '<tr><td><b>' + esc(d.title) + '</b></td><td>' + esc(deptName) + '</td><td>' + (d.level || '—') + '</td>'
+                   + '<td class="right"><button class="btn btn-sm btn-ghost" data-edit-designation="' + d.id + '">' + icon("edit", 12) + ' Edit</button> '
+                   + '<button class="btn btn-sm btn-danger" data-del-designation="' + d.id + '">' + icon("trash", 12) + '</button></td></tr>';
+               }).join("")
+          + '</tbody></table></div></div>'
+          // Departments Card
+          + '<div class="card"><div class="card-head"><div><h3>Departments</h3><div class="sub">' + departments.length + ' departments</div></div></div>'
+          + '<div class="table-wrap"><table><thead><tr><th>Name</th><th>Code</th><th class="right">Actions</th></tr></thead><tbody>'
+          +    departments.map(d => '<tr><td><b>' + esc(d.name) + '</b></td><td><span class="mono">' + esc(d.code || '—') + '</span></td>'
+                 + '<td class="right"><button class="btn btn-sm btn-ghost" data-edit-department="' + d.id + '">' + icon("edit", 12) + ' Edit</button></td></tr>').join("")
+          + '</tbody></table></div></div></div>';
+
+        // Helper function to show designation modal
+        function showDesignationModal(designation) {
+          const isEdit = !!designation;
+          const formHtml = '<form id="desig-form" class="stack">'
+            + '<div class="field"><label>Title <span class="req">*</span></label>'
+            + '<input class="input" name="title" value="' + esc(designation?.title || '') + '" required autofocus></div>'
+            + '<div class="field"><label>Department</label>'
+            + '<select class="select" name="department_id">'
+            + '<option value="">— None —</option>'
+            + departments.map(d => '<option value="' + d.id + '"' + (d.id === designation?.department_id ? ' selected' : '') + '>' + esc(d.name) + '</option>').join("")
+            + '</select></div>'
+            + '<div class="field"><label>Level</label>'
+            + '<input class="input" name="level" type="number" min="1" max="10" value="' + (designation?.level || '') + '" placeholder="1-10"></div>'
+            + '</form>';
+
+          openModal({
+            title: isEdit ? 'Edit Designation' : 'Add Designation',
+            body: formHtml,
+            footer: '<button class="btn btn-ghost" data-close-modal>Cancel</button>'
+              + '<button class="btn btn-accent" id="save-designation">' + icon("check", 14) + ' ' + (isEdit ? 'Update' : 'Create') + '</button>',
+            onMount() {
+              document.getElementById('save-designation').onclick = async () => {
+                const form = document.getElementById('desig-form');
+                if (!form.checkValidity()) {
+                  form.reportValidity();
+                  return;
+                }
+                const fd = new FormData(form);
+                const data = {};
+                for (const [key, value] of fd.entries()) {
+                  data[key] = value || null;
+                }
+                try {
+                  if (isEdit) {
+                    await API.put('/designations/' + designation.id, data);
+                    toast('Designation updated successfully', 'success');
+                  } else {
+                    await API.post('/designations', data);
+                    toast('Designation created successfully', 'success');
+                  }
+                  closeModal();
+                  renderShell();
+                } catch (err) {
+                  toast(err.message || 'Failed to save designation', 'error');
+                }
+              };
+            }
+          });
+        }
+
+        // Bind event handlers
+        document.getElementById('add-designation')?.addEventListener('click', () => showDesignationModal(null));
+        
+        document.querySelectorAll('[data-edit-designation]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = parseInt(btn.dataset.editDesignation);
+            const item = designations.find(d => d.id === id);
+            if (item) showDesignationModal(item);
+          });
+        });
+        
+        document.querySelectorAll('[data-del-designation]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = parseInt(btn.dataset.delDesignation);
+            const item = designations.find(d => d.id === id);
+            confirmDialog(
+              'Delete Designation',
+              'Are you sure you want to delete "' + (item?.title || 'this designation') + '"? This cannot be undone.',
+              async () => {
+                try {
+                  await API.del('/designations/' + id);
+                  toast('Designation deleted successfully', 'success');
+                  renderShell();
+                } catch (err) {
+                  toast(err.message || 'Failed to delete designation', 'error');
+                }
+              },
+              { danger: true }
+            );
+          });
+        });
+
+      } catch (err) {
+        stage.innerHTML = emptyState("Could not load organization data", err.message, "alert");
+      }
       return;
     }
 
