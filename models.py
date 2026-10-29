@@ -964,3 +964,23 @@ class HotelWorkOrder(db.Model, TimestampMixin):
     assigned_to_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=True)
     completed_at = db.Column(db.DateTime, nullable=True)
     assigned_to = db.relationship("Employee")
+
+
+class MaintenanceWork(db.Model, TimestampMixin):
+    """Scheduled maintenance jobs, including staff and external contractor costs."""
+    __tablename__ = "maintenance_works"
+    id = db.Column(db.Integer, primary_key=True)
+    reference_no = db.Column(db.String(40), unique=True, nullable=False, index=True)
+    title = db.Column(db.String(180), nullable=False)
+    category = db.Column(db.String(60), nullable=False, default="Repair")
+    location = db.Column(db.String(180), nullable=False)
+    scheduled_at = db.Column(db.DateTime, nullable=False, index=True)
+    description = db.Column(db.Text)
+    worker_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=True)
+    # Keep a name snapshot for external contractors and historical reporting.
+    worker_name = db.Column(db.String(120))
+    amount = db.Column(db.Numeric(12, 2), nullable=False, default=0)
+    status = db.Column(db.String(24), nullable=False, default="scheduled", index=True)
+    remarks = db.Column(db.Text)
+    completed_at = db.Column(db.DateTime)
+    worker = db.relationship("Employee")
