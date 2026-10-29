@@ -530,15 +530,41 @@ Views.leave = async function (root) {
             { label: "From", key: "start_date", render: r => fmtDate(r.start_date) },
             { label: "To", key: "end_date", render: r => fmtDate(r.end_date) },
             { label: "Days", key: "days", sortValue: r => Number(r.days || 0) },
-            { label: "Approver", sortValue: r => Store.employeeName(r.approver_id), render: r => esc(Store.employeeName(r.approver_id)) },
-            { label: "Status", key: "status", render: r => chip(r.status) },
+            { label: "Approval Status", render: r => {
+              if (r.status === "approved") return chip("approved");
+              if (r.status === "rejected") return chip("rejected");
+              if (r.status === "cancelled") return chip("cancelled");
+              // Multi-level approval status
+              const hod = r.hod_approved_at ? '<span class="chip green tiny">✓ HOD</span>' : '<span class="chip gray tiny">○ HOD</span>';
+              const acc = r.accountant_approved_at ? '<span class="chip green tiny">✓ Accountant</span>' : '<span class="chip gray tiny">○ Accountant</span>';
+              const md = r.md_approved_at ? '<span class="chip green tiny">✓ MD</span>' : '<span class="chip gray tiny">○ MD</span>';
+              return '<div class="row" style="gap:4px;flex-wrap:wrap">' + hod + ' ' + acc + ' ' + md + '</div>';
+            }},
             { label: "", class: "right", sortable: false, render: r => {
               if (r.status !== "pending") return "";
               let btns = "";
-              if (canApprove && r.employee_id !== Store.user.employee_id) {
-                btns += '<button class="btn btn-sm btn-soft" data-approve="leave" data-id="' + r.id + '">Approve</button> ';
+              const user = Store.user;
+              const emp = user.employee;
+              const role = user.role?.slug;
+              
+              // Check permissions for each approval level
+              const canApproveHOD = (role === "super_admin" || role === "hr_admin" || role === "manager");
+              const canApproveAccountant = (role === "super_admin" || role === "hr_admin");
+              const canApproveMD = (role === "super_admin");
+              
+              if (r.employee_id !== user.employee_id) {
+                if (!r.hod_approved_at && canApproveHOD) {
+                  btns += '<button class="btn btn-sm btn-accent" data-approve-hod="' + r.id + '">Approve (HOD)</button> ';
+                } else if (r.hod_approved_at && !r.accountant_approved_at && canApproveAccountant) {
+                  btns += '<button class="btn btn-sm btn-accent" data-approve-accountant="' + r.id + '">Approve (Accountant)</button> ';
+                } else if (r.hod_approved_at && r.accountant_approved_at && !r.md_approved_at && canApproveMD) {
+                  btns += '<button class="btn btn-sm btn-accent" data-approve-md="' + r.id + '">Approve (MD)</button> ';
+                }
+                if (canApprove) {
+                  btns += '<button class="btn btn-sm btn-danger" data-reject-leave="' + r.id + '">Reject</button> ';
+                }
               }
-              if (r.employee_id === Store.user.employee_id || canManage) {
+              if (r.employee_id === user.employee_id || canManage) {
                 btns += '<button class="btn btn-sm btn-ghost" data-cancel-leave="' + r.id + '">Cancel</button>';
               }
               return btns;
@@ -638,6 +664,43 @@ Views.leave = async function (root) {
     onDelegate(root, "click", "[data-cancel-leave]", (b) => confirmDialog("Cancel leave request", "This will withdraw your pending request.", async () => {
       await API.post("/leave-requests/" + b.dataset.cancelLeave + "/cancel"); toast("Request cancelled", "success"); Views.leave(root);
     }, { confirmLabel: "Cancel request", danger: true }));
+    
+    // Multi-level approval handlers
+    onDelegate(root, "click", "[data-approve-hod]", async (b) => {
+      try {
+        await API.post("/leave-requests/" + b.dataset.approveHod + "/approve-level", { level: "hod" });
+        toast("Approved by Head of Department", "success");
+        Views.leave(root);
+      } catch (err) { handleErr(err); }
+    });
+    onDelegate(root, "click", "[data-approve-accountant]", async (b) => {
+      try {
+        await API.post("/leave-requests/" + b.dataset.approveAccountant + "/approve-level", { level: "accountant" });
+        toast("Approved by Accountant", "success");
+        Views.leave(root);
+      } catch (err) { handleErr(err); }
+    });
+    onDelegate(root, "click", "[data-approve-md]", async (b) => {
+      try {
+        await API.post("/leave-requests/" + b.dataset.approveMd + "/approve-level", { level: "md" });
+        toast("Fully approved by Managing Director", "success");
+        Views.leave(root);
+      } catch (err) { handleErr(err); }
+    });
+    onDelegate(root, "click", "[data-reject-leave]", (b) => {
+      formModal({
+        title: "Reject leave request",
+        fields: [
+          { name: "note", label: "Rejection reason", type: "textarea", required: true, placeholder: "Explain why this request is being rejected" }
+        ],
+        onSubmit: async (data) => {
+          await API.post("/leave-requests/" + b.dataset.rejectLeave + "/reject-level", data);
+          toast("Leave request rejected", "success");
+          Views.leave(root);
+        }
+      });
+    });
+    
     bindApprovalButtons(root);
     const lt = root.querySelector("#add-leave-type"); if (lt) lt.onclick = openLeaveTypeForm;
     const hd = root.querySelector("#add-holiday"); if (hd) hd.onclick = openHolidayForm;
@@ -650,24 +713,129 @@ Views.leave = async function (root) {
 
 function openLeaveForm(prefill) {
   const types = (Store.meta && Store.meta.leave_types) || [];
-  formModal({
-    title: "Apply for leave",
-    sub: "Working days exclude weekends and public holidays",
+  const user = Store.user;
+  const emp = Store.meta.employees.find(e => e.id === user.employee_id);
+  
+  // Look up department and designation from meta arrays
+  const department = emp && emp.department_id 
+    ? Store.meta.departments.find(d => d.id === emp.department_id) 
+    : null;
+  const designation = emp && emp.designation_id 
+    ? Store.meta.designations.find(d => d.id === emp.designation_id) 
+    : null;
+  
+  const departmentName = department ? department.name : '';
+  const positionTitle = designation ? designation.title : '';
+  const dateEmployed = emp?.hire_date || '';
+  const currentYear = new Date().getFullYear();
+  
+  openModal({
+    title: "Employees' Leave Request Form",
+    sub: "Complete all required fields · Working days exclude weekends and holidays",
     wide: true,
-    fields: [
-      { name: "leave_type_id", label: "Leave type", type: "select", options: types.map(t => ({ value: t.id, label: t.name })), required: true },
-      { name: "employee_id", label: "Employee", type: "select", options: employeeOptions(), value: (prefill && prefill.employee_id) || Store.user.employee_id, required: true, hint: Store.canManage() ? "HR can apply on behalf of an employee" : "" },
-      { name: "start_date", label: "Start date", type: "date", required: true, value: todayISO() },
-      { name: "end_date", label: "End date", type: "date", required: true, value: todayISO() },
-      { name: "half_day", label: "Half day", type: "checkbox" },
-      { name: "reason", label: "Reason", type: "textarea", required: true, full: true, placeholder: "Give your manager context for this request" },
-    ],
-    onSubmit: async (data) => {
-      data.employee_id = Number(data.employee_id);
-      if (!data.half_day) delete data.half_day;
-      await API.post("/leave-requests", data);
-      navigate();
-    },
+    body: '<form id="leave-request-form" class="stack">'
+      + '<div class="card"><div class="card-head"><h3>Employee Information</h3></div><div class="card-body">'
+      + '<div class="form-grid">'
+      + '<div class="field"><label>Employee Name</label><input class="input" value="' + esc(user.name) + '" readonly></div>'
+      + '<div class="field"><label>Date</label><input class="input" type="date" value="' + todayISO() + '" readonly></div>'
+      + '<div class="field"><label>Department</label><input class="input" name="department" value="' + esc(departmentName) + '" readonly></div>'
+      + '<div class="field"><label>Position</label><input class="input" name="position" value="' + esc(positionTitle) + '" readonly></div>'
+      + '</div></div></div>'
+      
+      + '<div class="card"><div class="card-head"><h3>Reason for Leave</h3></div><div class="card-body">'
+      + '<div class="grid grid-2" style="gap:16px">'
+      + types.map(t => '<label class="checkbox-label"><input type="radio" name="leave_type_id" value="' + t.id + '" required> <span>' + esc(t.name) + '</span></label>').join('')
+      + '</div>'
+      + '<div class="field" style="margin-top:12px"><label>If others, state briefly</label>'
+      + '<input class="input" name="reason" placeholder="Describe your reason for leave"></div>'
+      + '</div></div>'
+      
+      + '<div class="card"><div class="card-head"><h3>Leave Requested</h3></div><div class="card-body">'
+      + '<div class="form-grid">'
+      + '<div class="field"><label>From <span class="req">*</span></label><input class="input" type="date" name="start_date" required value="' + todayISO() + '"></div>'
+      + '<div class="field"><label>To <span class="req">*</span></label><input class="input" type="date" name="end_date" required value="' + todayISO() + '"></div>'
+      + '<div class="field"><label>No. of Days Requested</label><input class="input" type="number" name="days" min="0.5" step="0.5" value="1" readonly></div>'
+      + '<div class="field"><label>No. of leave already taken</label><input class="input" type="number" name="leave_already_taken" value="0" step="0.5"></div>'
+      + '<div class="field"><label>Date Employed</label><input class="input" type="date" name="date_employed" value="' + esc(dateEmployed) + '" readonly></div>'
+      + '<div class="field"><label>Resumption Date</label><input class="input" type="date" name="resumption_date" readonly></div>'
+      + '</div>'
+      + '<div class="field" style="margin-top:12px"><label>Employee Signature</label>'
+      + '<div class="row" style="gap:8px"><input class="input" name="employee_signature" placeholder="Type your full name to sign" required>'
+      + '<div class="tiny muted" style="margin-top:4px">Date: ' + fmtDate(new Date()) + '</div></div></div>'
+      + '</div></div>'
+      
+      + '<div class="card"><div class="card-head"><h3 style="background:var(--line);padding:8px 12px;margin:-12px -12px 12px;text-transform:uppercase;font-size:12px;letter-spacing:0.5px">Management Use Only</h3></div><div class="card-body">'
+      + '<div class="stack"><div class="tiny muted">This section will be completed by management after submission</div>'
+      + '<div class="form-grid">'
+      + '<div class="field"><label>Head of Department</label><input class="input" placeholder="Pending approval" readonly></div>'
+      + '<div class="field"><label>Accountant</label><input class="input" placeholder="Pending approval" readonly></div>'
+      + '<div class="field"><label>Managing Director</label><input class="input" placeholder="Pending approval" readonly></div>'
+      + '</div></div></div></div>'
+      + '</form>',
+    footer: '<button class="btn btn-ghost" data-close-modal>Cancel</button>'
+      + '<button class="btn btn-accent" id="submit-leave-request">' + icon("check", 14) + ' Submit Leave Request</button>',
+    onMount() {
+      const form = document.getElementById('leave-request-form');
+      const startInput = form.querySelector('[name="start_date"]');
+      const endInput = form.querySelector('[name="end_date"]');
+      const daysInput = form.querySelector('[name="days"]');
+      const resumptionInput = form.querySelector('[name="resumption_date"]');
+      
+      // Calculate days and resumption date
+      function updateCalculations() {
+        const start = new Date(startInput.value);
+        const end = new Date(endInput.value);
+        if (start && end && start <= end) {
+          // Calculate working days
+          let days = 0;
+          let d = new Date(start);
+          while (d <= end) {
+            if (d.getDay() !== 0 && d.getDay() !== 6) days++;
+            d.setDate(d.getDate() + 1);
+          }
+          daysInput.value = days;
+          
+          // Calculate resumption date (next working day after end)
+          let resumption = new Date(end);
+          resumption.setDate(resumption.getDate() + 1);
+          while (resumption.getDay() === 0 || resumption.getDay() === 6) {
+            resumption.setDate(resumption.getDate() + 1);
+          }
+          resumptionInput.value = resumption.toISOString().split('T')[0];
+        }
+      }
+      
+      startInput.addEventListener('change', updateCalculations);
+      endInput.addEventListener('change', updateCalculations);
+      updateCalculations();
+      
+      document.getElementById('submit-leave-request').onclick = async () => {
+        if (!form.checkValidity()) {
+          form.reportValidity();
+          return;
+        }
+        const fd = new FormData(form);
+        const data = {
+          employee_id: user.employee_id,
+          leave_type_id: Number(fd.get('leave_type_id')),
+          start_date: fd.get('start_date'),
+          end_date: fd.get('end_date'),
+          days: Number(fd.get('days')),
+          reason: fd.get('reason') || null,
+          leave_already_taken: Number(fd.get('leave_already_taken')) || 0,
+          resumption_date: fd.get('resumption_date'),
+          employee_signature: fd.get('employee_signature'),
+        };
+        try {
+          await API.post('/leave-requests', data);
+          toast('Leave request submitted successfully', 'success');
+          closeModal();
+          navigate();
+        } catch (err) {
+          toast(err.message || 'Failed to submit leave request', 'error');
+        }
+      };
+    }
   });
 }
 

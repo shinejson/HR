@@ -508,8 +508,21 @@ class LeaveRequest(db.Model, TimestampMixin):
     approver_id = db.Column(db.Integer)
     decided_at = db.Column(db.DateTime)
     decision_note = db.Column(db.Text)
-    employee = db.relationship("Employee")
+    # Extended fields for Airport West Hotel format
+    leave_already_taken = db.Column(db.Numeric(6, 2), default=0)
+    resumption_date = db.Column(db.Date)
+    employee_signature = db.Column(db.String(255))
+    hod_approved_at = db.Column(db.DateTime)
+    hod_approved_by = db.Column(db.Integer, db.ForeignKey("employees.id"))
+    accountant_approved_at = db.Column(db.DateTime)
+    accountant_approved_by = db.Column(db.Integer, db.ForeignKey("employees.id"))
+    md_approved_at = db.Column(db.DateTime)
+    md_approved_by = db.Column(db.Integer, db.ForeignKey("employees.id"))
+    employee = db.relationship("Employee", foreign_keys=[employee_id])
     leave_type = db.relationship("LeaveType")
+    hod_approver = db.relationship("Employee", foreign_keys=[hod_approved_by])
+    accountant_approver = db.relationship("Employee", foreign_keys=[accountant_approved_by])
+    md_approver = db.relationship("Employee", foreign_keys=[md_approved_by])
 
 
 class Holiday(db.Model, TimestampMixin):

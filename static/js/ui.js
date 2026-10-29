@@ -275,7 +275,7 @@ function confirmDialog(title, message, onConfirm, opts) {
     title: title,
     narrow: true,
     body: '<p style="font-size:13px;color:var(--muted);line-height:1.6">' + esc(message) + '</p>',
-    footer: '<button class="btn btn-ghost" data-close-modal>Cancel</button>'
+    footer: (opts.hideCancel ? '' : '<button class="btn btn-ghost" data-close-modal>Cancel</button>')
       + '<button class="btn ' + (opts.danger ? "btn-danger" : "btn-accent") + '" id="confirm-yes">' + esc(opts.confirmLabel || "Confirm") + '</button>',
     onMount(card) {
       card.querySelector("#confirm-yes").onclick = async () => {
@@ -321,8 +321,12 @@ function formModal(opts) {
     + '</form>';
   openModal({
     title: opts.title, sub: opts.sub, wide: opts.wide, body: body,
-    footer: '<button class="btn btn-ghost" data-close-modal>Cancel</button><button class="btn btn-accent" id="form-submit">' + esc(opts.submitLabel || "Save") + '</button>',
+    footer: (opts.extraFooter || '') + '<button class="btn btn-ghost" data-close-modal>Cancel</button><button class="btn btn-accent" id="form-submit">' + esc(opts.submitLabel || "Save") + '</button>',
     onMount(card) {
+      if (opts.onDelete) {
+        const delBtn = card.querySelector("#form-delete-btn");
+        if (delBtn) delBtn.onclick = () => opts.onDelete();
+      }
       const form = card.querySelector("#modal-form");
       const submit = card.querySelector("#form-submit");
       const collect = () => {

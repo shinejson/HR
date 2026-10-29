@@ -459,8 +459,8 @@ WRITE_PERMS = {
     "hotel-inventory": {"super_admin", "hr_admin", "operations_manager", "operations_officer", "hotel_manager"},
     "hotel-work-orders": {"super_admin", "hr_admin", "operations_manager", "operations_officer", "hotel_manager", "manager", "employee"},
     "hotel-stock-movements": {"super_admin", "hr_admin", "operations_manager", "operations_officer", "hotel_manager"},
-    "departments": {"super_admin", "hr_admin"},
-    "designations": {"super_admin", "hr_admin"},
+    "departments": {"super_admin", "hr_admin", "hr_officer"},
+    "designations": {"super_admin", "hr_admin", "hr_officer"},
     "grades": {"super_admin", "hr_admin"},
     "branches": {"super_admin", "hr_admin"},
     "companies": {"super_admin", "hr_admin"},
@@ -1998,6 +1998,30 @@ def delete_resource(resource, rid):
             return error("System roles cannot be deleted", 409)
         if User.query.filter(User.role_id == obj.id, User.deleted_at.is_(None)).first():
             return error("This role is still assigned to users. Reassign them first.", 409)
+    if model is Department:
+        emp_count = Employee.query.filter(Employee.department_id == obj.id, Employee.deleted_at.is_(None)).count()
+        if emp_count > 0:
+            return error(f"Cannot delete department '{obj.name}' because {emp_count} active employee(s) are currently assigned to it. Please reassign them first.", 409)
+        child_depts = Department.query.filter_by(parent_id=obj.id).count()
+        if child_depts > 0:
+            return error(f"Cannot delete department '{obj.name}' because it has {child_depts} sub-department(s). Please delete or reassign them first.", 409)
+        desig_with_emps = Employee.query.join(Designation, Employee.designation_id == Designation.id).filter(
+            Designation.department_id == obj.id, Employee.deleted_at.is_(None)
+        ).count()
+        if desig_with_emps > 0:
+            return error(f"Cannot delete department '{obj.name}' because its job designations are held by {desig_with_emps} active employee(s). Please reassign them first.", 409)
+        Employee.query.filter(Employee.department_id == obj.id, Employee.deleted_at.isnot(None)).update({Employee.department_id: None})
+        Designation.query.filter_by(department_id=obj.id).delete()
+        JobRequisition.query.filter_by(department_id=obj.id).update({JobRequisition.department_id: None})
+        JobPosting.query.filter_by(department_id=obj.id).update({JobPosting.department_id: None})
+        OnboardingTemplate.query.filter_by(department_id=obj.id).update({OnboardingTemplate.department_id: None})
+        CompanyEvent.query.filter_by(department_id=obj.id).update({CompanyEvent.department_id: None})
+        Announcement.query.filter_by(department_id=obj.id).update({Announcement.department_id: None})
+    if model is Designation:
+        emp_count = Employee.query.filter(Employee.designation_id == obj.id, Employee.deleted_at.is_(None)).count()
+        if emp_count > 0:
+            return error(f"Cannot delete designation '{obj.title}' because {emp_count} active employee(s) hold this title. Please reassign them first.", 409)
+        Employee.query.filter(Employee.designation_id == obj.id, Employee.deleted_at.isnot(None)).update({Employee.designation_id: None})
     if hasattr(obj, "deleted_at"):
         obj.deleted_at = datetime.utcnow()
         audit(request.user, "soft_delete", resource, obj.id)
@@ -3306,6 +3330,141 @@ def leave_summary():
     year = request.args.get("year", type=int) or date.today().year
     balances = LeaveBalance.query.filter_by(employee_id=emp_id, year=year).all()
     return jsonify({"data": [serialize(b, "leave-balances") for b in balances]})
+
+
+@app.post("/api/v1/leave-requests/<int:rid>/approve-level")
+@login_required
+def approve_leave_level(rid):
+    """Multi-level approval: HOD -> Accountant -> Managing Director"""
+    user = request.user
+    lr = db.session.get(LeaveRequest, rid)
+    if not lr:
+        return error("Not found", 404)
+    
+    role = role_of(user)
+    emp = user.employee
+    data = request.get_json(silent=True) or {}
+    approval_level = data.get("level")  # "hod", "accountant", "md"
+    
+    # Check if user has permission to approve at this level
+    can_approve_hod = (role in ("super_admin", "hr_admin", "manager") or 
+                      (emp and emp.designation and emp.designation.title and 
+                       "head" in emp.designation.title.lower()))
+    can_approve_accountant = (role in ("super_admin", "hr_admin") or
+                              (emp and emp.designation and emp.designation.title and
+                               "accountant" in emp.designation.title.lower()))
+    can_approve_md = (role in ("super_admin",) or
+                     (emp and emp.designation and emp.designation.title and
+                      ("managing director" in emp.designation.title.lower() or 
+                       "md" in emp.designation.title.lower())))
+    
+    if approval_level == "hod" and can_approve_hod:
+        if lr.hod_approved_at:
+            return error("HOD has already approved this request", 409)
+        lr.hod_approved_by = user.employee_id
+        lr.hod_approved_at = datetime.utcnow()
+        toast_msg = "Leave approved by Head of Department"
+    elif approval_level == "accountant" and can_approve_accountant:
+        if not lr.hod_approved_at:
+            return error("HOD must approve first", 403)
+        if lr.accountant_approved_at:
+            return error("Accountant has already approved this request", 409)
+        lr.accountant_approved_by = user.employee_id
+        lr.accountant_approved_at = datetime.utcnow()
+        toast_msg = "Leave approved by Accountant"
+    elif approval_level == "md" and can_approve_md:
+        if not lr.hod_approved_at or not lr.accountant_approved_at:
+            return error("HOD and Accountant must approve first", 403)
+        if lr.md_approved_at:
+            return error("MD has already approved this request", 409)
+        lr.md_approved_by = user.employee_id
+        lr.md_approved_at = datetime.utcnow()
+        lr.status = "approved"
+        lr.approver_id = user.employee_id
+        lr.decided_at = datetime.utcnow()
+        toast_msg = "Leave fully approved by Managing Director"
+        
+        # Update leave balance and attendance
+        year = lr.start_date.year
+        bal = LeaveBalance.query.filter_by(employee_id=lr.employee_id, leave_type_id=lr.leave_type_id,
+                                           year=year).first()
+        if bal:
+            bal.pending = max(Decimal("0"), Decimal(bal.pending or 0) - Decimal(lr.days or 0))
+            bal.taken = Decimal(bal.taken or 0) + Decimal(lr.days or 0)
+            d = lr.start_date
+            while d <= lr.end_date:
+                if d.weekday() < 5 and not Holiday.query.filter_by(holiday_date=d).first():
+                    rec = Attendance.query.filter_by(employee_id=lr.employee_id, work_date=d).first()
+                    if not rec:
+                        rec = Attendance(employee_id=lr.employee_id, work_date=d, source="leave")
+                        db.session.add(rec)
+                    rec.status = "leave"
+                d += timedelta(days=1)
+        
+        # Notify employee
+        requester = user_for_employee(lr.employee_id)
+        if requester:
+            dispatch_event(
+                "leave_decision", [requester],
+                "Leave Approved",
+                f"Your {lr.leave_type.name if lr.leave_type else 'leave'} request ({lr.days} day(s), {lr.start_date} to {lr.end_date}) has been fully approved.",
+                "/leave",
+            )
+    else:
+        return error("You do not have permission to approve at this level", 403)
+    
+    audit(user, f"leave_approve_{approval_level}", "leave_requests", lr.id)
+    db.session.commit()
+    return jsonify({"data": serialize(lr, "leave-requests"), "message": toast_msg})
+
+
+@app.post("/api/v1/leave-requests/<int:rid>/reject-level")
+@login_required
+def reject_leave_level(rid):
+    """Reject at any level stops the approval chain"""
+    user = request.user
+    lr = db.session.get(LeaveRequest, rid)
+    if not lr:
+        return error("Not found", 404)
+    
+    role = role_of(user)
+    data = request.get_json(silent=True) or {}
+    
+    # Any approver can reject
+    can_reject = (role in ("super_admin", "hr_admin", "manager") or 
+                  lr.approver_id == user.employee_id)
+    
+    if not can_reject:
+        return error("You do not have permission to reject this request", 403)
+    
+    if lr.status != "pending":
+        return error("This request has already been decided", 409)
+    
+    lr.status = "rejected"
+    lr.approver_id = user.employee_id
+    lr.decided_at = datetime.utcnow()
+    lr.decision_note = data.get("note")
+    
+    # Update leave balance
+    year = lr.start_date.year
+    bal = LeaveBalance.query.filter_by(employee_id=lr.employee_id, leave_type_id=lr.leave_type_id,
+                                       year=year).first()
+    if bal:
+        bal.pending = max(Decimal("0"), Decimal(bal.pending or 0) - Decimal(lr.days or 0))
+    
+    # Notify employee
+    requester = user_for_employee(lr.employee_id)
+    if requester:
+        dispatch_event(
+            "leave_decision", [requester],
+            "Leave Rejected",
+            f"Your {lr.leave_type.name if lr.leave_type else 'leave'} request ({lr.days} day(s), {lr.start_date} to {lr.end_date}) was rejected. Reason: {lr.decision_note or 'Not specified'}",
+            "/leave",
+        )
+    
+    audit(user, "leave_rejected", "leave_requests", lr.id)
+    db.session.commit()
+    return jsonify({"data": serialize(lr, "leave-requests")})
 
 
 # ---------------------------------------------------------------- payroll
@@ -4749,7 +4908,9 @@ def meta():
                          for d in Designation.query.order_by(Designation.title)],
         "grades": [{"id": g.id, "name": g.name} for g in Grade.query.order_by(Grade.level)],
         "branches": [{"id": b.id, "name": b.name} for b in Branch.query.order_by(Branch.name)],
-        "employees": [{"id": e.id, "name": e.full_name, "employee_no": e.employee_no}
+        "employees": [{"id": e.id, "name": e.full_name, "employee_no": e.employee_no,
+                       "department_id": e.department_id, "designation_id": e.designation_id,
+                       "hire_date": e.hire_date.isoformat() if e.hire_date else None}
                       for e in Employee.query.filter(Employee.deleted_at.is_(None), Employee.status == "active")
                       .order_by(Employee.first_name)],
         "roles": [{"id": r.id, "name": r.name, "slug": r.slug} for r in Role.query.order_by(Role.id)],

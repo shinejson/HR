@@ -682,7 +682,15 @@ Views.organisation = async function (root, params) {
           { label: "Location", key: "branch_name", render: r => esc(r.branch_name || "—") },
           { label: "Cost centre", key: "cost_centre", render: r => '<span class="mono tiny">' + esc(r.cost_centre || "—") + '</span>' },
           { label: "Headcount", sortValue: r => countByDept[r.id] || 0, render: r => '<b>' + (countByDept[r.id] || 0) + '</b>' },
-          { label: "", class: "right", sortable: false, render: r => canEdit ? '<button class="icon-btn" style="width:28px;height:28px" data-edit-dept="' + r.id + '">' + icon("edit", 13) + '</button>' : "" },
+          {
+            label: "", class: "right", sortable: false,
+            render: r => canEdit
+              ? '<div class="row" style="gap:4px;justify-content:flex-end">'
+                + '<button class="icon-btn" style="width:28px;height:28px" data-edit-dept="' + r.id + '" title="Edit department">' + icon("edit", 13) + '</button>'
+                + '<button class="icon-btn" style="width:28px;height:28px;color:var(--red)" data-del-dept="' + r.id + '" title="Delete department">' + icon("trash", 13) + '</button>'
+                + '</div>'
+              : ""
+          },
         ],
         rows: depts, emptyTitle: "No departments",
       }) + '<div class="grid grid-3" style="margin-top:18px">' + depts.map(d =>
@@ -700,7 +708,15 @@ Views.organisation = async function (root, params) {
           { label: "Level", key: "level", render: r => '<span class="pill-tag">L' + esc(r.level) + '</span>' },
           { label: "Department", key: "department_name", render: r => esc(r.department_name || "—") },
           { label: "Staff count", sortValue: r => employees.filter(e => e.designation_id === r.id).length, render: r => employees.filter(e => e.designation_id === r.id).length },
-          { label: "", class: "right", sortable: false, render: r => canEdit ? '<button class="icon-btn" style="width:28px;height:28px" data-edit-desig="' + r.id + '">' + icon("edit", 13) + '</button>' : "" },
+          {
+            label: "", class: "right", sortable: false,
+            render: r => canEdit
+              ? '<div class="row" style="gap:4px;justify-content:flex-end">'
+                + '<button class="icon-btn" style="width:28px;height:28px" data-edit-desig="' + r.id + '" title="Edit designation">' + icon("edit", 13) + '</button>'
+                + '<button class="icon-btn" style="width:28px;height:28px;color:var(--red)" data-del-desig="' + r.id + '" title="Delete designation">' + icon("trash", 13) + '</button>'
+                + '</div>'
+              : ""
+          },
         ],
         rows: desigsEnriched, emptyTitle: "No designations",
       });
@@ -768,8 +784,29 @@ Views.organisation = async function (root, params) {
         else openBranchForm();
       };
     }
-    onDelegate(root, "click", "[data-edit-dept]", (b) => openDeptForm(depts.find(d => d.id === Number(b.dataset.editDept))));
-    onDelegate(root, "click", "[data-edit-desig]", (b) => openDesigForm(desigs.find(d => d.id === Number(b.dataset.editDesig))));
+    onDelegate(root, "click", "[data-edit-dept]", (b) => {
+      const deptId = Number(b.dataset.editDept);
+      openDeptForm(depts.find(d => d.id === deptId), countByDept[deptId] || 0);
+    });
+    onDelegate(root, "click", "[data-del-dept]", (b) => {
+      const deptId = Number(b.dataset.delDept);
+      const dept = depts.find(d => d.id === deptId);
+      if (dept) deleteDepartment(dept, countByDept[deptId] || 0);
+    });
+    onDelegate(root, "click", "[data-edit-desig]", (b) => {
+      const desigId = Number(b.dataset.editDesig);
+      const des = desigs.find(d => d.id === desigId);
+      const sc = des ? employees.filter(e => e.designation_id === des.id).length : 0;
+      openDesigForm(des, sc);
+    });
+    onDelegate(root, "click", "[data-del-desig]", (b) => {
+      const desigId = Number(b.dataset.delDesig);
+      const des = desigs.find(d => d.id === desigId);
+      if (des) {
+        const sc = employees.filter(e => e.designation_id === des.id).length;
+        deleteDesignation(des, sc);
+      }
+    });
     onDelegate(root, "click", "[data-edit-grade]", (b) => openGradeForm(grades.find(d => d.id === Number(b.dataset.editGrade))));
     onDelegate(root, "click", "[data-edit-branch]", (b) => openBranchForm(branches.find(d => d.id === Number(b.dataset.editBranch))));
     onDelegate(root, "click", "[data-org-emp]", (el) => { if (el.dataset.orgEmpl || el.dataset.orgEmp) go("employees/" + el.dataset.orgEmp); });
@@ -782,12 +819,63 @@ Views.organisation = async function (root, params) {
   }
 };
 
-function openDeptForm(existing) {
+function deleteDepartment(dept, headcount) {
+  if (headcount > 0) {
+    confirmDialog(
+      "Cannot delete department",
+      'Department "' + (dept.name || "this department") + '" currently has ' + headcount + ' active employee(s) assigned. Please reassign them to another department first before deleting.',
+      () => {},
+      { hideCancel: true, confirmLabel: "Understood" }
+    );
+    return;
+  }
+  confirmDialog(
+    "Delete department",
+    'Are you sure you want to permanently delete department "' + (dept.name || "") + '"? Any designations and records linked to this department will be removed or unlinked. This action cannot be undone.',
+    async () => {
+      await API.delete("/departments/" + dept.id);
+      toast("Department deleted successfully", "success");
+      await Store.loadMeta();
+      navigate();
+    },
+    { danger: true, confirmLabel: "Delete department" }
+  );
+}
+
+function deleteDesignation(desig, staffCount) {
+  if (staffCount > 0) {
+    confirmDialog(
+      "Cannot delete designation",
+      'Job designation "' + (desig.title || "this designation") + '" is currently assigned to ' + staffCount + ' active employee(s). Please reassign them first before deleting.',
+      () => {},
+      { hideCancel: true, confirmLabel: "Understood" }
+    );
+    return;
+  }
+  confirmDialog(
+    "Delete designation",
+    'Are you sure you want to permanently delete designation "' + (desig.title || "") + '"? This action cannot be undone.',
+    async () => {
+      await API.delete("/designations/" + desig.id);
+      toast("Designation deleted successfully", "success");
+      await Store.loadMeta();
+      navigate();
+    },
+    { danger: true, confirmLabel: "Delete designation" }
+  );
+}
+
+function openDeptForm(existing, headcount) {
   const d = existing || {};
   formModal({
     title: existing ? "Edit department / unit" : "Add department or sub-unit",
     sub: existing ? d.name : "Group the organisation into departments, sub-departments and teams",
     wide: true,
+    extraFooter: existing && Store.canManage() ? '<button type="button" class="btn btn-ghost" id="form-delete-btn" style="margin-right:auto;color:var(--red)">' + icon("trash", 13) + ' Delete</button>' : '',
+    onDelete: existing ? () => {
+      closeModal();
+      deleteDepartment(existing, headcount !== undefined ? headcount : 0);
+    } : null,
     fields: [
       { name: "name", label: "Department / Unit name", required: true, value: d.name },
       { name: "code", label: "Code", value: d.code, placeholder: "OPS / OPS-LOG" },
@@ -814,10 +902,15 @@ function openDeptForm(existing) {
   });
 }
 
-function openDesigForm(existing) {
+function openDesigForm(existing, staffCount) {
   const d = existing || {};
   formModal({
     title: existing ? "Edit designation" : "Add designation",
+    extraFooter: existing && Store.canManage() ? '<button type="button" class="btn btn-ghost" id="form-delete-btn" style="margin-right:auto;color:var(--red)">' + icon("trash", 13) + ' Delete</button>' : '',
+    onDelete: existing ? () => {
+      closeModal();
+      deleteDesignation(existing, staffCount !== undefined ? staffCount : 0);
+    } : null,
     fields: [
       { name: "title", label: "Job title", required: true, value: d.title },
       { name: "level", label: "Level", type: "number", value: d.level || 1, min: 1 },
