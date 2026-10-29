@@ -30,6 +30,7 @@ from models import (
     NotificationPreference, NotificationDelivery, Approval, AuditLog, Setting,
     LoginHistory,
     HotelInventoryItem, HotelStockMovement, HotelWorkOrder,
+    HotelStoreroom, HotelStoreroomSection,
 )
 import models
 import messaging
@@ -2555,10 +2556,478 @@ def update_operations_work_order_status(wo_id):
     return jsonify({"message": f"Work order #{wo.order_no} status changed to {new_status}"})
 
 
+
+def _serialize_equipment(asset):
+    return {
+        "id": asset.id,
+        "name": asset.name,
+        "tag": asset.tag,
+        "category": asset.category or "Hospitality Equipment",
+        "serial_no": asset.serial_no or "—",
+        "condition": asset.condition or "operational",
+        "status": asset.status or "in_use",
+        "storeroom_id": asset.storeroom_id,
+        "section_id": asset.section_id,
+        "room_number": asset.room_number or "",
+        "value": float(asset.value or 0),
+        "notes": asset.notes or "",
+    }
+
+
+def _serialize_stock_item(item):
+    return {
+        "id": item.id,
+        "name": item.name,
+        "sku": item.sku,
+        "category": item.category,
+        "location": item.location,
+        "storeroom_id": item.storeroom_id,
+        "section_id": item.section_id,
+        "current_stock": item.current_stock or 0,
+        "reorder_level": item.reorder_level or 0,
+        "ideal_par_level": item.ideal_par_level or 0,
+        "unit": item.unit or "units",
+        "unit_cost": float(item.unit_cost or 0),
+        "supplier": item.supplier or "",
+        "status": item.status or "in_stock",
+        "icon": item.icon or "box",
+        "notes": item.notes or "",
+    }
+
+
+def _serialize_section(sec):
+    eq_list = Asset.query.filter_by(section_id=sec.id).order_by(Asset.id.asc()).all()
+    st_list = HotelInventoryItem.query.filter_by(section_id=sec.id).order_by(HotelInventoryItem.id.asc()).all()
+    return {
+        "id": sec.id,
+        "storeroom_id": sec.storeroom_id,
+        "name": sec.name,
+        "code": sec.code or f"SEC-{sec.id:03d}",
+        "section_type": sec.section_type or "sub_section",
+        "room_number": sec.room_number or "",
+        "room_type": sec.room_type or "",
+        "room_status": sec.room_status or "clean",
+        "capacity": sec.capacity or 1,
+        "supervisor_name": sec.supervisor_name or "",
+        "notes": sec.notes or "",
+        "equipment_count": len(eq_list),
+        "stock_count": len(st_list),
+        "equipments": [_serialize_equipment(a) for a in eq_list],
+        "stock": [_serialize_stock_item(it) for it in st_list],
+    }
+
+
+def _serialize_storeroom(s, include_sections=True):
+    sections = HotelStoreroomSection.query.filter_by(storeroom_id=s.id).order_by(HotelStoreroomSection.id.asc()).all()
+    eq_count = Asset.query.filter_by(storeroom_id=s.id).count()
+    st_count = HotelInventoryItem.query.filter_by(storeroom_id=s.id).count()
+    rooms_count = sum(1 for sec in sections if (sec.section_type == "room" or bool(sec.room_number)))
+    data = {
+        "id": s.id,
+        "name": s.name,
+        "code": s.code,
+        "hub_type": s.hub_type or "storeroom",
+        "category": s.category,
+        "location": s.location,
+        "floor": s.floor or "Ground Floor",
+        "wing": s.wing or "Central Facility",
+        "manager_name": s.manager_name or "Operations Supervisor",
+        "manager_id": s.manager_id,
+        "capacity_utilization": s.capacity_utilization or 0,
+        "max_capacity": s.max_capacity or 100,
+        "icon": s.icon or "layers",
+        "description": s.description or "",
+        "status": s.status or "active",
+        "sections_count": len(sections),
+        "rooms_count": rooms_count,
+        "equipment_count": eq_count,
+        "stock_count": st_count,
+        "created_at": s.created_at.isoformat() if hasattr(s, "created_at") and s.created_at else None,
+    }
+    if include_sections:
+        data["sections"] = [_serialize_section(sec) for sec in sections]
+    return data
+
+
 @app.get("/api/v1/operations/storerooms")
 @operations_required
 def get_operations_storerooms():
-    return jsonify({"data": hotel_ops.HOTEL_STOREROOMS})
+    storerooms = HotelStoreroom.query.order_by(HotelStoreroom.id.asc()).all()
+    if not storerooms:
+        hotel_ops.seed_hotel_operations(db, models)
+        storerooms = HotelStoreroom.query.order_by(HotelStoreroom.id.asc()).all()
+    return jsonify({"data": [_serialize_storeroom(s, include_sections=True) for s in storerooms]})
+
+
+@app.post("/api/v1/operations/storerooms")
+@operations_required
+def create_operations_storeroom():
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return error("Storeroom / Hub name is required", 400)
+
+    code = (data.get("code") or "").strip().upper()
+    if not code:
+        code = f"HUB-{secrets.token_hex(2).upper()}"
+    existing = HotelStoreroom.query.filter_by(code=code).first()
+    if existing:
+        code = f"{code}-{secrets.token_hex(2).upper()}"
+
+    s = HotelStoreroom(
+        name=name,
+        code=code,
+        hub_type=data.get("hub_type") or "rooms_hub",
+        category=data.get("category") or "Hospitality Hub",
+        location=data.get("location") or "Main Building",
+        floor=data.get("floor") or "Ground Floor",
+        wing=data.get("wing") or "Central Facility",
+        manager_name=data.get("manager_name") or "Operations Supervisor",
+        capacity_utilization=int(data.get("capacity_utilization") or 0),
+        max_capacity=int(data.get("max_capacity") or 100),
+        icon=data.get("icon") or "layers",
+        description=data.get("description") or "",
+        status=data.get("status") or "active",
+    )
+    db.session.add(s)
+    db.session.flush()
+
+    audit(request.user, "hotel_storeroom_created", "hotel_storerooms", s.id,
+          None, {"name": s.name, "code": s.code, "hub_type": s.hub_type})
+    db.session.commit()
+    return jsonify({"message": f"Storeroom '{s.name}' created successfully", "data": _serialize_storeroom(s, True)}), 201
+
+
+@app.get("/api/v1/operations/storerooms/<int:storeroom_id>")
+@operations_required
+def get_operations_storeroom_detail(storeroom_id):
+    s = HotelStoreroom.query.get(storeroom_id)
+    if not s:
+        return error("Storeroom not found", 404)
+    return jsonify({"data": _serialize_storeroom(s, include_sections=True)})
+
+
+@app.put("/api/v1/operations/storerooms/<int:storeroom_id>")
+@operations_required
+def update_operations_storeroom(storeroom_id):
+    s = HotelStoreroom.query.get(storeroom_id)
+    if not s:
+        return error("Storeroom not found", 404)
+    data = request.get_json(silent=True) or {}
+
+    old_vals = {"name": s.name, "location": s.location, "capacity_utilization": s.capacity_utilization}
+
+    if "name" in data and data["name"]:
+        s.name = data["name"].strip()
+    if "code" in data and data["code"]:
+        s.code = data["code"].strip().upper()
+    if "hub_type" in data:
+        s.hub_type = data["hub_type"]
+    if "category" in data and data["category"]:
+        s.category = data["category"].strip()
+    if "location" in data and data["location"]:
+        s.location = data["location"].strip()
+    if "floor" in data and data["floor"]:
+        s.floor = data["floor"].strip()
+    if "wing" in data and data["wing"]:
+        s.wing = data["wing"].strip()
+    if "manager_name" in data:
+        s.manager_name = (data["manager_name"] or "").strip()
+    if "capacity_utilization" in data and data["capacity_utilization"] is not None:
+        try:
+            s.capacity_utilization = max(0, min(100, int(data["capacity_utilization"])))
+        except (ValueError, TypeError):
+            pass
+    if "max_capacity" in data and data["max_capacity"] is not None:
+        try:
+            s.max_capacity = max(1, int(data["max_capacity"]))
+        except (ValueError, TypeError):
+            pass
+    if "icon" in data and data["icon"]:
+        s.icon = data["icon"]
+    if "description" in data:
+        s.description = data["description"]
+    if "status" in data and data["status"]:
+        s.status = data["status"]
+
+    audit(request.user, "hotel_storeroom_updated", "hotel_storerooms", s.id,
+          old_vals, {"name": s.name, "location": s.location, "capacity_utilization": s.capacity_utilization})
+    db.session.commit()
+    return jsonify({"message": f"Storeroom '{s.name}' updated successfully", "data": _serialize_storeroom(s, True)})
+
+
+@app.delete("/api/v1/operations/storerooms/<int:storeroom_id>")
+@operations_required
+def delete_operations_storeroom(storeroom_id):
+    s = HotelStoreroom.query.get(storeroom_id)
+    if not s:
+        return error("Storeroom not found", 404)
+
+    # Detach assets and inventory items first
+    Asset.query.filter_by(storeroom_id=s.id).update({"storeroom_id": None, "section_id": None, "room_number": None})
+    HotelInventoryItem.query.filter_by(storeroom_id=s.id).update({"storeroom_id": None, "section_id": None})
+    # Remove sections
+    HotelStoreroomSection.query.filter_by(storeroom_id=s.id).delete()
+
+    name = s.name
+    db.session.delete(s)
+    audit(request.user, "hotel_storeroom_deleted", "hotel_storerooms", storeroom_id, {"name": name}, None)
+    db.session.commit()
+    return jsonify({"message": f"Storeroom '{name}' and its sub-sections removed successfully"})
+
+
+# ---------------- SUB-SECTIONS & ROOMS CRUD ----------------
+@app.post("/api/v1/operations/storerooms/<int:storeroom_id>/sections")
+@operations_required
+def create_operations_section(storeroom_id):
+    s = HotelStoreroom.query.get(storeroom_id)
+    if not s:
+        return error("Storeroom / Hub not found", 404)
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    if not name:
+        return error("Section / Room name is required", 400)
+
+    section_type = data.get("section_type") or "room"
+    room_number = (data.get("room_number") or "").strip()
+    code = (data.get("code") or "").strip().upper()
+    if not code:
+        if room_number:
+            code = f"RM-{room_number}"
+        else:
+            code = f"SEC-{secrets.token_hex(2).upper()}"
+
+    sec = HotelStoreroomSection(
+        storeroom_id=s.id,
+        name=name,
+        code=code,
+        section_type=section_type,
+        room_number=room_number,
+        room_type=data.get("room_type") or ("Standard Room" if section_type == "room" else "Storage Bay"),
+        room_status=data.get("room_status") or "clean",
+        capacity=int(data.get("capacity") or (2 if section_type == "room" else 100)),
+        supervisor_name=data.get("supervisor_name") or s.manager_name or "Supervisor",
+        notes=data.get("notes") or "",
+    )
+    db.session.add(sec)
+    db.session.flush()
+
+    audit(request.user, "hotel_section_created", "hotel_storeroom_sections", sec.id,
+          None, {"name": sec.name, "room_number": sec.room_number, "storeroom_id": s.id})
+    db.session.commit()
+    return jsonify({"message": f"Sub-section / Room '{sec.name}' created successfully", "data": _serialize_section(sec)}), 201
+
+
+@app.put("/api/v1/operations/sections/<int:section_id>")
+@operations_required
+def update_operations_section(section_id):
+    sec = HotelStoreroomSection.query.get(section_id)
+    if not sec:
+        return error("Sub-section / Room not found", 404)
+    data = request.get_json(silent=True) or {}
+
+    old_vals = {"name": sec.name, "room_status": sec.room_status, "room_number": sec.room_number}
+
+    if "name" in data and data["name"]:
+        sec.name = data["name"].strip()
+    if "code" in data and data["code"]:
+        sec.code = data["code"].strip().upper()
+    if "section_type" in data and data["section_type"]:
+        sec.section_type = data["section_type"]
+    if "room_number" in data:
+        new_room_no = (data["room_number"] or "").strip()
+        sec.room_number = new_room_no
+        if new_room_no:
+            Asset.query.filter_by(section_id=sec.id).update({"room_number": new_room_no})
+    if "room_type" in data:
+        sec.room_type = (data["room_type"] or "").strip()
+    if "room_status" in data and data["room_status"]:
+        sec.room_status = data["room_status"].strip()
+    if "capacity" in data and data["capacity"] is not None:
+        try:
+            sec.capacity = max(1, int(data["capacity"]))
+        except (ValueError, TypeError):
+            pass
+    if "supervisor_name" in data:
+        sec.supervisor_name = (data["supervisor_name"] or "").strip()
+    if "notes" in data:
+        sec.notes = data["notes"]
+
+    audit(request.user, "hotel_section_updated", "hotel_storeroom_sections", sec.id,
+          old_vals, {"name": sec.name, "room_status": sec.room_status, "room_number": sec.room_number})
+    db.session.commit()
+    return jsonify({"message": f"Section '{sec.name}' updated successfully", "data": _serialize_section(sec)})
+
+
+@app.delete("/api/v1/operations/sections/<int:section_id>")
+@operations_required
+def delete_operations_section(section_id):
+    sec = HotelStoreroomSection.query.get(section_id)
+    if not sec:
+        return error("Sub-section / Room not found", 404)
+
+    # Detach assets and inventory items
+    Asset.query.filter_by(section_id=sec.id).update({"section_id": None, "room_number": None})
+    HotelInventoryItem.query.filter_by(section_id=sec.id).update({"section_id": None})
+
+    name = sec.name
+    db.session.delete(sec)
+    audit(request.user, "hotel_section_deleted", "hotel_storeroom_sections", section_id, {"name": name}, None)
+    db.session.commit()
+    return jsonify({"message": f"Sub-section / Room '{name}' removed successfully"})
+
+
+# ---------------- EQUIPMENT & STOCK ASSIGNMENT ----------------
+@app.post("/api/v1/operations/sections/<int:section_id>/assign-equipment")
+@operations_required
+def assign_operations_equipment(section_id):
+    sec = HotelStoreroomSection.query.get(section_id)
+    if not sec:
+        return error("Sub-section / Room not found", 404)
+    data = request.get_json(silent=True) or {}
+
+    asset_id = data.get("asset_id")
+    if asset_id:
+        asset = Asset.query.get(asset_id)
+        if not asset:
+            return error("Selected equipment asset not found", 404)
+        asset.storeroom_id = sec.storeroom_id
+        asset.section_id = sec.id
+        asset.room_number = sec.room_number or data.get("room_number") or ""
+        if "condition" in data and data["condition"]:
+            asset.condition = data["condition"]
+        if "status" in data and data["status"]:
+            asset.status = data["status"]
+        else:
+            asset.status = "in_use"
+    else:
+        name = (data.get("name") or "").strip()
+        if not name:
+            return error("Equipment name is required", 400)
+        tag = (data.get("tag") or "").strip().upper()
+        if not tag:
+            prefix = f"EQP-{sec.room_number}" if sec.room_number else f"EQP-{sec.id}"
+            tag = f"{prefix}-{secrets.token_hex(2).upper()}"
+        existing = Asset.query.filter_by(tag=tag).first()
+        if existing:
+            tag = f"{tag}-{secrets.token_hex(2).upper()}"
+
+        try:
+            val = Decimal(str(data.get("value") or 0))
+        except (InvalidOperation, TypeError):
+            val = Decimal(0)
+
+        asset = Asset(
+            name=name,
+            tag=tag,
+            category=data.get("category") or "Hospitality Electronics & Appliances",
+            serial_no=data.get("serial_no") or f"SN-{secrets.token_hex(4).upper()}",
+            condition=data.get("condition") or "operational",
+            status=data.get("status") or "in_use",
+            value=val,
+            storeroom_id=sec.storeroom_id,
+            section_id=sec.id,
+            room_number=sec.room_number or "",
+            notes=data.get("notes") or f"Placed in {sec.name}",
+        )
+        db.session.add(asset)
+
+    db.session.flush()
+    audit(request.user, "hotel_equipment_placed", "assets", asset.id,
+          None, {"section_id": sec.id, "room_number": sec.room_number, "equipment_name": asset.name})
+    db.session.commit()
+    return jsonify({"message": f"Equipment '{asset.name}' placed in {sec.name} successfully", "data": _serialize_equipment(asset)})
+
+
+@app.post("/api/v1/operations/sections/<int:section_id>/remove-equipment/<int:asset_id>")
+@operations_required
+def remove_operations_equipment(section_id, asset_id):
+    asset = Asset.query.filter_by(id=asset_id, section_id=section_id).first()
+    if not asset:
+        return error("Equipment not found in this section / room", 404)
+    asset.section_id = None
+    asset.room_number = None
+    asset.status = "available"
+    db.session.commit()
+    return jsonify({"message": f"Equipment '{asset.name}' unassigned from room / space successfully"})
+
+
+@app.post("/api/v1/operations/sections/<int:section_id>/assign-stock")
+@operations_required
+def assign_operations_stock(section_id):
+    sec = HotelStoreroomSection.query.get(section_id)
+    if not sec:
+        return error("Sub-section / Room not found", 404)
+    data = request.get_json(silent=True) or {}
+
+    item_id = data.get("item_id")
+    if item_id:
+        item = HotelInventoryItem.query.get(item_id)
+        if not item:
+            return error("Selected inventory item not found", 404)
+        item.storeroom_id = sec.storeroom_id
+        item.section_id = sec.id
+        if "location" not in data or not data["location"]:
+            item.location = f"{sec.storeroom.name} · {sec.name}" if sec.storeroom else sec.name
+    else:
+        name = (data.get("name") or "").strip()
+        if not name:
+            return error("Stock item name is required", 400)
+        sku = (data.get("sku") or "").strip().upper()
+        if not sku:
+            sku = f"STK-{secrets.token_hex(3).upper()}"
+        existing = HotelInventoryItem.query.filter_by(sku=sku).first()
+        if existing:
+            sku = f"{sku}-{secrets.token_hex(2).upper()}"
+
+        try:
+            cost = Decimal(str(data.get("unit_cost") or 0))
+        except (InvalidOperation, TypeError):
+            cost = Decimal(0)
+
+        item = HotelInventoryItem(
+            name=name,
+            sku=sku,
+            category=data.get("category") or "Guest Supplies",
+            location=f"{sec.storeroom.name} · {sec.name}" if sec.storeroom else sec.name,
+            storeroom_id=sec.storeroom_id,
+            section_id=sec.id,
+            current_stock=int(data.get("current_stock") or 10),
+            reorder_level=int(data.get("reorder_level") or 5),
+            ideal_par_level=int(data.get("ideal_par_level") or 30),
+            unit=data.get("unit") or "units",
+            unit_cost=cost,
+            supplier=data.get("supplier") or "Hospitality Vendor",
+            status="in_stock" if int(data.get("current_stock") or 10) > int(data.get("reorder_level") or 5) else "low_stock",
+            icon=data.get("icon") or "box",
+            notes=data.get("notes") or "",
+        )
+        db.session.add(item)
+
+    db.session.flush()
+    audit(request.user, "hotel_stock_assigned", "hotel_inventory_items", item.id,
+          None, {"section_id": sec.id, "item_name": item.name})
+    db.session.commit()
+    return jsonify({"message": f"Stock '{item.name}' allocated to {sec.name} successfully", "data": _serialize_stock_item(item)})
+
+
+@app.post("/api/v1/operations/sections/<int:section_id>/remove-stock/<int:item_id>")
+@operations_required
+def remove_operations_stock(section_id, item_id):
+    item = HotelInventoryItem.query.filter_by(id=item_id, section_id=section_id).first()
+    if not item:
+        return error("Stock item not found in this section", 404)
+    item.section_id = None
+    db.session.commit()
+    return jsonify({"message": f"Stock item '{item.name}' unlinked from section"})
+
+
+@app.get("/api/v1/operations/equipment")
+@operations_required
+def get_operations_equipment():
+    assets = Asset.query.order_by(Asset.id.desc()).all()
+    return jsonify({"data": [_serialize_equipment(a) for a in assets]})
+
 
 
 @app.get("/api/v1/reports/overview")

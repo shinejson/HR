@@ -730,7 +730,13 @@ class Asset(db.Model, TimestampMixin):
     purchase_date = db.Column(db.Date)
     value = db.Column(db.Numeric(15, 2), default=0)
     status = db.Column(db.String(20), default="available")
+    storeroom_id = db.Column(db.Integer, db.ForeignKey("hotel_storerooms.id"), nullable=True)
+    section_id = db.Column(db.Integer, db.ForeignKey("hotel_storeroom_sections.id"), nullable=True)
+    room_number = db.Column(db.String(20), nullable=True)
+    condition = db.Column(db.String(30), default="operational")
     notes = db.Column(db.Text)
+    storeroom = db.relationship("HotelStoreroom", foreign_keys=[storeroom_id], backref="assets")
+    section = db.relationship("HotelStoreroomSection", foreign_keys=[section_id], backref="assets")
 
 
 class AssetAssignment(db.Model, TimestampMixin):
@@ -917,6 +923,43 @@ class LoginHistory(db.Model):
     created_at = db.Column(db.DateTime, default=now, nullable=False)
 
 
+class HotelStoreroom(db.Model, TimestampMixin):
+    __tablename__ = "hotel_storerooms"
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(140), nullable=False)
+    code = db.Column(db.String(40), unique=True, nullable=False)
+    hub_type = db.Column(db.String(40), default="storeroom")  # storeroom, rooms_hub, pantry, engineering, fnb
+    category = db.Column(db.String(80), nullable=False)
+    location = db.Column(db.String(140), nullable=False)
+    floor = db.Column(db.String(40), default="Ground Floor")
+    wing = db.Column(db.String(60), default="Central Facility")
+    manager_name = db.Column(db.String(120))
+    manager_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=True)
+    capacity_utilization = db.Column(db.Integer, default=0)
+    max_capacity = db.Column(db.Integer, default=100)
+    icon = db.Column(db.String(40), default="layers")
+    description = db.Column(db.Text)
+    status = db.Column(db.String(20), default="active")
+
+    manager = db.relationship("Employee", foreign_keys=[manager_id])
+    sections = db.relationship("HotelStoreroomSection", backref="storeroom", cascade="all, delete-orphan", lazy="select")
+
+
+class HotelStoreroomSection(db.Model, TimestampMixin):
+    __tablename__ = "hotel_storeroom_sections"
+    id = db.Column(db.Integer, primary_key=True)
+    storeroom_id = db.Column(db.Integer, db.ForeignKey("hotel_storerooms.id"), nullable=False)
+    name = db.Column(db.String(140), nullable=False)
+    code = db.Column(db.String(40), nullable=True)
+    section_type = db.Column(db.String(40), default="sub_section")  # room, space, sub_section, bay, cart_station, shelf
+    room_number = db.Column(db.String(20), nullable=True)
+    room_type = db.Column(db.String(60), nullable=True)  # Executive Suite, Deluxe King, Presidential, etc.
+    room_status = db.Column(db.String(30), default="clean")  # clean, occupied, turnover_in_progress, inspected, maintenance
+    capacity = db.Column(db.Integer, default=1)
+    supervisor_name = db.Column(db.String(120))
+    notes = db.Column(db.Text)
+
+
 class HotelInventoryItem(db.Model, TimestampMixin):
     __tablename__ = "hotel_inventory_items"
     id = db.Column(db.Integer, primary_key=True)
@@ -924,6 +967,8 @@ class HotelInventoryItem(db.Model, TimestampMixin):
     sku = db.Column(db.String(40), unique=True, nullable=False)
     category = db.Column(db.String(80), nullable=False)
     location = db.Column(db.String(120), nullable=False)
+    storeroom_id = db.Column(db.Integer, db.ForeignKey("hotel_storerooms.id"), nullable=True)
+    section_id = db.Column(db.Integer, db.ForeignKey("hotel_storeroom_sections.id"), nullable=True)
     current_stock = db.Column(db.Integer, default=0)
     reorder_level = db.Column(db.Integer, default=20)
     ideal_par_level = db.Column(db.Integer, default=100)
@@ -933,6 +978,8 @@ class HotelInventoryItem(db.Model, TimestampMixin):
     status = db.Column(db.String(20), default="in_stock")
     icon = db.Column(db.String(40), default="box")
     notes = db.Column(db.Text)
+    storeroom = db.relationship("HotelStoreroom", foreign_keys=[storeroom_id], backref="inventory_items")
+    section = db.relationship("HotelStoreroomSection", foreign_keys=[section_id], backref="inventory_items")
 
 
 class HotelStockMovement(db.Model, TimestampMixin):

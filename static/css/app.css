@@ -431,7 +431,19 @@ td .person span { display: block; font-size: 10.5px; color: var(--muted-2); }
 .empty h4 { font-size: 14px; color: var(--text); margin-bottom: 4px; }
 .empty p { font-size: 12px; max-width: 320px; margin: 0 auto; }
 
-.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.tabs::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
 .tab {
   padding: 10px 14px; font-size: 12.5px; color: var(--muted); cursor: pointer; border: 0; background: none;
   border-bottom: 2px solid transparent; white-space: nowrap; font-weight: 500;
@@ -1544,24 +1556,33 @@ html[data-dt-density="compact"] .avatar-sm { width: 25px; height: 25px; font-siz
 .donut-stat-row {
   display: flex;
   align-items: center;
-  gap: 20px;
+  justify-content: space-around;
+  gap: 22px;
+  width: 100%;
 }
 .donut-legend {
   display: flex;
   flex-direction: column;
   gap: 10px;
   flex: 1;
+  min-width: 170px;
 }
 .donut-legend-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
   font-size: 12px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.donut-legend-item:hover {
+  background: var(--paper-2);
 }
 .donut-legend-item .legend-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
 }
 .donut-legend-item .legend-dot {
   width: 9px;
@@ -1573,11 +1594,15 @@ html[data-dt-density="compact"] .avatar-sm { width: 25px; height: 25px; font-siz
   font-weight: 600;
   color: var(--ink);
   font-family: var(--sans);
+  font-size: 12.5px;
 }
 .donut-legend-item .legend-pct {
   color: var(--muted);
   font-size: 11px;
-  margin-left: 6px;
+  margin-left: 8px;
+  min-width: 38px;
+  text-align: right;
+  display: inline-block;
 }
 
 /* Storeroom inventory list */
@@ -1608,10 +1633,16 @@ html[data-dt-density="compact"] .avatar-sm { width: 25px; height: 25px; font-siz
   background: var(--paper);
 }
 
-/* Low Stock Table */
+/* Low Stock Table Responsive Container & Styling */
+.low-stock-wrap {
+  overflow-x: auto;
+  width: 100%;
+  -webkit-overflow-scrolling: touch;
+}
 .low-stock-table {
   width: 100%;
   border-collapse: collapse;
+  min-width: 480px;
 }
 .low-stock-table th {
   text-align: left;
@@ -1619,15 +1650,38 @@ html[data-dt-density="compact"] .avatar-sm { width: 25px; height: 25px; font-siz
   font-weight: 600;
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 8px 10px;
+  letter-spacing: 0.05em;
+  padding: 9px 10px;
   border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.low-stock-table th:last-child {
+  text-align: right;
 }
 .low-stock-table td {
-  padding: 10px 10px;
+  padding: 9px 10px;
   border-bottom: 1px solid var(--line);
   font-size: 12.5px;
   vertical-align: middle;
+}
+.low-stock-table td.sku-cell {
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-light);
+}
+.low-stock-table td.current-cell {
+  white-space: nowrap;
+}
+.low-stock-table td.reorder-cell {
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+.low-stock-table td.action-cell {
+  text-align: right;
+  white-space: nowrap;
 }
 .low-stock-table tr:last-child td {
   border-bottom: none;
@@ -1942,4 +1996,452 @@ html[data-dt-density="compact"] .avatar-sm { width: 25px; height: 25px; font-siz
   .modal-foot {
     padding: 10px 14px !important;
   }
+}
+
+/* ============================================================
+   HOTEL STOREROOMS, ROOMS HUBS & SPACES CRUD STYLES
+   ============================================================ */
+
+/* 1. Dedicated Toolbar Card & Responsive Bar */
+.ops-toolbar-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin-bottom: 20px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+}
+
+.ops-toolbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ops-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 280px;
+}
+
+.ops-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Category Filter Chips */
+.filter-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.filter-chip {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.filter-chip:hover {
+  background: var(--paper-2, #f1f5f9);
+  color: var(--ink);
+  border-color: var(--line-2, #cbd5e1);
+}
+
+.filter-chip.active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+/* 2. Hub Cards Grid */
+.hub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  gap: 18px;
+  margin-bottom: 24px;
+}
+
+.hub-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  overflow: hidden;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+}
+
+.hub-card:hover {
+  box-shadow: 0 8px 24px rgba(16, 32, 31, 0.08);
+  border-color: var(--teal);
+}
+
+.hub-card.selected {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.2);
+}
+
+.hub-card-header {
+  padding: 16px 18px 12px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+}
+
+.hub-icon-box {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: rgba(15, 118, 110, 0.09);
+  color: var(--teal);
+}
+
+.hub-title-box {
+  flex: 1;
+  min-width: 0;
+}
+
+.hub-title-box h3 {
+  font-family: var(--serif);
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 4px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.01em;
+}
+
+.hub-action-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.hub-action-btn:hover {
+  background: var(--paper);
+  color: var(--ink);
+  border-color: var(--line-2, #cbd5e1);
+}
+
+.hub-action-btn.danger:hover {
+  background: var(--red-soft, #fee2e2);
+  color: var(--red, #ef4444);
+  border-color: var(--red, #ef4444);
+}
+
+.hub-card-body {
+  padding: 14px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+
+.hub-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.hub-meta-row .lbl {
+  color: var(--muted);
+}
+
+.hub-meta-row .val {
+  color: var(--ink);
+  font-weight: 500;
+  text-align: right;
+}
+
+.hub-meter-box {
+  background: var(--paper);
+  border-radius: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(0, 0, 0, 0.03);
+}
+
+.hub-stats-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 10px 12px;
+  border-radius: 10px;
+  text-align: center;
+}
+
+.hub-stats-strip .stat-val {
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.1;
+}
+
+.hub-stats-strip .stat-lbl {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 2px;
+}
+
+.hub-card-actions {
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--paper);
+  display: flex;
+  align-items: center;
+}
+
+/* 3. Room & Spaces Drilldown Panel */
+.drilldown-panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 20px;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+  animation: fadeIn 0.2s ease-out;
+}
+
+.drilldown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 18px;
+}
+
+.room-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 16px;
+}
+
+.room-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.room-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+.room-card-head {
+  padding: 12px 14px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.room-number-pill {
+  background: var(--ink);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 11.5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-family: var(--mono, monospace);
+  display: inline-block;
+  letter-spacing: 0.02em;
+}
+
+.room-status-select {
+  font-size: 11px;
+  height: 27px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  outline: none;
+}
+
+.room-status-select.clean {
+  background: #ecfdf5;
+  color: #065f46;
+  border-color: #a7f3d0;
+}
+.room-status-select.occupied {
+  background: #eff6ff;
+  color: #1e40af;
+  border-color: #bfdbfe;
+}
+.room-status-select.turnover_in_progress {
+  background: #fffbeb;
+  color: #92400e;
+  border-color: #fde68a;
+}
+.room-status-select.inspected {
+  background: #f5f3ff;
+  color: #5b21b6;
+  border-color: #ddd6fe;
+}
+.room-status-select.maintenance {
+  background: #fef2f2;
+  color: #991b1b;
+  border-color: #fecaca;
+}
+
+.room-card-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+}
+
+.subspace-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.subspace-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.item-chip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.item-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: 11.5px;
+  gap: 8px;
+}
+
+.item-chip .name-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.item-chip .item-title {
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11.5px;
+}
+
+.item-chip .item-sub {
+  font-size: 10px;
+  color: var(--muted);
+  font-family: var(--mono, monospace);
+}
+
+.condition-pill {
+  font-size: 9.5px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.condition-pill.operational, .condition-pill.excellent { background: #d1fae5; color: #065f46; }
+.condition-pill.good { background: #dbeafe; color: #1e40af; }
+.condition-pill.fair, .condition-pill.needs_inspection { background: #fef3c7; color: #92400e; }
+.condition-pill.faulty { background: #fee2e2; color: #991b1b; }
+
+.remove-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.remove-btn:hover {
+  color: #ef4444;
+  background: #fee2e2;
+}
+
+.room-card-foot {
+  padding: 8px 14px;
+  background: var(--paper);
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
 }

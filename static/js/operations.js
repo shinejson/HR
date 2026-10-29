@@ -31,6 +31,9 @@ const opsState = {
   inventorySearch: "",
   workOrderFilter: "all",
   workOrderWing: "all",
+  storeroomFilter: "all",
+  storeroomSearch: "",
+  selectedHubId: null,
 };
 
 Views.operations = async function (root, params) {
@@ -190,55 +193,61 @@ Views.operations = async function (root, params) {
       const woStatus = dash.work_order_status || { total: 1842, items: [] };
       const lowStockAlerts = dash.low_stock_alerts || [];
 
-      const fulfillmentDonutHTML = '<div class="card span-2"><div class="card-head">'
+      const fulfillmentDonutHTML = '<div class="card span-2" style="display:flex;flex-direction:column">'
+        + '<div class="card-head">'
         + '<div><h3>Service & Work Order Fulfillment</h3><div class="sub">Current monthly turnover and guest requests breakdown</div></div>'
-        + '<div class="right"><span class="pill-tag">' + esc(opsState.period.replace("_", " ").toUpperCase()) + '</span></div>'
-        + '</div><div class="card-body">'
+        + '<div class="right"><span class="pill-tag">' + esc((opsState.period || "this_month").replace("_", " ").toUpperCase()) + '</span></div>'
+        + '</div><div class="card-body" style="display:flex;align-items:center;justify-content:center;flex:1;padding:22px 20px">'
         + '<div class="donut-stat-row">'
         + '<div style="position:relative;display:flex;align-items:center;justify-content:center;flex-shrink:0">'
         + donut(woStatus.items, 150)
         + '<div style="position:absolute;text-align:center;pointer-events:none">'
-        + '<div style="font-family:var(--serif);font-size:20px;font-weight:600;color:var(--ink);line-height:1.1">' + (woStatus.total ? woStatus.total.toLocaleString() : "1,842") + '</div>'
-        + '<div class="tiny muted">Total Orders</div>'
+        + '<div style="font-family:var(--serif);font-size:22px;font-weight:700;color:var(--ink);line-height:1.1">' + (woStatus.total ? woStatus.total.toLocaleString() : "1,842") + '</div>'
+        + '<div class="tiny muted" style="font-weight:500;margin-top:2px">Total Orders</div>'
         + '</div>'
         + '</div>'
         + '<div class="donut-legend">'
         + woStatus.items.map(item =>
-            '<div class="donut-legend-item">'
-            + '<div class="legend-left"><span class="legend-dot" style="background:' + item.color + '"></span><span>' + esc(item.label) + '</span></div>'
-            + '<div><span class="legend-val">' + item.value.toLocaleString() + '</span><span class="legend-pct">' + item.pct + '%</span></div>'
+            '<div class="donut-legend-item" style="cursor:pointer" title="View ' + esc(item.label) + ' work orders" data-filter-wo="' + (item.status || "") + '">'
+            + '<div class="legend-left"><span class="legend-dot" style="background:' + item.color + '"></span><span style="font-weight:500">' + esc(item.label) + '</span></div>'
+            + '<div style="display:flex;align-items:center"><span class="legend-val">' + item.value.toLocaleString() + '</span><span class="legend-pct">' + item.pct + '%</span></div>'
             + '</div>'
           ).join("")
         + '</div>'
         + '</div>'
         + '</div></div>';
 
-      const lowStockCardHTML = '<div class="card span-2"><div class="card-head">'
+      const lowStockCardHTML = '<div class="card span-2" style="display:flex;flex-direction:column">'
+        + '<div class="card-head">'
         + '<div><h3>Low Stock Alerts</h3><div class="sub">Hotel consumables and guest amenities below par levels</div></div>'
-        + '<div class="right"><span class="link" data-opstab="inventory">View All Supplies →</span></div>'
-        + '</div><div class="card-body" style="padding:10px 18px">'
+        + '<div class="right"><span class="link" data-opstab="inventory" style="cursor:pointer">View All Supplies →</span></div>'
+        + '</div><div class="card-body" style="padding:6px 14px 10px;flex:1;display:flex;flex-direction:column;justify-content:center">'
+        + '<div class="low-stock-wrap">'
         + '<table class="low-stock-table">'
         + '<thead><tr>'
-        + '<th>Item Description</th>'
+        + '<th style="min-width:180px">Item Description</th>'
         + '<th>SKU</th>'
         + '<th>Current</th>'
         + '<th>Reorder Level</th>'
         + '<th style="text-align:right">Action</th>'
         + '</tr></thead>'
         + '<tbody>'
-        + (lowStockAlerts.length ? lowStockAlerts.slice(0, 5).map(item =>
-            '<tr>'
-            + '<td><div class="row" style="gap:8px">'
-            + '<div class="kpi-icon ' + (item.current <= item.reorder_level / 2 ? "red" : "amber") + '" style="width:28px;height:28px;border-radius:7px">' + icon(item.icon || "box", 13) + '</div>'
-            + '<div><b>' + esc(item.name) + '</b><div class="tiny muted">' + esc(item.location) + '</div></div>'
-            + '</div></td>'
-            + '<td><span class="mono tiny">' + esc(item.sku) + '</span></td>'
-            + '<td><span class="chip red"><b>' + item.current + '</b> ' + esc(item.unit) + '</span></td>'
-            + '<td><span class="muted">' + item.reorder_level + ' ' + esc(item.unit) + '</span></td>'
-            + '<td style="text-align:right"><button class="btn btn-sm btn-soft" data-quick-restock-id="' + item.id + '">' + icon("zap", 11) + ' Restock</button></td>'
-            + '</tr>'
-          ).join("") : '<tr><td colspan="5" class="tiny muted" style="text-align:center;padding:20px">All hotel items are stocked above par levels.</td></tr>')
+        + (lowStockAlerts.length ? lowStockAlerts.slice(0, 5).map(item => {
+            const ratio = item.current / Math.max(item.reorder_level, 1);
+            const tone = ratio <= 0.4 ? "red" : (ratio <= 0.8 ? "amber" : "blue");
+            return '<tr>'
+              + '<td><div class="row" style="gap:10px;align-items:center;min-width:180px">'
+              + '<div class="kpi-icon ' + tone + '" style="width:30px;height:30px;border-radius:8px;flex-shrink:0">' + icon(item.icon || "box", 14) + '</div>'
+              + '<div><div style="font-weight:600;font-size:12.5px;color:var(--ink);line-height:1.25">' + esc(item.name) + '</div><div class="tiny muted" style="margin-top:2px">' + esc(item.location) + '</div></div>'
+              + '</div></td>'
+              + '<td class="sku-cell"><span class="chip-plain mono tiny">' + esc(item.sku) + '</span></td>'
+              + '<td class="current-cell"><span class="chip red" style="font-weight:600">● ' + item.current + ' ' + esc(item.unit) + '</span></td>'
+              + '<td class="reorder-cell">' + item.reorder_level + ' ' + esc(item.unit) + '</td>'
+              + '<td class="action-cell"><button class="btn btn-sm btn-soft" data-quick-restock-id="' + item.id + '" style="white-space:nowrap;padding:5px 12px;font-size:11.5px">' + icon("zap", 11) + ' Restock</button></td>'
+              + '</tr>';
+          }).join("") : '<tr><td colspan="5" class="tiny muted" style="text-align:center;padding:24px"><div class="row" style="justify-content:center;gap:6px">' + icon("checkCircle", 16) + ' <span>All hotel items are stocked above par levels.</span></div></td></tr>')
         + '</tbody></table>'
+        + '</div>'
         + '</div></div>';
 
       const row2 = '<div class="grid grid-4" style="margin-bottom:20px">' + fulfillmentDonutHTML + lowStockCardHTML + '</div>';
@@ -478,28 +487,241 @@ Views.operations = async function (root, params) {
             rows: orders, emptyTitle: "No work orders in queue",
           });
 
-    // ============================================================ TAB: STOREROOMS
+    // ============================================================ TAB: STOREROOMS & ROOMS HUBS
     } else if (opsState.tab === "storerooms") {
-      body = '<div class="grid grid-3">'
-        + storerooms.map(s =>
-            '<div class="card"><div class="card-head">'
-            + '<div class="row" style="gap:10px">'
-            + '<div class="kpi-icon teal" style="width:34px;height:34px;border-radius:9px">' + icon(s.icon || "layers", 16) + '</div>'
-            + '<div><h3>' + esc(s.name) + '</h3><div class="sub">' + esc(s.location) + '</div></div>'
-            + '</div>'
-            + '</div><div class="card-body stack">'
-            + '<p class="small muted">' + esc(s.description) + '</p>'
-            + '<div class="divider"></div>'
-            + '<dl class="kv">'
-            + '<dt>Category</dt><dd>' + esc(s.category) + '</dd>'
-            + '<dt>Supervisor</dt><dd>' + esc(s.manager) + '</dd>'
-            + '<dt>Capacity Meter</dt><dd><div class="progress" style="width:100px;margin-top:5px"><i style="width:' + s.capacity_utilization + '%;background:var(--teal)"></i></div></dd>'
-            + '<dt>Utilization</dt><dd><b>' + s.capacity_utilization + '%</b></dd>'
-            + '</dl>'
-            + '<button class="btn btn-sm btn-ghost" data-filter-store="' + esc(s.name) + '">' + icon("eye", 12) + ' Inspect Storeroom Supplies</button>'
-            + '</div></div>'
-          ).join("")
+      const allStorerooms = storerooms || [];
+      const totalSections = allStorerooms.reduce((acc, s) => acc + (s.sections_count || (s.sections ? s.sections.length : 0)), 0);
+      const totalRooms = allStorerooms.reduce((acc, s) => acc + (s.rooms_count || (s.sections ? s.sections.filter(sec => sec.section_type === "room" || sec.room_number).length : 0)), 0);
+      const totalEquipments = allStorerooms.reduce((acc, s) => acc + (s.equipment_count || 0), 0);
+      const totalStockItems = allStorerooms.reduce((acc, s) => acc + (s.stock_count || 0), 0);
+
+      // Filtering by category / type
+      const stFilter = opsState.storeroomFilter || "all";
+      const stSearch = (opsState.storeroomSearch || "").toLowerCase().trim();
+
+      const filteredStorerooms = allStorerooms.filter(s => {
+        if (stFilter !== "all") {
+          if (stFilter === "rooms_hub" && s.hub_type !== "rooms_hub" && !s.name.toLowerCase().includes("rooms")) return false;
+          if (stFilter === "central_storeroom" && s.hub_type !== "central_storeroom" && !s.name.toLowerCase().includes("linen") && !s.name.toLowerCase().includes("central")) return false;
+          if (stFilter === "pantry" && s.hub_type !== "pantry" && !s.name.toLowerCase().includes("pantry")) return false;
+          if (stFilter === "fnb_store" && s.hub_type !== "fnb_store" && !s.name.toLowerCase().includes("f&b") && !s.name.toLowerCase().includes("bar")) return false;
+          if (stFilter === "engineering_store" && s.hub_type !== "engineering_store" && !s.name.toLowerCase().includes("engineering") && !s.name.toLowerCase().includes("facilities")) return false;
+        }
+        if (stSearch) {
+          const matchName = (s.name || "").toLowerCase().includes(stSearch);
+          const matchLoc = (s.location || "").toLowerCase().includes(stSearch);
+          const matchCode = (s.code || "").toLowerCase().includes(stSearch);
+          const matchSec = (s.sections || []).some(sec => 
+            (sec.name || "").toLowerCase().includes(stSearch) ||
+            (sec.room_number || "").toLowerCase().includes(stSearch) ||
+            (sec.equipments || []).some(e => (e.name || "").toLowerCase().includes(stSearch) || (e.tag || "").toLowerCase().includes(stSearch))
+          );
+          if (!matchName && !matchLoc && !matchCode && !matchSec) return false;
+        }
+        return true;
+      });
+
+      // 1. KPI Summary Strip
+      const kpisHTML = '<div class="grid grid-4" style="margin-bottom:20px">'
+        + kpiCard({ label: "Storerooms & Hubs", value: allStorerooms.length, icon: "layers", tone: "teal", foot: "Active Locations" })
+        + kpiCard({ label: "Sub-Sections & Rooms", value: totalSections, icon: "bed", tone: "blue", foot: totalRooms + " Guest Rooms Active" })
+        + kpiCard({ label: "Placed Equipment", value: totalEquipments, icon: "laptop", tone: "purple", foot: "In-Room & Store Assets" })
+        + kpiCard({ label: "Stocked Supplies", value: totalStockItems, icon: "box", tone: "green", foot: "Supplies in Hubs & Rooms" })
         + '</div>';
+
+      // 2. Controls Toolbar: Search, Filter Chips, and Action Buttons in a single card
+      const controlsHTML = '<div class="card ops-toolbar-card">'
+        + '<div class="ops-toolbar-row">'
+        + '<div class="ops-toolbar-left">'
+        + '<div class="searchbox" style="flex:0 0 240px">'
+        + icon("search", 14)
+        + '<input type="text" id="ops-storeroom-search" class="input" placeholder="Search storerooms, rooms, equipment…" value="' + esc(opsState.storeroomSearch || "") + '">'
+        + '</div>'
+        + '<div class="filter-chips">'
+        + [
+            ["all", "All Hubs (" + allStorerooms.length + ")"],
+            ["rooms_hub", "Rooms Hubs"],
+            ["central_storeroom", "Central Stores"],
+            ["pantry", "Housekeeping Pantries"],
+            ["engineering_store", "Engineering"],
+            ["fnb_store", "F&B Stores"],
+          ].map(([k, label]) =>
+            '<button class="filter-chip ' + (stFilter === k ? "active" : "") + '" data-store-filter="' + k + '">' + label + '</button>'
+          ).join("")
+        + '</div>'
+        + '</div>'
+        + '<div class="ops-toolbar-right">'
+        + '<button class="btn btn-sm btn-ghost" id="ops-btn-add-section">' + icon("plus", 13) + ' Add Room / Space</button>'
+        + '<button class="btn btn-sm btn-ghost" id="ops-btn-place-eq">' + icon("laptop", 13) + ' Place Equipment</button>'
+        + '<button class="btn btn-sm btn-ghost" id="ops-btn-alloc-stock">' + icon("box", 13) + ' Stock Supplies</button>'
+        + '<button class="btn btn-sm btn-accent" id="ops-btn-new-storeroom">' + icon("plus", 13) + ' New Storeroom / Hub</button>'
+        + '</div>'
+        + '</div>'
+        + '</div>';
+
+      // 3. Selected Hub Drilldown Panel (when user clicks into a hub)
+      let drilldownHTML = "";
+      const selectedHub = opsState.selectedHubId ? allStorerooms.find(s => s.id === opsState.selectedHubId) : null;
+      if (selectedHub) {
+        const sections = selectedHub.sections || [];
+        drilldownHTML = '<div class="drilldown-panel">'
+          + '<div class="drilldown-header">'
+          + '<div class="row" style="gap:12px;align-items:center">'
+          + '<button class="btn btn-sm btn-ghost" id="ops-btn-close-drilldown">' + icon("arrowLeft", 14) + ' All Hubs</button>'
+          + '<div class="hub-icon-box" style="width:40px;height:40px">' + icon(selectedHub.icon || "layers", 20) + '</div>'
+          + '<div>'
+          + '<div class="row" style="gap:8px;align-items:center">'
+          + '<h3 style="font-family:var(--serif);font-size:19px;margin:0;font-weight:600">' + esc(selectedHub.name) + '</h3>'
+          + '<span class="pill-tag mono" style="font-size:11px">' + esc(selectedHub.code || "") + '</span>'
+          + '<span class="chip teal">' + esc((selectedHub.hub_type || "hub").replace("_", " ").toUpperCase()) + '</span>'
+          + '</div>'
+          + '<div class="tiny muted" style="margin-top:2px">' + esc(selectedHub.location) + ' · Floor: ' + esc(selectedHub.floor || "—") + ' · Supervisor: <b>' + esc(selectedHub.manager_name || "—") + '</b> · Utilization: <b>' + selectedHub.capacity_utilization + '%</b></div>'
+          + '</div>'
+          + '</div>'
+          + '<div class="row" style="gap:8px">'
+          + '<button class="btn btn-sm btn-ghost" data-edit-store-id="' + selectedHub.id + '">' + icon("edit", 13) + ' Edit Hub</button>'
+          + '<button class="btn btn-sm btn-accent" data-add-section-to-hub="' + selectedHub.id + '">' + icon("plus", 13) + ' Add Room / Space to this Hub</button>'
+          + '</div>'
+          + '</div>'
+          + (sections.length === 0
+              ? emptyState("No Sub-Sections or Rooms in this Hub", "Create rooms, storage bays, or housekeeping carts inside this hub to start tracking equipment and stock.", "box")
+              : '<div class="room-grid">'
+                + sections.map(sec => {
+                    const isRoom = sec.section_type === "room" || Boolean(sec.room_number);
+                    const eqList = sec.equipments || [];
+                    const stockList = sec.stock || [];
+                    const statusClass = sec.room_status || "clean";
+
+                    return '<div class="room-card">'
+                      + '<div class="room-card-head">'
+                      + '<div class="row" style="gap:8px;align-items:center;min-width:0">'
+                      + (sec.room_number ? ('<span class="room-number-pill">' + esc(sec.room_number) + '</span>') : ('<span class="pill-tag mono">' + esc(sec.code || "SPACE") + '</span>'))
+                      + '<div style="min-width:0"><b style="font-size:13.5px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(sec.name) + '</b>'
+                      + '<span class="tiny muted">' + esc(sec.room_type || sec.section_type || "Space") + (sec.supervisor_name ? (' · ' + esc(sec.supervisor_name)) : '') + '</span></div>'
+                      + '</div>'
+                      + '<div class="row" style="gap:6px">'
+                      + '<select class="room-status-select ' + statusClass + '" data-section-status-id="' + sec.id + '" title="Change live status">'
+                      + [
+                          ["clean", "Clean / Ready"],
+                          ["occupied", "Occupied"],
+                          ["turnover_in_progress", "Turnover"],
+                          ["inspected", "Inspected"],
+                          ["maintenance", "Maintenance"],
+                        ].map(([val, lbl]) => '<option value="' + val + '"' + (sec.room_status === val ? ' selected' : '') + '>' + lbl + '</option>').join("")
+                      + '</select>'
+                      + '</div>'
+                      + '</div>'
+                      + '<div class="room-card-body">'
+                      // Equipment list inside space
+                      + '<div class="subspace-section">'
+                      + '<div class="subspace-section-header"><span>Equipment Placed (' + eqList.length + ')</span>'
+                      + '<button class="btn btn-xs btn-ghost" data-place-eq-sec-id="' + sec.id + '">' + icon("plus", 10) + ' Place Equipment</button>'
+                      + '</div>'
+                      + (eqList.length === 0
+                          ? '<div class="tiny muted" style="padding:4px 0">No equipment placed in this space yet.</div>'
+                          : '<div class="item-chip-list">'
+                            + eqList.map(eq =>
+                                '<div class="item-chip">'
+                                + '<div class="name-wrap">'
+                                + '<span class="item-title" title="' + esc(eq.name) + '">' + esc(eq.name) + '</span>'
+                                + '<span class="item-sub">' + esc(eq.tag) + (eq.serial_no ? (' · ' + esc(eq.serial_no)) : '') + '</span>'
+                                + '</div>'
+                                + '<span class="condition-pill ' + (eq.condition || 'operational') + '">' + (eq.condition || 'operational') + '</span>'
+                                + '<button class="remove-btn" title="Unassign equipment from this space" data-unassign-eq-sec="' + sec.id + '" data-unassign-eq-id="' + eq.id + '" data-eq-name="' + esc(eq.name) + '">×</button>'
+                                + '</div>'
+                              ).join("")
+                            + '</div>'
+                        )
+                      + '</div>'
+                      // Stock list inside space
+                      + '<div class="subspace-section">'
+                      + '<div class="subspace-section-header"><span>Stocked Supplies (' + stockList.length + ')</span>'
+                      + '<button class="btn btn-xs btn-ghost" data-alloc-stock-sec-id="' + sec.id + '">' + icon("plus", 10) + ' Stock Supplies</button>'
+                      + '</div>'
+                      + (stockList.length === 0
+                          ? '<div class="tiny muted" style="padding:4px 0">No supplies stocked in this space.</div>'
+                          : '<div class="item-chip-list">'
+                            + stockList.map(st =>
+                                '<div class="item-chip">'
+                                + '<div class="name-wrap">'
+                                + '<span class="item-title" title="' + esc(st.name) + '">' + esc(st.name) + '</span>'
+                                + '<span class="item-sub">' + esc(st.sku) + ' · <b>' + st.current_stock + ' ' + esc(st.unit) + '</b></span>'
+                                + '</div>'
+                                + '<span class="pill-tag ' + (st.status === 'low_stock' ? 'amber' : 'green') + '" style="font-size:9.5px">' + (st.status === 'low_stock' ? 'Low' : 'OK') + '</span>'
+                                + '<button class="remove-btn" title="Unlink stock from this space" data-unlink-stock-sec="' + sec.id + '" data-unlink-stock-id="' + st.id + '" data-st-name="' + esc(st.name) + '">×</button>'
+                                + '</div>'
+                              ).join("")
+                            + '</div>'
+                        )
+                      + '</div>'
+                      + '</div>'
+                      + '<div class="room-card-foot">'
+                      + '<button class="btn btn-xs btn-ghost" data-edit-section-id="' + sec.id + '" data-parent-store-id="' + selectedHub.id + '">' + icon("edit", 11) + ' Edit Room</button>'
+                      + '<button class="btn btn-xs btn-ghost" style="color:var(--red)" data-del-section-id="' + sec.id + '" data-section-name="' + esc(sec.name) + '">' + icon("trash", 11) + ' Delete</button>'
+                      + '</div>'
+                      + '</div>';
+                  }).join("")
+                + '</div>'
+            )
+          + '</div>';
+      }
+
+      // 4. Storeroom / Hub Cards Grid
+      const cardsHTML = '<div class="hub-grid">'
+        + filteredStorerooms.map(s => {
+            const isSelected = opsState.selectedHubId === s.id;
+            const secCount = s.sections_count || (s.sections ? s.sections.length : 0);
+            const eqCount = s.equipment_count || 0;
+            const stockCount = s.stock_count || 0;
+            const roomsCount = s.rooms_count || (s.sections ? s.sections.filter(sec => sec.section_type === "room" || sec.room_number).length : 0);
+
+            return '<div class="hub-card' + (isSelected ? ' selected' : '') + '">'
+              + '<div class="hub-card-header">'
+              + '<div class="row" style="gap:10px;min-width:0;flex:1;align-items:center">'
+              + '<div class="hub-icon-box">' + icon(s.icon || "layers", 20) + '</div>'
+              + '<div class="hub-title-box">'
+              + '<div class="row" style="gap:6px;align-items:center">'
+              + '<h3>' + esc(s.name) + '</h3>'
+              + '</div>'
+              + '<div class="row" style="gap:6px;align-items:center">'
+              + '<span class="pill-tag mono" style="font-size:10px">' + esc(s.code || "") + '</span>'
+              + '<span class="chip teal" style="font-size:9.5px;padding:1px 6px">' + esc((s.hub_type || "storeroom").replace("_", " ").toUpperCase()) + '</span>'
+              + '</div>'
+              + '</div>'
+              + '</div>'
+              + '<div class="row" style="gap:5px;flex-shrink:0">'
+              + '<button class="hub-action-btn" title="Edit Hub" data-edit-store-id="' + s.id + '">' + icon("edit", 13) + '</button>'
+              + '<button class="hub-action-btn danger" title="Delete Hub" data-del-store-id="' + s.id + '" data-store-name="' + esc(s.name) + '">' + icon("trash", 13) + '</button>'
+              + '</div>'
+              + '</div>'
+              + '<div class="hub-card-body">'
+              + '<div class="hub-meta-row"><span class="lbl">Location:</span><span class="val"><b>' + esc(s.location) + '</b></span></div>'
+              + '<div class="hub-meta-row"><span class="lbl">Wing & Floor:</span><span class="val">' + esc(s.wing || "Central Facility") + ' · ' + esc(s.floor || "—") + '</span></div>'
+              + '<div class="hub-meta-row"><span class="lbl">Supervisor:</span><span class="val"><b>' + esc(s.manager_name || "—") + '</b></span></div>'
+              + '<div class="hub-meter-box">'
+              + '<div class="row-between tiny" style="margin-bottom:4px">'
+              + '<span class="muted">Capacity Utilization</span>'
+              + '<b>' + (s.capacity_utilization || 0) + '%</b>'
+              + '</div>'
+              + '<div class="progress" style="height:6px"><i style="width:' + (s.capacity_utilization || 0) + '%;background:' + (s.capacity_utilization > 85 ? 'var(--amber)' : 'var(--teal)') + '"></i></div>'
+              + '</div>'
+              + '<div class="hub-stats-strip">'
+              + '<div><div class="stat-val">' + secCount + '</div><div class="stat-lbl">' + (roomsCount > 0 ? (roomsCount + ' Rooms') : 'Spaces') + '</div></div>'
+              + '<div><div class="stat-val">' + eqCount + '</div><div class="stat-lbl">Equipments</div></div>'
+              + '<div><div class="stat-val">' + stockCount + '</div><div class="stat-lbl">Stock Items</div></div>'
+              + '</div>'
+              + (s.description ? ('<p class="tiny muted" style="margin:2px 0 0;line-height:1.4">' + esc(s.description) + '</p>') : '')
+              + '</div>'
+              + '<div class="hub-card-actions">'
+              + '<button class="btn btn-sm ' + (isSelected ? 'btn-ghost' : 'btn-accent') + '" style="width:100%" data-select-hub-id="' + s.id + '">'
+              + icon(isSelected ? "chevronUp" : "layers", 13) + ' ' + (isSelected ? 'Hide Sub-Sections & Rooms' : ('Manage Rooms, Equipment & Stock (' + secCount + ') →'))
+              + '</button>'
+              + '</div>'
+              + '</div>';
+          }).join("")
+        + '</div>';
+
+      body = kpisHTML + controlsHTML + drilldownHTML + cardsHTML;
 
     // ============================================================ TAB: READINESS
     } else if (opsState.tab === "readiness") {
@@ -643,6 +865,18 @@ Views.operations = async function (root, params) {
       };
     }
 
+    // Filter work orders when clicking legend items in fulfillment donut
+    root.querySelectorAll("[data-filter-wo]").forEach(b => {
+      b.onclick = () => {
+        const filter = b.dataset.filterWo;
+        if (filter) {
+          opsState.tab = "workorders";
+          opsState.workOrderFilter = filter;
+          go("operations/workorders");
+        }
+      };
+    });
+
     // Attach Quick Restock buttons from alerts
     root.querySelectorAll("[data-quick-restock-id]").forEach(b => {
       b.onclick = () => openStockAdjustModal(Number(b.dataset.quickRestockId));
@@ -671,6 +905,167 @@ Views.operations = async function (root, params) {
       b.onclick = () => {
         opsState.tab = "inventory";
         go("operations/inventory");
+      };
+    });
+
+    // ---------------- STOREROOMS & ROOMS INTERACTIVE LISTENERS ----------------
+    // Top Action Buttons
+    const btnNewStore = root.querySelector("#ops-btn-new-storeroom");
+    if (btnNewStore) btnNewStore.onclick = () => openStoreroomFormModal();
+
+    const btnAddSec = root.querySelector("#ops-btn-add-section");
+    if (btnAddSec) btnAddSec.onclick = () => openSectionFormModal(opsState.selectedHubId || null);
+
+    const btnPlaceEq = root.querySelector("#ops-btn-place-eq");
+    if (btnPlaceEq) btnPlaceEq.onclick = () => openAssignEquipmentModal();
+
+    const btnAllocSt = root.querySelector("#ops-btn-alloc-stock");
+    if (btnAllocSt) btnAllocSt.onclick = () => openAssignStockModal();
+
+    // Select Hub for Drilldown
+    root.querySelectorAll("[data-select-hub-id]").forEach(b => {
+      b.onclick = () => {
+        const hid = Number(b.dataset.selectHubId);
+        opsState.selectedHubId = (opsState.selectedHubId === hid) ? null : hid;
+        Views.operations(root, [opsState.tab]);
+      };
+    });
+
+    const btnCloseDrill = root.querySelector("#ops-btn-close-drilldown");
+    if (btnCloseDrill) {
+      btnCloseDrill.onclick = () => {
+        opsState.selectedHubId = null;
+        Views.operations(root, [opsState.tab]);
+      };
+    }
+
+    // Category / Type filter pills
+    root.querySelectorAll("[data-store-filter]").forEach(b => {
+      b.onclick = () => {
+        opsState.storeroomFilter = b.dataset.storeFilter;
+        Views.operations(root, [opsState.tab]);
+      };
+    });
+
+    // Search input
+    const storeSearchInp = root.querySelector("#ops-storeroom-search");
+    if (storeSearchInp) {
+      storeSearchInp.oninput = () => {
+        opsState.storeroomSearch = storeSearchInp.value;
+      };
+      storeSearchInp.onkeydown = (e) => {
+        if (e.key === "Enter") {
+          opsState.storeroomSearch = storeSearchInp.value;
+          Views.operations(root, [opsState.tab]);
+        }
+      };
+    }
+
+    // Edit Storeroom / Hub
+    root.querySelectorAll("[data-edit-store-id]").forEach(b => {
+      b.onclick = () => {
+        const sid = Number(b.dataset.editStoreId);
+        const store = (storerooms || []).find(s => s.id === sid);
+        if (store) openStoreroomFormModal(store);
+      };
+    });
+
+    // Delete Storeroom / Hub
+    root.querySelectorAll("[data-del-store-id]").forEach(b => {
+      b.onclick = () => {
+        const sid = Number(b.dataset.delStoreId);
+        const sname = b.dataset.storeName || "this hub";
+        confirmDialog("Delete Storeroom / Hub", "Are you sure you want to remove '" + sname + "'? Child sub-sections will be deleted, and assets will be detached safely.", async () => {
+          await API.delete("/operations/storerooms/" + sid);
+          toast("Storeroom removed successfully", "success");
+          if (opsState.selectedHubId === sid) opsState.selectedHubId = null;
+          Views.operations(root, [opsState.tab]);
+        }, { danger: true, confirmLabel: "Delete Hub" });
+      };
+    });
+
+    // Add Section inside Hub Drilldown
+    root.querySelectorAll("[data-add-section-to-hub]").forEach(b => {
+      b.onclick = () => {
+        const hid = Number(b.dataset.addSectionToHub);
+        openSectionFormModal(hid);
+      };
+    });
+
+    // Edit Section / Room
+    root.querySelectorAll("[data-edit-section-id]").forEach(b => {
+      b.onclick = () => {
+        const secId = Number(b.dataset.editSectionId);
+        const parentId = Number(b.dataset.parentStoreId);
+        const parentStore = (storerooms || []).find(s => s.id === parentId);
+        const sec = parentStore && (parentStore.sections || []).find(s => s.id === secId);
+        if (sec) openSectionFormModal(parentId, sec);
+      };
+    });
+
+    // Delete Section / Room
+    root.querySelectorAll("[data-del-section-id]").forEach(b => {
+      b.onclick = () => {
+        const secId = Number(b.dataset.delSectionId);
+        const sname = b.dataset.sectionName || "this space";
+        confirmDialog("Delete Sub-Section / Room", "Are you sure you want to remove '" + sname + "'? Placed equipment and inventory items will be unlinked safely.", async () => {
+          await API.delete("/operations/sections/" + secId);
+          toast("Sub-section removed successfully", "success");
+          Views.operations(root, [opsState.tab]);
+        }, { danger: true, confirmLabel: "Delete Section" });
+      };
+    });
+
+    // Live Room Status Selector change
+    root.querySelectorAll("[data-section-status-id]").forEach(sel => {
+      sel.onchange = async () => {
+        const secId = Number(sel.dataset.sectionStatusId);
+        const newStatus = sel.value;
+        try {
+          await API.put("/operations/sections/" + secId, { room_status: newStatus });
+          sel.className = "room-status-select " + newStatus;
+          toast("Room status changed to " + newStatus.replace(/_/g, " "), "success");
+        } catch (err) {
+          toast("Failed to update status: " + err.message, "error");
+        }
+      };
+    });
+
+    // Place Equipment in Section
+    root.querySelectorAll("[data-place-eq-sec-id]").forEach(b => {
+      b.onclick = () => openAssignEquipmentModal(Number(b.dataset.placeEqSecId));
+    });
+
+    // Allocate Stock in Section
+    root.querySelectorAll("[data-alloc-stock-sec-id]").forEach(b => {
+      b.onclick = () => openAssignStockModal(Number(b.dataset.allocStockSecId));
+    });
+
+    // Unassign Equipment from Section
+    root.querySelectorAll("[data-unassign-eq-id]").forEach(b => {
+      b.onclick = () => {
+        const secId = Number(b.dataset.unassignEqSec);
+        const eqId = Number(b.dataset.unassignEqId);
+        const eqName = b.dataset.eqName || "this equipment";
+        confirmDialog("Unassign Equipment", "Remove '" + eqName + "' from this room / space? It will remain available in the central assets register.", async () => {
+          await API.post("/operations/sections/" + secId + "/remove-equipment/" + eqId);
+          toast("Equipment removed from space", "success");
+          Views.operations(root, [opsState.tab]);
+        }, { confirmLabel: "Remove" });
+      };
+    });
+
+    // Unlink Stock from Section
+    root.querySelectorAll("[data-unlink-stock-id]").forEach(b => {
+      b.onclick = () => {
+        const secId = Number(b.dataset.unlinkStockSec);
+        const stId = Number(b.dataset.unlinkStockId);
+        const stName = b.dataset.stName || "this item";
+        confirmDialog("Unlink Stock Supply", "Remove '" + stName + "' allocation from this space?", async () => {
+          await API.post("/operations/sections/" + secId + "/remove-stock/" + stId);
+          toast("Supply unlinked from space", "success");
+          Views.operations(root, [opsState.tab]);
+        }, { confirmLabel: "Unlink" });
       };
     });
 
@@ -742,10 +1137,21 @@ async function openStockAdjustModal(prefillItemId) {
     const res = await API.get("/operations/inventory");
     const items = res.data || [];
     const itemOpts = items.map(i => ({ value: i.id, label: i.name + " (" + i.sku + ") · " + i.current_stock + " " + i.unit }));
+    const targetItem = (prefillItemId && items.find(i => i.id === prefillItemId)) || items[0];
+
+    const suggestedQty = targetItem 
+      ? Math.max(20, (targetItem.ideal_par_level || targetItem.reorder_level * 2) - targetItem.current_stock)
+      : 50;
+
+    const modalTitle = targetItem ? ("Restock: " + targetItem.name) : "Hotel Stock Adjustment & Restock";
+    const modalSub = targetItem 
+      ? ("Current: " + targetItem.current_stock + " " + targetItem.unit + " · Par Threshold: " + targetItem.reorder_level + " " + targetItem.unit + (targetItem.ideal_par_level ? (" · Target Par: " + targetItem.ideal_par_level + " " + targetItem.unit) : ""))
+      : "Record vendor deliveries received, stock issued to floors, or audit count";
 
     openFormModal({
-      title: "Hotel Stock Adjustment & Restock",
-      subtitle: "Record vendor deliveries received, stock issued to floors, or audit count",
+      title: modalTitle,
+      sub: modalSub,
+      subtitle: modalSub,
       fields: [
         {
           name: "item_id", label: "Select Supply Item", type: "select",
@@ -761,11 +1167,11 @@ async function openStockAdjustModal(prefillItemId) {
           ],
           value: "in", required: true,
         },
-        { name: "quantity", label: "Quantity", type: "number", default: 50, required: true },
-        { name: "reason", label: "Source / Destination / Floor", default: "Central Store Delivery", hint: "e.g., 'Vendor: Nile Heritage' or 'Issued to 4th Floor Housekeeping'" },
+        { name: "quantity", label: "Quantity to Restock / Move", type: "number", default: suggestedQty, required: true },
+        { name: "reason", label: "Source / Destination / Floor", default: targetItem ? ("Vendor Delivery · " + (targetItem.supplier || "Central Receiving Store")) : "Central Store Delivery", hint: "e.g., 'Vendor: Nile Heritage' or 'Issued to 4th Floor Housekeeping'" },
         { name: "reference_no", label: "PO or Reference #", default: "PO-" + Math.floor(1000 + Math.random() * 9000) },
       ],
-      submitLabel: "Update Inventory Stock",
+      submitLabel: "Confirm & Restock Stock",
       async onSubmit(vals) {
         await API.post("/operations/inventory/adjust", {
           item_id: Number(vals.item_id),
@@ -774,7 +1180,7 @@ async function openStockAdjustModal(prefillItemId) {
           reason: vals.reason,
           reference_no: vals.reference_no,
         });
-        toast("Inventory updated successfully!", "success");
+        toast("Inventory updated and restocked successfully!", "success");
         const view = document.getElementById("view");
         if (view) Views.operations(view, [opsState.tab]);
       },
@@ -906,4 +1312,302 @@ function openNewInventoryItemModal() {
       if (view) Views.operations(view, [opsState.tab]);
     },
   });
+}
+
+
+// ============================================================ MODAL: STOREROOM / HUB FORM (CREATE & EDIT)
+function openStoreroomFormModal(existing) {
+  const isEdit = Boolean(existing && existing.id);
+  openFormModal({
+    title: isEdit ? ("Edit Storeroom / Hub: " + existing.name) : "Create Hotel Storeroom / Rooms Hub",
+    subtitle: isEdit ? "Update storeroom details, location, and capacity" : "Register a central storeroom, floor pantry, or guest room hub",
+    fields: [
+      { name: "name", label: "Storeroom / Hub Name", placeholder: "e.g. West Wing Executive Rooms Hub", default: existing ? existing.name : "", required: true },
+      { name: "code", label: "Hub Code", placeholder: "e.g. HUB-WW-01", default: existing ? existing.code : "" },
+      {
+        name: "hub_type", label: "Hub Type", type: "select",
+        options: [
+          { value: "rooms_hub", label: "Rooms Hub (Guest Rooms & Suites Wing)" },
+          { value: "central_storeroom", label: "Central Storeroom (Linen & Bulk Laundry)" },
+          { value: "pantry", label: "Housekeeping Floor Pantry" },
+          { value: "engineering_store", label: "Facilities & Engineering Workshop" },
+          { value: "fnb_store", label: "F&B, Bar & Kitchen Storeroom" },
+          { value: "frontdesk", label: "Front Desk & Concierge Storage" },
+        ],
+        default: existing ? (existing.hub_type || "rooms_hub") : "rooms_hub",
+        required: true,
+      },
+      { name: "category", label: "Category", placeholder: "e.g. Guest Rooms & Suites", default: existing ? existing.category : "Guest Rooms & Suites", required: true },
+      { name: "location", label: "Physical Location", placeholder: "e.g. Floors 4-7 West Wing Corridor", default: existing ? existing.location : "", required: true },
+      { name: "floor", label: "Floor Level", placeholder: "e.g. Floors 4-7 or Ground Floor", default: existing ? existing.floor : "Ground Floor" },
+      { name: "wing", label: "Hotel Wing", placeholder: "e.g. West Wing, East Wing, Penthouse", default: existing ? existing.wing : "West Wing" },
+      { name: "manager_name", label: "Supervisor / Lead In-Charge", placeholder: "e.g. Daniel Osei", default: existing ? existing.manager_name : "Daniel Osei" },
+      { name: "capacity_utilization", label: "Current Utilization (%)", type: "number", default: existing ? (existing.capacity_utilization || 0) : 50 },
+      { name: "max_capacity", label: "Max Capacity (Rooms / Bays)", type: "number", default: existing ? (existing.max_capacity || 100) : 100 },
+      {
+        name: "icon", label: "Icon Graphic", type: "select",
+        options: [
+          { value: "layers", label: "Layers (Central Store)" },
+          { value: "bed", label: "Bed (Rooms Hub / Linen)" },
+          { value: "sparkle", label: "Sparkle (Housekeeping / Amenities)" },
+          { value: "coffee", label: "Coffee (F&B / Mini-Bar)" },
+          { value: "sliders", label: "Sliders (Engineering / HVAC)" },
+          { value: "box", label: "Box (Supplies / Inventory)" },
+          { value: "key", label: "Key (Front Desk / Access)" },
+          { value: "star", label: "Star (VIP / Executive Suites)" },
+        ],
+        default: existing ? (existing.icon || "layers") : "layers",
+      },
+      { name: "description", label: "Description & Purpose", type: "textarea", placeholder: "Notes on rooms serviced, stock kept, and operating hours…", default: existing ? existing.description : "" },
+    ],
+    submitLabel: isEdit ? "Update Storeroom / Hub" : "Create Storeroom / Hub",
+    async onSubmit(vals) {
+      if (isEdit) {
+        await API.put("/operations/storerooms/" + existing.id, vals);
+        toast("Storeroom updated successfully", "success");
+      } else {
+        const res = await API.post("/operations/storerooms", vals);
+        toast("Storeroom created successfully", "success");
+        if (res && res.data && res.data.id) {
+          opsState.selectedHubId = res.data.id;
+        }
+      }
+      const view = document.getElementById("view");
+      if (view) Views.operations(view, [opsState.tab]);
+    },
+  });
+}
+
+
+// ============================================================ MODAL: SUB-SECTION & ROOM FORM (CREATE & EDIT)
+async function openSectionFormModal(prefillStoreroomId, existing) {
+  try {
+    const storeRes = await API.get("/operations/storerooms");
+    const storerooms = storeRes.data || [];
+    const storeOpts = storerooms.map(s => ({
+      value: s.id,
+      label: s.name + " (" + (s.hub_type || "hub").replace("_", " ") + ")"
+    }));
+
+    const isEdit = Boolean(existing && existing.id);
+    const parentId = prefillStoreroomId || (existing && existing.storeroom_id) || (storerooms[0] && storerooms[0].id);
+
+    openFormModal({
+      title: isEdit ? ("Edit Sub-Section / Room: " + existing.name) : "Add Sub-Section, Room or Space",
+      subtitle: isEdit ? "Modify room specifications, type, or supervisor" : "Configure a guest room, storage bay, or housekeeping cart station in this hub",
+      fields: [
+        {
+          name: "storeroom_id", label: "Parent Hub / Storeroom", type: "select",
+          options: storeOpts, default: parentId, required: true,
+        },
+        {
+          name: "section_type", label: "Space Classification", type: "select",
+          options: [
+            { value: "room", label: "Hotel Guest Room / Suite" },
+            { value: "storage_bay", label: "Storage Bay / Core Area" },
+            { value: "pantry", label: "Housekeeping Floor Pantry" },
+            { value: "service_cart", label: "Turnover Service Cart Station" },
+            { value: "space", label: "General Hub Sub-Section / Space" },
+            { value: "shelf", label: "Storage Rack / Shelving Unit" },
+          ],
+          default: existing ? (existing.section_type || "room") : "room",
+          required: true,
+        },
+        { name: "room_number", label: "Room / Bay # (if applicable)", placeholder: "e.g. 401, 402, 201, Bay-A", default: existing ? existing.room_number : "" },
+        { name: "name", label: "Section / Room Display Name", placeholder: "e.g. Suite 401 · Executive King Suite", default: existing ? existing.name : "", required: true },
+        {
+          name: "room_type", label: "Room Type / Space Specification", placeholder: "e.g. Executive Suite, Deluxe King, Standard Twin, Linen Bay",
+          default: existing ? existing.room_type : "Executive Suite",
+        },
+        {
+          name: "room_status", label: "Operational Status", type: "select",
+          options: [
+            { value: "clean", label: "Clean / Inspected & Ready" },
+            { value: "occupied", label: "Occupied by Guest" },
+            { value: "turnover_in_progress", label: "Turnover in Progress" },
+            { value: "inspected", label: "Supervisor Inspection Pending" },
+            { value: "maintenance", label: "Out of Order / Maintenance" },
+          ],
+          default: existing ? (existing.room_status || "clean") : "clean",
+          required: true,
+        },
+        { name: "capacity", label: "Capacity (Guests or Units)", type: "number", default: existing ? (existing.capacity || 2) : 2 },
+        { name: "supervisor_name", label: "Supervisor / Room Attendant", placeholder: "e.g. Ama Mensah", default: existing ? existing.supervisor_name : "" },
+        { name: "notes", label: "Notes & Amenities Features", type: "textarea", placeholder: "Key features, special guest requests, bed configuration…", default: existing ? existing.notes : "" },
+      ],
+      submitLabel: isEdit ? "Update Space" : "Save Room / Space",
+      async onSubmit(vals) {
+        if (isEdit) {
+          await API.put("/operations/sections/" + existing.id, vals);
+          toast("Room / Space updated successfully", "success");
+        } else {
+          await API.post("/operations/storerooms/" + vals.storeroom_id + "/sections", vals);
+          toast("Room / Space added to hub successfully", "success");
+        }
+        opsState.selectedHubId = Number(vals.storeroom_id);
+        const view = document.getElementById("view");
+        if (view) Views.operations(view, [opsState.tab]);
+      },
+    });
+  } catch (err) {
+    toast("Error loading hub details: " + err.message, "error");
+  }
+}
+
+
+// ============================================================ MODAL: PLACE EQUIPMENT IN ROOM / SPACE
+async function openAssignEquipmentModal(prefillSectionId) {
+  try {
+    const storeRes = await API.get("/operations/storerooms");
+    const storerooms = storeRes.data || [];
+    const allSections = [];
+    storerooms.forEach(s => {
+      (s.sections || []).forEach(sec => {
+        allSections.push({
+          value: sec.id,
+          label: (sec.room_number ? ("[" + sec.room_number + "] ") : "") + sec.name + " (" + s.name + ")",
+        });
+      });
+    });
+
+    if (allSections.length === 0) {
+      toast("Please create at least one room or sub-section first", "warning");
+      return;
+    }
+
+    const targetSecId = prefillSectionId || allSections[0].value;
+
+    openFormModal({
+      title: "Place Equipment Asset in Room / Space",
+      subtitle: "Deploy TVs, espresso machines, mini-bars, safes, or machinery to a specific hotel room or section",
+      fields: [
+        {
+          name: "section_id", label: "Target Room / Sub-Section", type: "select",
+          options: allSections, default: targetSecId, required: true,
+        },
+        { name: "name", label: "Equipment / Asset Name", placeholder: 'e.g. Samsung 55" 4K Smart Hospitality TV', required: true },
+        { name: "tag", label: "Asset Tag (leave blank to auto-generate)", placeholder: "e.g. EQP-TV-401" },
+        {
+          name: "category", label: "Equipment Category", type: "select",
+          options: [
+            { value: "Hospitality Electronics & Entertainment", label: "Electronics & Smart TVs" },
+            { value: "In-Room Hospitality Appliances", label: "In-Room Appliances (Coffee, Mini-Bar, Safe)" },
+            { value: "Climate Control & Air Handling", label: "Climate Control, HVAC & Thermostats" },
+            { value: "Housekeeping & Laundry Machinery", label: "Housekeeping & Laundry Machinery" },
+            { value: "Facilities & Engineering Tools", label: "Engineering & Maintenance Equipment" },
+            { value: "Other Hospitality Assets", label: "Other Asset" },
+          ],
+          default: "Hospitality Electronics & Entertainment",
+          required: true,
+        },
+        { name: "serial_no", label: "Serial Number", placeholder: "e.g. SN-401-SAMS-001" },
+        {
+          name: "condition", label: "Operating Condition", type: "select",
+          options: [
+            { value: "operational", label: "Operational & Tested" },
+            { value: "excellent", label: "Brand New / Mint Condition" },
+            { value: "good", label: "Good / Standard Wear" },
+            { value: "needs_inspection", label: "Needs Supervisor Inspection" },
+            { value: "faulty", label: "Faulty / Requires Maintenance" },
+          ],
+          default: "operational",
+          required: true,
+        },
+        { name: "value", label: "Book / Replacement Value ($)", type: "number", default: 450.00 },
+        { name: "notes", label: "Equipment Notes", placeholder: "Warranty, port connections, or maintenance notes…" },
+      ],
+      submitLabel: "Place Equipment in Room",
+      async onSubmit(vals) {
+        await API.post("/operations/sections/" + vals.section_id + "/assign-equipment", vals);
+        toast("Equipment placed in room / space successfully", "success");
+        // Find which storeroom owns this section so we can select it
+        for (const s of storerooms) {
+          if ((s.sections || []).some(sec => sec.id === Number(vals.section_id))) {
+            opsState.selectedHubId = s.id;
+            break;
+          }
+        }
+        const view = document.getElementById("view");
+        if (view) Views.operations(view, [opsState.tab]);
+      },
+    });
+  } catch (err) {
+    toast("Error loading spaces: " + err.message, "error");
+  }
+}
+
+
+// ============================================================ MODAL: ALLOCATE STOCK TO ROOM / SPACE
+async function openAssignStockModal(prefillSectionId) {
+  try {
+    const [storeRes, invRes] = await Promise.all([
+      API.get("/operations/storerooms"),
+      API.get("/operations/inventory"),
+    ]);
+    const storerooms = storeRes.data || [];
+    const invItems = invRes.data || [];
+
+    const allSections = [];
+    storerooms.forEach(s => {
+      (s.sections || []).forEach(sec => {
+        allSections.push({
+          value: sec.id,
+          label: (sec.room_number ? ("[" + sec.room_number + "] ") : "") + sec.name + " (" + s.name + ")",
+        });
+      });
+    });
+
+    if (allSections.length === 0) {
+      toast("Please create at least one room or sub-section first", "warning");
+      return;
+    }
+
+    const targetSecId = prefillSectionId || allSections[0].value;
+
+    openFormModal({
+      title: "Stock Supplies in Room / Space",
+      subtitle: "Allocate bedding, towels, amenities, coffee, or spare parts to this space",
+      fields: [
+        {
+          name: "section_id", label: "Target Room / Sub-Section", type: "select",
+          options: allSections, default: targetSecId, required: true,
+        },
+        { name: "name", label: "Supply Item Name", placeholder: "e.g. Egyptian Cotton King Bed Sheets (400TC)", required: true },
+        { name: "sku", label: "SKU Code (leave blank to auto-generate)", placeholder: "e.g. LIN-KNG-01" },
+        {
+          name: "category", label: "Category", type: "select",
+          options: [
+            { value: "Linen & Bedding", label: "Linen & Bedding" },
+            { value: "Guest Amenities", label: "Guest Amenities" },
+            { value: "Food & Beverage", label: "Food & Beverage Provisions" },
+            { value: "Cleaning Supplies", label: "Cleaning & Disinfection" },
+            { value: "Engineering & Spares", label: "Engineering & Spares" },
+            { value: "Front Desk Supplies", label: "Front Desk & Stationery" },
+          ],
+          default: "Linen & Bedding",
+          required: true,
+        },
+        { name: "current_stock", label: "Quantity to Stock", type: "number", default: 20, required: true },
+        { name: "reorder_level", label: "Par Reorder Threshold", type: "number", default: 5 },
+        { name: "unit", label: "Unit of Measure", placeholder: "sets, pcs, boxes, bottles", default: "sets" },
+        { name: "unit_cost", label: "Unit Cost ($)", type: "number", default: 45.00 },
+        { name: "supplier", label: "Supplier", placeholder: "e.g. Nile Heritage Hospitality Linens Ltd", default: "Nile Heritage Hospitality Linens Ltd" },
+      ],
+      submitLabel: "Confirm & Stock Supplies",
+      async onSubmit(vals) {
+        await API.post("/operations/sections/" + vals.section_id + "/assign-stock", vals);
+        toast("Supplies allocated to room / space successfully", "success");
+        for (const s of storerooms) {
+          if ((s.sections || []).some(sec => sec.id === Number(vals.section_id))) {
+            opsState.selectedHubId = s.id;
+            break;
+          }
+        }
+        const view = document.getElementById("view");
+        if (view) Views.operations(view, [opsState.tab]);
+      },
+    });
+  } catch (err) {
+    toast("Error loading spaces: " + err.message, "error");
+  }
 }
