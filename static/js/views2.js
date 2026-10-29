@@ -476,19 +476,62 @@ Views.leave = async function (root) {
     ]);
     const requests = reqRes.data, types = typeRes.data, holidays = holRes.data;
     const inbox = inboxRes.data.filter(i => i.type === "leave");
-    const balances = balRes.data;
+    const balances = balRes.data || [];
+    const metrics = balRes.metrics || {};
     const canManage = Store.canManage();
     const canApprove = Store.isRole("super_admin", "hr_admin", "hr_officer", "manager");
     const isEmployee = Store.isRole("employee");
     let body = "";
 
     if (leaveState.tab === "overview") {
-      body = '<div class="grid grid-3" style="margin-bottom:18px">'
+      const anlEntitled = metrics.annual_entitlement !== undefined ? metrics.annual_entitlement : 30;
+      const anlCarried = metrics.carried_over_from_prior_year || 0;
+      const anlTotal = metrics.total_allocation || (anlEntitled + anlCarried);
+      const anlTaken = metrics.taken || 0;
+      const anlPending = metrics.pending || 0;
+      const anlRemaining = metrics.remaining !== undefined ? metrics.remaining : Math.max(0, anlTotal - anlTaken - anlPending);
+      const anlCarryNext = metrics.carry_over_to_next_year !== undefined ? metrics.carry_over_to_next_year : anlRemaining;
+
+      const kpiCards = '<div class="grid grid-4" style="margin-bottom:18px">'
+        + '<div class="card card-pad">'
+        + '  <div class="row-between"><div><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.05em">Annual Entitlement</div><div style="font-family:var(--serif);font-size:28px;line-height:1.2;font-weight:600">' + anlEntitled + '<span class="tiny muted" style="font-family:var(--sans);font-weight:400"> days / yr</span></div></div><div class="kpi-icon teal">' + icon("calendar", 16) + '</div></div>'
+        + '  <div class="tiny muted" style="margin-top:8px">Ghana Labor Standard (30 working days)</div>'
+        + '</div>'
+        + '<div class="card card-pad">'
+        + '  <div class="row-between"><div><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.05em">Carried Over (Prior Year)</div><div style="font-family:var(--serif);font-size:28px;line-height:1.2;font-weight:600;color:var(--teal)">+' + anlCarried + '<span class="tiny muted" style="font-family:var(--sans);font-weight:400"> days</span></div></div><div class="kpi-icon teal">' + icon("refresh", 16) + '</div></div>'
+        + '  <div class="tiny muted" style="margin-top:8px">Total Allocation: <b>' + anlTotal + ' days</b></div>'
+        + '</div>'
+        + '<div class="card card-pad">'
+        + '  <div class="row-between"><div><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.05em">Taken & Pending</div><div style="font-family:var(--serif);font-size:28px;line-height:1.2;font-weight:600;color:var(--amber)">' + anlTaken + '<span class="tiny muted" style="font-family:var(--sans);font-weight:400"> taken · ' + anlPending + ' pend</span></div></div><div class="kpi-icon amber">' + icon("clock", 16) + '</div></div>'
+        + '  <div class="tiny muted" style="margin-top:8px">' + (anlTaken + anlPending) + ' working days booked</div>'
+        + '</div>'
+        + '<div class="card card-pad" style="border:1.5px solid var(--teal);background:linear-gradient(135deg, var(--card-bg) 0%, rgba(15,118,110,0.06) 100%)">'
+        + '  <div class="row-between"><div><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.05em;color:var(--teal);font-weight:600">Carry-Over to Next Year</div><div style="font-family:var(--serif);font-size:28px;line-height:1.2;font-weight:700;color:var(--teal)">' + anlCarryNext + '<span class="tiny muted" style="font-family:var(--sans);font-weight:400"> days</span></div></div><div class="kpi-icon green">' + icon("check", 16) + '</div></div>'
+        + '  <div class="tiny" style="color:var(--teal);margin-top:8px;font-weight:500">Eligible to rollover to next annual cycle</div>'
+        + '</div>'
+        + '</div>';
+
+      const balanceCards = '<div class="grid grid-3" style="margin-bottom:18px">'
         + balances.map(b => {
-          const left = Number(b.entitled) - Number(b.taken) - Number(b.pending);
-          const pct = Number(b.entitled) ? Math.round(left / Number(b.entitled) * 100) : 0;
-          return '<div class="card card-pad"><div class="row-between"><div><div class="tiny muted">' + esc(b.leave_type_name) + '</div><div style="font-family:var(--serif);font-size:30px;line-height:1.2">' + left + '<span class="tiny muted" style="font-family:var(--sans)"> / ' + b.entitled + ' days</span></div></div><div class="kpi-icon teal">' + icon("calendar", 16) + '</div></div><div class="progress" style="margin-top:12px"><div class="bar" style="width:' + Math.max(0, Math.min(100, pct)) + '%"></div></div><div class="tiny muted" style="margin-top:6px">' + b.taken + ' taken · ' + b.pending + ' pending</div></div>';
-        }).join("") + '</div>'
+          const entitled = Number(b.entitled || 0);
+          const carried = Number(b.carried_over || 0);
+          const totalAlloc = entitled + carried;
+          const taken = Number(b.taken || 0);
+          const pending = Number(b.pending || 0);
+          const left = Math.max(0, totalAlloc - taken - pending);
+          const pct = totalAlloc > 0 ? Math.round(left / totalAlloc * 100) : 0;
+          return '<div class="card card-pad">'
+            + '<div class="row-between"><div>'
+            + '  <div class="row" style="gap:6px;align-items:center"><div class="tiny muted">' + esc(b.leave_type_name) + '</div>' + (b.code === 'ANL' ? '<span class="chip teal tiny">Annual</span>' : '') + '</div>'
+            + '  <div style="font-family:var(--serif);font-size:26px;line-height:1.2;margin-top:4px">' + left + '<span class="tiny muted" style="font-family:var(--sans)"> / ' + totalAlloc + ' days left</span></div>'
+            + '</div><div class="kpi-icon teal">' + icon("calendar", 16) + '</div></div>'
+            + '<div class="progress" style="margin-top:12px"><div class="bar" style="width:' + Math.max(0, Math.min(100, pct)) + '%"></div></div>'
+            + '<div class="tiny muted" style="margin-top:8px">' + entitled + ' entitled' + (carried > 0 ? ' · <b style="color:var(--teal)">+' + carried + ' carried over</b>' : '') + ' · ' + taken + ' taken · ' + pending + ' pending</div>'
+            + (b.code === 'ANL' ? '<div class="tiny" style="color:var(--teal);margin-top:6px;font-weight:500">Carry-Over to Next Year: <b>' + left + ' days</b></div>' : '')
+            + '</div>';
+        }).join("") + '</div>';
+
+      body = kpiCards + balanceCards
         + renderTable({
           id: "leave-requests-table",
           title: "Leave requests register",
@@ -534,23 +577,38 @@ Views.leave = async function (root) {
               if (r.status === "approved") return chip("approved");
               if (r.status === "rejected") return chip("rejected");
               if (r.status === "cancelled") return chip("cancelled");
-              // Multi-level approval status
-              const hod = r.hod_approved_at ? '<span class="chip green tiny">✓ HOD</span>' : '<span class="chip gray tiny">○ HOD</span>';
-              const acc = r.accountant_approved_at ? '<span class="chip green tiny">✓ Accountant</span>' : '<span class="chip gray tiny">○ Accountant</span>';
-              const md = r.md_approved_at ? '<span class="chip green tiny">✓ MD</span>' : '<span class="chip gray tiny">○ MD</span>';
+              // Multi-level approval status with designated approver labels
+              const hodName = r.hod_name ? ' (' + esc(r.hod_name.split(' ')[0]) + ')' : '';
+              const accName = r.accountant_name ? ' (' + esc(r.accountant_name.split(' ')[0]) + ')' : '';
+              const mdName = r.md_name ? ' (' + esc(r.md_name.split(' ')[0]) + ')' : '';
+              const hod = r.hod_approved_at ? '<span class="chip green tiny" title="Approved by HOD">✓ HoD' + hodName + '</span>' : '<span class="chip gray tiny">○ HoD' + hodName + '</span>';
+              const acc = r.accountant_approved_at ? '<span class="chip green tiny" title="Approved by Accountant">✓ Acc' + accName + '</span>' : '<span class="chip gray tiny">○ Acc' + accName + '</span>';
+              const md = r.md_approved_at ? '<span class="chip green tiny" title="Approved by Managing Director">✓ MD' + mdName + '</span>' : '<span class="chip gray tiny">○ MD' + mdName + '</span>';
               return '<div class="row" style="gap:4px;flex-wrap:wrap">' + hod + ' ' + acc + ' ' + md + '</div>';
             }},
             { label: "", class: "right", sortable: false, render: r => {
-              if (r.status !== "pending") return "";
               let btns = "";
               const user = Store.user;
               const emp = user.employee;
               const role = user.role?.slug;
               
-              // Check permissions for each approval level
-              const canApproveHOD = (role === "super_admin" || role === "hr_admin" || role === "manager");
-              const canApproveAccountant = (role === "super_admin" || role === "hr_admin");
-              const canApproveMD = (role === "super_admin");
+              // Show PDF download for approved requests
+              if (r.status === "approved") {
+                btns += '<button class="btn btn-sm btn-accent" data-download-pdf="' + r.id + '" title="Download PDF">' + icon("download", 12) + ' PDF</button> ';
+                return btns;
+              }
+              
+              if (r.status !== "pending") return btns;
+              
+              // Dynamic check against designated approvers on employee profile
+              const reqEmp = (Store.meta && Store.meta.employees) ? Store.meta.employees.find(e => e.id === r.employee_id) : null;
+              const isHod = (reqEmp && reqEmp.hod_id === user.employee_id) || (reqEmp && !reqEmp.hod_id && reqEmp.manager_id === user.employee_id);
+              const isAcc = reqEmp && reqEmp.accountant_id === user.employee_id;
+              const isMd = reqEmp && reqEmp.md_id === user.employee_id;
+
+              const canApproveHOD = isHod || (role === "super_admin" || role === "hr_admin" || (role === "manager" && reqEmp?.manager_id === user.employee_id));
+              const canApproveAccountant = isAcc || (role === "super_admin" || role === "hr_admin");
+              const canApproveMD = isMd || (role === "super_admin");
               
               if (r.employee_id !== user.employee_id) {
                 if (!r.hod_approved_at && canApproveHOD) {
@@ -560,7 +618,7 @@ Views.leave = async function (root) {
                 } else if (r.hod_approved_at && r.accountant_approved_at && !r.md_approved_at && canApproveMD) {
                   btns += '<button class="btn btn-sm btn-accent" data-approve-md="' + r.id + '">Approve (MD)</button> ';
                 }
-                if (canApprove) {
+                if (canApprove || isHod || isAcc || isMd) {
                   btns += '<button class="btn btn-sm btn-danger" data-reject-leave="' + r.id + '">Reject</button> ';
                 }
               }
@@ -649,11 +707,29 @@ Views.leave = async function (root) {
 
     root.innerHTML = pageHead("Leave", "Policy-driven leave requests, approvals and balances.",
       '<button class="btn btn-ghost" id="leave-team">' + icon("users", 15) + ' Who is away</button><button class="btn btn-accent" id="leave-apply">' + icon("plus", 15) + ' Apply for leave</button>', "Time & absence")
-      + '<div class="row wrap" style="margin-bottom:18px;gap:10px">'
-      + '<div class="card card-pad" style="flex:1;min-width:150px"><div class="tiny muted">Pending requests</div><b style="font-family:var(--serif);font-size:24px">' + requests.filter(r => r.status === "pending").length + '</b></div>'
-      + '<div class="card card-pad" style="flex:1;min-width:150px"><div class="tiny muted">Approved this year</div><b style="font-family:var(--serif);font-size:24px">' + requests.filter(r => r.status === "approved").length + '</b></div>'
-      + '<div class="card card-pad" style="flex:1;min-width:150px"><div class="tiny muted">My balance</div><b style="font-family:var(--serif);font-size:24px">' + balances.reduce((a, b) => a + (Number(b.entitled) - Number(b.taken) - Number(b.pending)), 0) + ' days</b></div>'
-      + '<div class="card card-pad" style="flex:1;min-width:150px"><div class="tiny muted">Awaiting my decision</div><b style="font-family:var(--serif);font-size:24px">' + inbox.length + '</b></div>'
+      + '<div class="leave-summary-strip" style="margin-bottom:18px">'
+      + '<div class="card card-pad"><div class="tiny muted">Pending requests</div><b style="font-family:var(--serif);font-size:24px">' + requests.filter(r => r.status === "pending").length + '</b></div>'
+      + '<div class="card card-pad"><div class="tiny muted">Approved this year</div><b style="font-family:var(--serif);font-size:24px">' + requests.filter(r => r.status === "approved").length + '</b></div>'
+      + (() => {
+          // Calculate annual leave balance only (not all leave types)
+          const annualLeave = balances.find(b => b.leave_type_name && (b.leave_type_name.toLowerCase().includes('annual') || b.leave_type_name === 'ANL'));
+          if (annualLeave) {
+            const entitled = Number(annualLeave.entitled || 0);
+            const carriedOver = Number(annualLeave.carried_over || 0);
+            const taken = Number(annualLeave.taken || 0);
+            const pending = Number(annualLeave.pending || 0);
+            const total = entitled + carriedOver;
+            const remaining = Math.max(0, total - taken - pending);
+            return '<div class="card card-pad">'
+              + '<div class="tiny muted">My Annual Leave Balance</div>'
+              + '<b style="font-family:var(--serif);font-size:24px">' + remaining + ' <span style="font-size:14px;font-weight:400;color:var(--muted)">/ ' + total + '</span></b>'
+              + '<div class="tiny muted">' + (carriedOver > 0 ? 'Includes ' + carriedOver + ' days carried over' : entitled + ' days entitled') + '</div>'
+              + '</div>';
+          } else {
+            return '<div class="card card-pad"><div class="tiny muted">My balance</div><b style="font-family:var(--serif);font-size:24px">—</b></div>';
+          }
+        })()
+      + '<div class="card card-pad"><div class="tiny muted">Awaiting my decision</div><b style="font-family:var(--serif);font-size:24px">' + inbox.length + '</b></div>'
       + '</div>'
       + '<div class="tabs" style="margin-bottom:18px">' + leaveTabs.map(t => '<button class="tab ' + (leaveState.tab === t[0] ? "active" : "") + '" data-ltab="' + t[0] + '">' + t[1] + (t[0] === "approvals" && inbox.length ? '<span class="tab-count">' + inbox.length + '</span>' : "") + '</button>').join("") + '</div>'
       + '<div class="page-enter">' + body + '</div>';
@@ -687,6 +763,12 @@ Views.leave = async function (root) {
         Views.leave(root);
       } catch (err) { handleErr(err); }
     });
+    onDelegate(root, "click", "[data-download-pdf]", (b) => {
+      const leaveId = b.dataset.downloadPdf;
+      const url = `/api/v1/leave-requests/${leaveId}/pdf?token=${API.token}`;
+      window.open(url, '_blank');
+      toast("PDF download started", "success");
+    });
     onDelegate(root, "click", "[data-reject-leave]", (b) => {
       formModal({
         title: "Reject leave request",
@@ -714,21 +796,32 @@ Views.leave = async function (root) {
 function openLeaveForm(prefill) {
   const types = (Store.meta && Store.meta.leave_types) || [];
   const user = Store.user;
-  const emp = Store.meta.employees.find(e => e.id === user.employee_id);
+  const emp = (Store.meta && Store.meta.employees) ? Store.meta.employees.find(e => e.id === user.employee_id) : null;
   
   // Look up department and designation from meta arrays
   const department = emp && emp.department_id 
-    ? Store.meta.departments.find(d => d.id === emp.department_id) 
+    ? (Store.meta.departments || []).find(d => d.id === emp.department_id) 
     : null;
   const designation = emp && emp.designation_id 
-    ? Store.meta.designations.find(d => d.id === emp.designation_id) 
+    ? (Store.meta.designations || []).find(d => d.id === emp.designation_id) 
     : null;
   
   const departmentName = department ? department.name : '';
   const positionTitle = designation ? designation.title : '';
   const dateEmployed = emp?.hire_date || '';
   const currentYear = new Date().getFullYear();
-  
+
+  // Find designated approvers
+  const hodEmp = emp && emp.hod_id ? Store.meta.employees.find(e => e.id === emp.hod_id) : (emp && emp.manager_id ? Store.meta.employees.find(e => e.id === emp.manager_id) : null);
+  const accEmp = emp && emp.accountant_id ? Store.meta.employees.find(e => e.id === emp.accountant_id) : null;
+  const mdEmp = emp && emp.md_id ? Store.meta.employees.find(e => e.id === emp.md_id) : null;
+
+  const hodName = hodEmp ? (hodEmp.name + ' (Designated HoD)') : (emp?.hod_name ? emp.hod_name + ' (Designated HoD)' : 'Not set on profile');
+  const accName = accEmp ? (accEmp.name + ' (Designated Accountant)') : (emp?.accountant_name ? emp.accountant_name + ' (Designated Accountant)' : 'Not set on profile');
+  const mdName = mdEmp ? (mdEmp.name + ' (Designated MD)') : (emp?.md_name ? emp.md_name + ' (Designated MD)' : 'Not set on profile');
+
+  const sigUrl = emp?.signature_url || '';
+
   openModal({
     title: "Employees' Leave Request Form",
     sub: "Complete all required fields · Working days exclude weekends and holidays",
@@ -744,7 +837,7 @@ function openLeaveForm(prefill) {
       
       + '<div class="card"><div class="card-head"><h3>Reason for Leave</h3></div><div class="card-body">'
       + '<div class="grid grid-2" style="gap:16px">'
-      + types.map(t => '<label class="checkbox-label"><input type="radio" name="leave_type_id" value="' + t.id + '" required> <span>' + esc(t.name) + '</span></label>').join('')
+      + types.map((t, idx) => '<label class="checkbox-label"><input type="radio" name="leave_type_id" value="' + t.id + '" ' + (idx === 0 ? 'checked' : '') + ' required> <span>' + esc(t.name) + (t.code === 'ANL' ? ' (30 days/yr)' : '') + '</span></label>').join('')
       + '</div>'
       + '<div class="field" style="margin-top:12px"><label>If others, state briefly</label>'
       + '<input class="input" name="reason" placeholder="Describe your reason for leave"></div>'
@@ -754,22 +847,41 @@ function openLeaveForm(prefill) {
       + '<div class="form-grid">'
       + '<div class="field"><label>From <span class="req">*</span></label><input class="input" type="date" name="start_date" required value="' + todayISO() + '"></div>'
       + '<div class="field"><label>To <span class="req">*</span></label><input class="input" type="date" name="end_date" required value="' + todayISO() + '"></div>'
-      + '<div class="field"><label>No. of Days Requested</label><input class="input" type="number" name="days" min="0.5" step="0.5" value="1" readonly></div>'
+      + '</div>'
+      + '<div style="background:var(--paper-2);border-radius:12px;padding:16px;margin:12px 0;text-align:center">'
+      + '<div class="tiny muted" style="margin-bottom:4px">Leave Duration</div>'
+      + '<div style="font-family:var(--serif);font-size:36px;font-weight:500;color:var(--accent)" id="leave-days-display">1</div>'
+      + '<div class="tiny muted">working day(s) requested</div>'
+      + '</div>'
+      + '<div class="form-grid">'
       + '<div class="field"><label>No. of leave already taken</label><input class="input" type="number" name="leave_already_taken" value="0" step="0.5"></div>'
       + '<div class="field"><label>Date Employed</label><input class="input" type="date" name="date_employed" value="' + esc(dateEmployed) + '" readonly></div>'
-      + '<div class="field"><label>Resumption Date</label><input class="input" type="date" name="resumption_date" readonly></div>'
+      + '<div class="field" style="grid-column:1/-1"><label>Resumption Date</label><input class="input" type="date" name="resumption_date" readonly style="font-weight:500"></div>'
       + '</div>'
-      + '<div class="field" style="margin-top:12px"><label>Employee Signature</label>'
-      + '<div class="row" style="gap:8px"><input class="input" name="employee_signature" placeholder="Type your full name to sign" required>'
-      + '<div class="tiny muted" style="margin-top:4px">Date: ' + fmtDate(new Date()) + '</div></div></div>'
-      + '</div></div>'
+      + '<input type="hidden" name="days" value="1">'
+      + '<div class="field" style="margin-top:12px"><label>Employee Signature <span class="req">*</span></label>'
+      + (sigUrl
+          ? '<div class="row" style="gap:12px;align-items:center;background:var(--paper-2);padding:10px 14px;border-radius:8px">'
+            + '<img src="' + esc(sigUrl) + '" style="max-height:48px;max-width:180px;object-fit:contain;background:#fff;padding:4px 8px;border:1px solid var(--line);border-radius:4px">'
+            + '<div style="flex:1"><span class="chip green tiny">✓ Profile Digital Signature Attached</span><input type="hidden" name="employee_signature" value="' + esc(sigUrl) + '">'
+            + '<div class="tiny muted" style="margin-top:2px">Official digital signature will be submitted automatically with this application.</div></div>'
+            + '<button type="button" class="btn btn-sm btn-ghost" onclick="closeModal();go(&quot;profile&quot;)">Manage</button>'
+            + '</div>'
+          : '<div class="row" style="gap:8px;align-items:center">'
+            + '<input class="input" name="employee_signature" value="' + esc(user.name) + '" placeholder="Type your full name to sign" required style="flex:1">'
+            + '<button type="button" class="btn btn-sm btn-ghost" onclick="closeModal();go(&quot;profile&quot;)">Add Signature on Profile</button>'
+            + '</div>'
+        )
+      + '</div></div></div>'
       
-      + '<div class="card"><div class="card-head"><h3 style="background:var(--line);padding:8px 12px;margin:-12px -12px 12px;text-transform:uppercase;font-size:12px;letter-spacing:0.5px">Management Use Only</h3></div><div class="card-body">'
-      + '<div class="stack"><div class="tiny muted">This section will be completed by management after submission</div>'
+      + '<div class="card"><div class="card-head"><h3 style="background:var(--line);padding:8px 12px;margin:-12px -12px 12px;text-transform:uppercase;font-size:12px;letter-spacing:0.5px">Approval Chain (Management Use Only)</h3></div><div class="card-body">'
+      + '<div class="stack" style="gap:8px"><div class="tiny muted">Leave applications route through the 3-stage authority chain configured on your employee profile:</div>'
       + '<div class="form-grid">'
-      + '<div class="field"><label>Head of Department</label><input class="input" placeholder="Pending approval" readonly></div>'
-      + '<div class="field"><label>Accountant</label><input class="input" placeholder="Pending approval" readonly></div>'
-      + '<div class="field"><label>Managing Director</label><input class="input" placeholder="Pending approval" readonly></div>'
+      + '<div class="field"><label>1. Head of Department (HoD)</label><input class="input" value="' + esc(hodName) + '" readonly style="font-weight:500;background:var(--paper-2)"></div>'
+      + '<div class="field"><label>2. Accountant / Finance</label><input class="input" value="' + esc(accName) + '" readonly style="font-weight:500;background:var(--paper-2)"></div>'
+      + '<div class="field"><label>3. Managing Director (MD)</label><input class="input" value="' + esc(mdName) + '" readonly style="font-weight:500;background:var(--paper-2)"></div>'
+      + '</div>'
+      + ((!emp?.hod_id || !emp?.accountant_id || !emp?.md_id) ? '<div class="tiny" style="color:var(--amber)">Tip: To designate or update your HoD, Accountant, or MD approvers, visit your <a class="link" onclick="closeModal();go(&quot;profile&quot;)">Profile page</a>.</div>' : '')
       + '</div></div></div></div>'
       + '</form>',
     footer: '<button class="btn btn-ghost" data-close-modal>Cancel</button>'
@@ -779,6 +891,7 @@ function openLeaveForm(prefill) {
       const startInput = form.querySelector('[name="start_date"]');
       const endInput = form.querySelector('[name="end_date"]');
       const daysInput = form.querySelector('[name="days"]');
+      const daysDisplay = document.getElementById('leave-days-display');
       const resumptionInput = form.querySelector('[name="resumption_date"]');
       
       // Calculate days and resumption date
@@ -794,6 +907,11 @@ function openLeaveForm(prefill) {
             d.setDate(d.getDate() + 1);
           }
           daysInput.value = days;
+          if (daysDisplay) {
+            daysDisplay.textContent = days;
+            daysDisplay.style.transform = 'scale(1.1)';
+            setTimeout(() => { daysDisplay.style.transform = 'scale(1)'; }, 150);
+          }
           
           // Calculate resumption date (next working day after end)
           let resumption = new Date(end);
@@ -803,6 +921,10 @@ function openLeaveForm(prefill) {
           }
           resumptionInput.value = resumption.toISOString().split('T')[0];
         }
+      }
+      
+      if (daysDisplay) {
+        daysDisplay.style.transition = 'transform 0.15s ease-out';
       }
       
       startInput.addEventListener('change', updateCalculations);
@@ -845,7 +967,7 @@ function openLeaveTypeForm() {
     fields: [
       { name: "name", label: "Name", required: true },
       { name: "code", label: "Code", required: true, placeholder: "ANL" },
-      { name: "days_per_year", label: "Days per year", type: "number", value: 21, required: true },
+      { name: "days_per_year", label: "Days per year", type: "number", value: 30, required: true },
       { name: "paid", label: "Paid leave", type: "checkbox", value: true },
       { name: "accrual", label: "Accrual", type: "select", options: ["yearly", "monthly"], value: "yearly" },
       { name: "carry_forward", label: "Carry forward (days)", type: "number", value: 0 },

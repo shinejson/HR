@@ -457,7 +457,7 @@ td .person span { display: block; font-size: 10.5px; color: var(--muted-2); }
 .modal-head .sub { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
 .modal-head .close { margin-left: auto; background: none; border: 0; cursor: pointer; color: var(--muted); padding: 6px; border-radius: 7px; }
 .modal-head .close:hover { background: var(--paper-2); color: var(--text); }
-.modal-body { padding: 20px 22px; overflow-y: auto; background: var(--card); }
+.modal-body { padding: 20px 22px; overflow-y: auto; background: var(--card); flex: 1 1 auto; min-height: 0; }
 .modal-foot { padding: 14px 22px; border-top: 1px solid var(--line); display: flex; gap: 9px; justify-content: flex-end; background: var(--card); border-radius: 0 0 16px 16px; }
 .modal-foot .left { margin-right: auto; }
 
@@ -1685,5 +1685,259 @@ html[data-dt-density="compact"] .avatar-sm { width: 25px; height: 25px; font-siz
   }
   .ops-pipeline {
     grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+
+/* ============================================================================
+   MOBILE RESPONSIVE EXTENSIONS (Employment Letters, Modals, Leave Cards)
+============================================================================ */
+.leave-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.leave-summary-strip .card {
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .leave-summary-strip {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+}
+
+@media (max-width: 520px) {
+  .leave-summary-strip {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .leave-summary-strip .card-pad {
+    padding: 12px 10px;
+  }
+}
+
+/* Employment Letter Sheet & Canvas Responsive Rules */
+.letter-preview-canvas {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+@media (max-width: 768px) {
+  .letter-preview-canvas {
+    padding: 4px 0 !important;
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    overflow-x: hidden !important;
+    width: 100% !important;
+  }
+
+  .el-sheet {
+    padding: 18px 12px !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    font-size: 13px !important;
+    line-height: 1.55 !important;
+    border-radius: 8px !important;
+    box-shadow: 0 2px 10px rgba(16, 32, 31, 0.05) !important;
+    border: 1px solid #e4ded2 !important;
+    overflow-x: hidden !important;
+  }
+
+  .el-accent-bar {
+    height: 4px !important;
+    margin-bottom: 14px !important;
+  }
+
+  .el-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+    padding-bottom: 14px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .el-brand {
+    gap: 10px !important;
+    width: 100% !important;
+  }
+
+  .el-crest {
+    width: 44px !important;
+    height: 44px !important;
+    font-size: 20px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .el-comp-name {
+    font-size: 16px !important;
+    line-height: 1.25 !important;
+    word-break: break-word !important;
+  }
+
+  .el-comp-sub {
+    font-size: 10.5px !important;
+    line-height: 1.3 !important;
+    word-break: break-word !important;
+  }
+
+  .el-comp-contact {
+    text-align: left !important;
+    font-size: 11px !important;
+    max-width: 100% !important;
+    line-height: 1.45 !important;
+    word-break: break-word !important;
+  }
+
+  .el-ref-bar {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 6px !important;
+    font-size: 11.5px !important;
+    padding: 8px 10px !important;
+    margin-bottom: 14px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .el-cat-badge {
+    font-size: 9.5px !important;
+    padding: 2px 8px !important;
+    align-self: flex-start !important;
+  }
+
+  .el-recipient {
+    font-size: 12px !important;
+    margin-bottom: 12px !important;
+    line-height: 1.45 !important;
+    word-break: break-word !important;
+  }
+
+  .el-doc-title {
+    font-size: 13px !important;
+    padding: 8px 10px !important;
+    letter-spacing: 0.04em !important;
+    line-height: 1.35 !important;
+    text-align: center !important;
+    word-break: break-word !important;
+    box-sizing: border-box !important;
+    width: 100% !important;
+  }
+
+  .el-subject {
+    font-size: 11.5px !important;
+    margin-bottom: 14px !important;
+    line-height: 1.4 !important;
+    word-break: break-word !important;
+  }
+
+  .el-meta-grid {
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+    padding: 10px 12px !important;
+    margin: 14px 0 !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .el-meta-cell {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 2px !important;
+    padding-bottom: 6px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .el-meta-cell .k {
+    color: #687470 !important;
+    font-size: 10.5px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.05em !important;
+    font-weight: 500 !important;
+  }
+
+  .el-meta-cell .v {
+    color: #142321 !important;
+    font-weight: 600 !important;
+    text-align: left !important;
+    font-size: 12.5px !important;
+    line-height: 1.35 !important;
+    word-break: break-word !important;
+  }
+
+  .el-clause h4 {
+    font-size: 11.5px !important;
+    margin-bottom: 4px !important;
+  }
+
+  .el-clause p {
+    font-size: 12.5px !important;
+    text-align: left !important;
+    line-height: 1.55 !important;
+  }
+
+  .el-comp-table {
+    display: table !important;
+    width: 100% !important;
+    font-size: 11.5px !important;
+    box-sizing: border-box !important;
+  }
+
+  .el-comp-table th, .el-comp-table td {
+    padding: 6px 8px !important;
+    word-break: break-word !important;
+  }
+
+  .el-sig-grid {
+    grid-template-columns: 1fr !important;
+    gap: 22px !important;
+    margin-top: 20px !important;
+    padding-top: 14px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .el-sig-line {
+    width: 100% !important;
+    max-width: 260px !important;
+  }
+
+  .el-signed-script {
+    font-size: 20px !important;
+  }
+
+  .el-muted {
+    font-size: 10.5px !important;
+    word-break: break-word !important;
+  }
+
+  .el-footer-note {
+    flex-direction: column !important;
+    gap: 4px !important;
+    text-align: left !important;
+    font-size: 9.5px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .modal-card, .modal-card.wide {
+    width: calc(100vw - 16px) !important;
+    margin: 8px auto !important;
+    border-radius: 12px !important;
+  }
+  .modal-body {
+    padding: 12px 10px !important;
+  }
+  .modal-head {
+    padding: 12px 14px !important;
+  }
+  .modal-foot {
+    padding: 10px 14px !important;
   }
 }

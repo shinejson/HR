@@ -35,7 +35,9 @@ const API = (() => {
     if (!res.ok) {
       if (res.status === 401) {
         setToken(null);
-        document.dispatchEvent(new CustomEvent("auth:expired", { detail: { reason: "timeout" } }));
+        if (path !== "/auth/login" && !options.silentAuth) {
+          document.dispatchEvent(new CustomEvent("auth:expired", { detail: { reason: "session_expired" } }));
+        }
       }
       const err = new Error((body && body.message) || "Request failed (" + res.status + ")");
       err.status = res.status;
@@ -63,7 +65,7 @@ const API = (() => {
       return request("/auth/ping", { method: "POST" });
     },
     recordActivity,
-    me() { return request("/auth/me").then(r => r.data); },
+    me(options = {}) { return request("/auth/me", options).then(r => r.data); },
     get(path, params) {
       let qs = "";
       if (params) {
@@ -95,10 +97,11 @@ const Store = {
       return false;
     }
     try {
-      this.user = await API.me();
+      this.user = await API.me({ silentAuth: true });
       await this.loadMeta();
       return true;
     } catch (e) {
+      API.setToken(null);
       return false;
     }
   },

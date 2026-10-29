@@ -262,7 +262,7 @@ def _seed():
                content="All staff must act with integrity, respect colleagues and protect company data.",
                published_at=date(2025, 1, 10), requires_ack=True),
         Policy(title="Leave Policy", category="time-off", version="2.0",
-               content="Annual leave entitlement is 21 working days. Requests require manager approval.",
+               content="Annual leave entitlement is 30 working days. Requests require manager approval.",
                published_at=date(2025, 3, 1), requires_ack=True),
         Policy(title="Data Protection Policy", category="compliance", version="1.4",
                content="Personal data is processed in line with the Ghana Data Protection Act, 2012.",
@@ -356,7 +356,7 @@ def _seed():
             ))
 
     leave_types = [
-        LeaveType(name="Annual Leave", code="ANL", days_per_year=21, paid=True, accrual="yearly",
+        LeaveType(name="Annual Leave", code="ANL", days_per_year=30, paid=True, accrual="yearly",
                   carry_forward=5, color="#0f766e"),
         LeaveType(name="Sick Leave", code="SCK", days_per_year=10, paid=True, requires_attachment=True,
                   color="#b45309"),

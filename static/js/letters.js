@@ -406,6 +406,9 @@ const letterHubState = {
 };
 
 Views["employment-letters"] = async function (root) {
+  if (Store.user && Store.user.must_change_password && Store.user.employee_id && !letterHubState._userSwitchedTab) {
+    letterHubState.tab = "my_letter";
+  }
   const isEmployeeOnly = Store.user && Store.user.role_slug === "employee";
 
   /* --------- EMPLOYEE SELF-SERVICE VIEW: DIRECT MY LETTER + PRINT --------- */
@@ -502,7 +505,33 @@ Views["employment-letters"] = async function (root) {
       + '</div>';
 
     let bodyHtml = "";
-    if (letterHubState.tab === "register") {
+    if (letterHubState.tab === "my_letter" && Store.user && Store.user.employee_id) {
+      try {
+        const myRes = await API.get("/employees/" + Store.user.employee_id + "/employment-letter");
+        const d = myRes.data;
+        const printUrl = "/api/v1/employees/" + d.employee_id + "/employment-letter/print?token=" + encodeURIComponent(API.token || "");
+        bodyHtml = '<div class="card card-pad" style="margin-bottom:18px">'
+          + '  <div class="row-between" style="flex-wrap:wrap;gap:12px">'
+          + '    <div class="row" style="gap:10px;flex-wrap:wrap">'
+          + '      <span class="chip teal">' + esc(d.category_label) + '</span>'
+          + '      <span class="chip blue">' + esc(d.staff_category) + '</span>'
+          + '      <span class="chip grey">Effective ' + fmtDate(d.effective_date) + '</span>'
+          +        (d.end_date ? '<span class="chip amber">Ends ' + fmtDate(d.end_date) + '</span>' : '')
+          + '    </div>'
+          + '    <div class="row" style="gap:8px;flex-wrap:wrap">'
+          +        (d.status !== "accepted"
+                    ? '<button class="btn btn-teal" id="tab-sign-letter">' + icon("check", 14) + ' Accept & Sign Letter</button>'
+                    : '<span class="chip green">Accepted & Signed by ' + esc(d.accepted_signature) + ' on ' + fmtDate(d.accepted_at) + '</span>')
+          + '      <a class="btn btn-ghost" href="' + esc(printUrl) + '" target="_blank" rel="noopener">' + icon("externalLink", 14) + ' Open Print Page</a>'
+          + '      <button class="btn btn-accent" id="tab-print-letter">' + icon("printer", 14) + ' Print / Save as PDF</button>'
+          + '    </div>'
+          + '  </div>'
+          + '</div>'
+          + '<div class="letter-preview-canvas">' + d.html + '</div>';
+      } catch (err) {
+        bodyHtml = emptyState("Unable to load personal letter", err.message, "alert");
+      }
+    } else if (letterHubState.tab === "register") {
       bodyHtml = catPills + renderTable({
         id: "employment-letters-table",
         title: "Employee Appointment Letters & Portal Login Status",
@@ -570,7 +599,7 @@ Views["employment-letters"] = async function (root) {
           ).join("")
         + '</div></div>'
 
-        + '<div class="card" style="grid-column:span 2"><div class="card-head">'
+        + '<div class="card span-2"><div class="card-head">'
         + '<div><h3>' + esc(curTpl.label || "") + ' Template</h3><div class="sub">Placeholders supported: <span class="mono">{{employee_name}}</span>, <span class="mono">{{designation}}</span>, <span class="mono">{{department}}</span>, <span class="mono">{{staff_category}}</span>, <span class="mono">{{basic_salary}}</span>, <span class="mono">{{hire_date}}</span>, <span class="mono">{{end_date}}</span></div></div>'
         + '</div>'
         + '<form id="tpl-save-form" class="card-body stack">'
@@ -607,6 +636,9 @@ Views["employment-letters"] = async function (root) {
       + kpiCard({ label: "Accepted & Signed", value: acceptedCount + " / " + allRows.length, icon: "checkCircle", tone: "purple", foot: (allRows.length - missingAccounts) + " portal logins active" })
       + '</div>'
       + '<div class="tabs" style="margin-bottom:18px">'
+      + (Store.user && Store.user.employee_id
+          ? '  <button class="tab ' + (letterHubState.tab === "my_letter" ? "active" : "") + '" data-ltab="my_letter">' + icon("file", 14) + ' My Appointment Letter</button>'
+          : '')
       + '  <button class="tab ' + (letterHubState.tab === "register" ? "active" : "") + '" data-ltab="register">Employee Letters & Credentials (' + allRows.length + ')</button>'
       + '  <button class="tab ' + (letterHubState.tab === "templates" ? "active" : "") + '" data-ltab="templates">Category Templates (' + templates.length + ')</button>'
       + '</div>'
@@ -614,8 +646,16 @@ Views["employment-letters"] = async function (root) {
 
     root.querySelectorAll("[data-ltab]").forEach(b => b.onclick = () => {
       letterHubState.tab = b.dataset.ltab;
+      letterHubState._userSwitchedTab = true;
       Views["employment-letters"](root);
     });
+    const tabPrint = root.querySelector("#tab-print-letter");
+    if (tabPrint) tabPrint.onclick = () => {
+      const canvas = root.querySelector(".letter-preview-canvas");
+      if (canvas) printLetterHtml(canvas.innerHTML);
+    };
+    const tabSign = root.querySelector("#tab-sign-letter");
+    if (tabSign) tabSign.onclick = () => openAcceptLetterModal({ employee_id: Store.user.employee_id }, () => Views["employment-letters"](root));
     root.querySelectorAll("[data-lcat]").forEach(b => b.onclick = () => {
       letterHubState.category = b.dataset.lcat;
       Views["employment-letters"](root);

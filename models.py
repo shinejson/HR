@@ -176,7 +176,14 @@ class Employee(db.Model, TimestampMixin, SoftDeleteMixin):
     designation = db.relationship("Designation")
     grade = db.relationship("Grade")
     branch = db.relationship("Branch")
-    manager = db.relationship("Employee", remote_side="Employee.id")
+    hod_id = db.Column(db.Integer, db.ForeignKey("employees.id"))
+    accountant_id = db.Column(db.Integer, db.ForeignKey("employees.id"))
+    md_id = db.Column(db.Integer, db.ForeignKey("employees.id"))
+    signature_url = db.Column(db.String(255))
+    manager = db.relationship("Employee", foreign_keys=[manager_id], remote_side="Employee.id")
+    hod = db.relationship("Employee", foreign_keys=[hod_id], remote_side="Employee.id")
+    accountant = db.relationship("Employee", foreign_keys=[accountant_id], remote_side="Employee.id")
+    md = db.relationship("Employee", foreign_keys=[md_id], remote_side="Employee.id")
 
     @property
     def full_name(self):
@@ -490,6 +497,7 @@ class LeaveBalance(db.Model, TimestampMixin):
     entitled = db.Column(db.Numeric(6, 2), default=0)
     taken = db.Column(db.Numeric(6, 2), default=0)
     pending = db.Column(db.Numeric(6, 2), default=0)
+    carried_over = db.Column(db.Numeric(6, 2), default=0)
     leave_type = db.relationship("LeaveType")
     employee = db.relationship("Employee")
 
@@ -518,6 +526,9 @@ class LeaveRequest(db.Model, TimestampMixin):
     accountant_approved_by = db.Column(db.Integer, db.ForeignKey("employees.id"))
     md_approved_at = db.Column(db.DateTime)
     md_approved_by = db.Column(db.Integer, db.ForeignKey("employees.id"))
+    hod_signature = db.Column(db.String(255))
+    accountant_signature = db.Column(db.String(255))
+    md_signature = db.Column(db.String(255))
     employee = db.relationship("Employee", foreign_keys=[employee_id])
     leave_type = db.relationship("LeaveType")
     hod_approver = db.relationship("Employee", foreign_keys=[hod_approved_by])

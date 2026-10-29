@@ -62,9 +62,286 @@ function printProfileSummary(e) {
   setTimeout(() => win.print(), 250);
 }
 
+function openUploadPhotoModal(e, onSaved) {
+  let photoDataUrl = null;
+  openModal({
+    title: "Upload Profile Photo",
+    sub: "Upload a portrait photo for " + esc(e.full_name) + " (Max 5MB)",
+    body: '<div class="stack" style="gap:16px;text-align:center">'
+      + '<div style="display:flex;justify-content:center;margin:12px 0">'
+      + '  <div id="photo-preview-container" style="width:140px;height:140px;border-radius:50%;overflow:hidden;border:3px solid var(--teal);display:flex;align-items:center;justify-content:center;background:var(--paper-2);box-shadow:0 4px 12px rgba(0,0,0,0.08)">'
+      +      (e.photo_url ? '<img id="photo-preview-img" src="' + esc(e.photo_url) + '" style="width:100%;height:100%;object-fit:cover">' : avatarHTML(e.full_name, "avatar-xl"))
+      + '  </div>'
+      + '</div>'
+      + '<div class="field" style="text-align:left">'
+      + '  <label>Choose photo file (PNG, JPG, WEBP)</label>'
+      + '  <input type="file" id="photo-file-input" class="input" accept="image/*">'
+      + '</div>'
+      + '<div class="tiny muted">The uploaded photo will be displayed on your profile, directory, and HR documents.</div>'
+      + '</div>',
+    footer: '<button class="btn btn-ghost" data-close-modal>Cancel</button>'
+      + '<button class="btn btn-accent" id="btn-save-photo" disabled>' + icon("check", 14) + ' Save Photo</button>',
+    onMount() {
+      const fileInput = document.getElementById("photo-file-input");
+      const previewContainer = document.getElementById("photo-preview-container");
+      const saveBtn = document.getElementById("btn-save-photo");
+
+      fileInput.onchange = (evt) => {
+        const file = evt.target.files[0];
+        if (!file) return;
+        if (file.size > 5 * 1024 * 1024) {
+          toast("Photo must be smaller than 5MB", "danger");
+          fileInput.value = "";
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (re) => {
+          photoDataUrl = re.target.result;
+          previewContainer.innerHTML = '<img id="photo-preview-img" src="' + photoDataUrl + '" style="width:100%;height:100%;object-fit:cover">';
+          saveBtn.disabled = false;
+        };
+        reader.readAsDataURL(file);
+      };
+
+      saveBtn.onclick = async () => {
+        if (!photoDataUrl) return;
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Uploading…";
+        try {
+          const res = await API.post("/employees/" + e.id + "/upload-photo", { data: photoDataUrl });
+          toast("Profile photo updated successfully", "success");
+          if (Store.user && Store.user.employee_id === e.id) {
+            Store.user.photo_url = res.photo_url;
+            Store.saveUser();
+          }
+          closeModal();
+          await onSaved();
+        } catch (err) {
+          toast(err.message || "Failed to upload photo", "danger");
+          saveBtn.disabled = false;
+          saveBtn.innerHTML = icon("check", 14) + ' Save Photo';
+        }
+      };
+    }
+  });
+}
+
+function openUploadSignatureModal(e, onSaved) {
+  let sigDataUrl = null;
+  let activeMode = "draw";
+
+  openModal({
+    title: "Digital Signature",
+    sub: "Affix your official digital signature for leave authorizations and forms",
+    wide: true,
+    body: '<div class="stack" style="gap:16px">'
+      + '<div class="tabs" style="margin-bottom:8px">'
+      + '  <button class="tab active" id="tab-draw-sig">' + icon("edit", 13) + ' Draw signature</button>'
+      + '  <button class="tab" id="tab-upload-sig">' + icon("file", 13) + ' Upload image</button>'
+      + '</div>'
+      + '<div id="sig-draw-pane">'
+      + '  <div class="row-between" style="margin-bottom:6px">'
+      + '    <span class="tiny muted">Sign using your mouse, trackpad, or touch screen:</span>'
+      + '    <button class="btn btn-sm btn-ghost" id="sig-clear-btn">' + icon("refresh", 12) + ' Clear</button>'
+      + '  </div>'
+      + '  <div style="border:2px dashed var(--line);border-radius:10px;background:#fff;padding:4px;display:flex;justify-content:center;cursor:crosshair">'
+      + '    <canvas id="sig-canvas" width="600" height="180" style="width:100%;max-width:600px;height:180px;touch-action:none"></canvas>'
+      + '  </div>'
+      + '  <div class="tiny muted" style="margin-top:6px">Draw your signature clearly inside the box.</div>'
+      + '</div>'
+      + '<div id="sig-upload-pane" style="display:none">'
+      + '  <div class="field">'
+      + '    <label>Upload scanned signature image (PNG, JPG, SVG)</label>'
+      + '    <input type="file" id="sig-file-input" class="input" accept="image/*">'
+      + '  </div>'
+      + '  <div id="sig-upload-preview" style="border:1px solid var(--line);border-radius:10px;background:#fff;min-height:140px;display:flex;align-items:center;justify-content:center;margin-top:10px;padding:12px">'
+      + '    <span class="tiny muted">No file chosen yet</span>'
+      + '  </div>'
+      + '</div>'
+      + (e.signature_url ? '<div style="background:var(--paper-2);border-radius:8px;padding:10px 14px;margin-top:6px;display:flex;align-items:center;justify-content:space-between">'
+        + '<div><span class="tiny muted" style="display:block">Current Active Signature:</span><img src="' + esc(e.signature_url) + '" style="max-height:48px;max-width:200px;object-fit:contain;margin-top:4px"></div>'
+        + '<span class="chip green tiny">Active</span></div>' : '')
+      + '</div>',
+    footer: '<button class="btn btn-ghost" data-close-modal>Cancel</button>'
+      + '<button class="btn btn-accent" id="btn-save-sig">' + icon("check", 14) + ' Save Signature</button>',
+    onMount() {
+      const tabDraw = document.getElementById("tab-draw-sig");
+      const tabUpload = document.getElementById("tab-upload-sig");
+      const drawPane = document.getElementById("sig-draw-pane");
+      const uploadPane = document.getElementById("sig-upload-pane");
+      const canvas = document.getElementById("sig-canvas");
+      const clearBtn = document.getElementById("sig-clear-btn");
+      const fileInput = document.getElementById("sig-file-input");
+      const uploadPreview = document.getElementById("sig-upload-preview");
+      const saveBtn = document.getElementById("btn-save-sig");
+
+      tabDraw.onclick = () => {
+        activeMode = "draw";
+        tabDraw.classList.add("active");
+        tabUpload.classList.remove("active");
+        drawPane.style.display = "";
+        uploadPane.style.display = "none";
+      };
+      tabUpload.onclick = () => {
+        activeMode = "upload";
+        tabUpload.classList.add("active");
+        tabDraw.classList.remove("active");
+        drawPane.style.display = "none";
+        uploadPane.style.display = "";
+      };
+
+      const ctx = canvas.getContext("2d");
+      ctx.strokeStyle = "#0f172a";
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      let drawing = false;
+      let hasDrawn = false;
+
+      function getPos(evt) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
+        const clientY = evt.touches ? evt.touches[0].clientY : evt.clientY;
+        return {
+          x: (clientX - rect.left) * scaleX,
+          y: (clientY - rect.top) * scaleY,
+        };
+      }
+
+      function startDraw(evt) {
+        evt.preventDefault();
+        drawing = true;
+        hasDrawn = true;
+        const p = getPos(evt);
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+      }
+      function doDraw(evt) {
+        if (!drawing) return;
+        evt.preventDefault();
+        const p = getPos(evt);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+      }
+      function endDraw(evt) {
+        if (!drawing) return;
+        evt.preventDefault();
+        drawing = false;
+      }
+
+      canvas.addEventListener("mousedown", startDraw);
+      canvas.addEventListener("mousemove", doDraw);
+      window.addEventListener("mouseup", endDraw);
+      canvas.addEventListener("touchstart", startDraw, { passive: false });
+      canvas.addEventListener("touchmove", doDraw, { passive: false });
+      window.addEventListener("touchend", endDraw, { passive: false });
+
+      clearBtn.onclick = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        hasDrawn = false;
+      };
+
+      fileInput.onchange = (evt) => {
+        const file = evt.target.files[0];
+        if (!file) return;
+        if (file.size > 5 * 1024 * 1024) {
+          toast("Signature image must be under 5MB", "danger");
+          fileInput.value = "";
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (re) => {
+          sigDataUrl = re.target.result;
+          uploadPreview.innerHTML = '<img src="' + sigDataUrl + '" style="max-height:120px;max-width:100%;object-fit:contain">';
+        };
+        reader.readAsDataURL(file);
+      };
+
+      saveBtn.onclick = async () => {
+        let finalData = null;
+        if (activeMode === "draw") {
+          if (!hasDrawn) return toast("Please sign on the canvas before saving", "warning");
+          finalData = canvas.toDataURL("image/png");
+        } else {
+          if (!sigDataUrl) return toast("Please select a signature image to upload", "warning");
+          finalData = sigDataUrl;
+        }
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Saving signature…";
+        try {
+          const res = await API.post("/employees/" + e.id + "/upload-signature", { data: finalData });
+          toast("Digital signature saved successfully", "success");
+          closeModal();
+          await onSaved();
+        } catch (err) {
+          toast(err.message || "Failed to save signature", "danger");
+          saveBtn.disabled = false;
+          saveBtn.innerHTML = icon("check", 14) + ' Save Signature';
+        }
+      };
+    }
+  });
+}
+
+function openApproversEditModal(e, onSaved) {
+  openFormModal({
+    title: "Designate Leave Approvers",
+    sub: "Configure your 3-stage leave approval authority chain: HoD -> Accountant -> Managing Director",
+    wide: false,
+    submitLabel: "Save approvers",
+    values: {
+      hod_id: e.hod_id || "",
+      accountant_id: e.accountant_id || "",
+      md_id: e.md_id || "",
+    },
+    fields: [
+      {
+        name: "hod_id",
+        label: "1. Head of Department (HoD) / 1st Approver",
+        type: "select",
+        options: [
+          { value: "", label: "— Select Head of Department —" },
+          ...empOptions().filter(o => Number(o.value) !== Number(e.id)),
+        ],
+      },
+      {
+        name: "accountant_id",
+        label: "2. Accountant / Finance Reviewer",
+        type: "select",
+        options: [
+          { value: "", label: "— Select Accountant —" },
+          ...empOptions().filter(o => Number(o.value) !== Number(e.id)),
+        ],
+      },
+      {
+        name: "md_id",
+        label: "3. Managing Director (MD) / Final Approver",
+        type: "select",
+        options: [
+          { value: "", label: "— Select Managing Director —" },
+          ...empOptions().filter(o => Number(o.value) !== Number(e.id)),
+        ],
+      },
+    ],
+    onSubmit: async (data) => {
+      const payload = {
+        hod_id: data.hod_id ? Number(data.hod_id) : null,
+        accountant_id: data.accountant_id ? Number(data.accountant_id) : null,
+        md_id: data.md_id ? Number(data.md_id) : null,
+      };
+      await API.put("/employees/" + e.id + "/self", payload);
+      toast("Leave approvers saved successfully", "success");
+      await Store.loadMeta();
+      await onSaved();
+    },
+  });
+}
+
 function openSelfEditModal(e, onSaved) {
   openFormModal({
-    title: "Edit personal & contact details",
+    title: "Edit personal details & leave approvers",
     sub: e.full_name + " · Self-service profile update",
     wide: true,
     submitLabel: "Save profile",
@@ -77,6 +354,9 @@ function openSelfEditModal(e, onSaved) {
       linkedin_url: e.linkedin_url || "",
       address: e.address || "",
       city: e.city || "",
+      hod_id: e.hod_id || "",
+      accountant_id: e.accountant_id || "",
+      md_id: e.md_id || "",
       photo_url: e.photo_url || "",
       bio: e.bio || "",
     },
@@ -99,11 +379,28 @@ function openSelfEditModal(e, onSaved) {
       { name: "linkedin_url", label: "LinkedIn profile URL", placeholder: "https://linkedin.com/in/username" },
       { name: "address", label: "Residential address" },
       { name: "city", label: "City / Town" },
-      { name: "photo_url", label: "Profile photo URL (optional)", placeholder: "https://…", full: true },
+      { name: "hod_id", label: "Head of Department (HoD) / 1st Approver", type: "select", full: true, options: [
+        { value: "", label: "— Select Head of Department —" },
+        ...empOptions().filter(o => Number(o.value) !== Number(e.id))
+      ]},
+      { name: "accountant_id", label: "Accountant / Finance Reviewer", type: "select", full: true, options: [
+        { value: "", label: "— Select Accountant —" },
+        ...empOptions().filter(o => Number(o.value) !== Number(e.id))
+      ]},
+      { name: "md_id", label: "Managing Director (MD) / Final Approver", type: "select", full: true, options: [
+        { value: "", label: "— Select Managing Director —" },
+        ...empOptions().filter(o => Number(o.value) !== Number(e.id))
+      ]},
       { name: "bio", label: "Professional bio & focus areas", type: "textarea", full: true, placeholder: "Share a brief summary of your role, background, and responsibilities…" },
     ],
     onSubmit: async (data) => {
-      await API.put("/employees/" + e.id + "/self", data);
+      const payload = { ...data };
+      ["hod_id", "accountant_id", "md_id"].forEach(k => {
+        if (!payload[k]) payload[k] = null;
+        else payload[k] = Number(payload[k]);
+      });
+      await API.put("/employees/" + e.id + "/self", payload);
+      await Store.loadMeta();
       await onSaved();
     },
   });
@@ -144,6 +441,9 @@ function openHrEmployeeEditModal(e, onSaved) {
       { name: "grade_id", label: "Pay grade", type: "select", options: [{ value: "", label: "—" }, ...gradeOptions()] },
       { name: "branch_id", label: "Branch", type: "select", options: [{ value: "", label: "—" }, ...branchOptions()] },
       { name: "manager_id", label: "Line manager", type: "select", options: [{ value: "", label: "—" }, ...empOptions().filter(o => Number(o.value) !== Number(e.id))] },
+      { name: "hod_id", label: "Head of Department (HoD)", type: "select", options: [{ value: "", label: "—" }, ...empOptions().filter(o => Number(o.value) !== Number(e.id))] },
+      { name: "accountant_id", label: "Accountant / Finance", type: "select", options: [{ value: "", label: "—" }, ...empOptions().filter(o => Number(o.value) !== Number(e.id))] },
+      { name: "md_id", label: "Managing Director (MD)", type: "select", options: [{ value: "", label: "—" }, ...empOptions().filter(o => Number(o.value) !== Number(e.id))] },
       { name: "basic_salary", label: "Monthly basic salary (GHS)", type: "number", step: "0.01" },
       { name: "address", label: "Residential address" },
       { name: "city", label: "City" },
@@ -152,7 +452,7 @@ function openHrEmployeeEditModal(e, onSaved) {
     ],
     onSubmit: async (data) => {
       const payload = { ...data };
-      ["department_id", "designation_id", "branch_id", "manager_id", "grade_id"].forEach(k => { if (!payload[k]) payload[k] = null; });
+      ["department_id", "designation_id", "branch_id", "manager_id", "grade_id", "hod_id", "accountant_id", "md_id"].forEach(k => { if (!payload[k]) payload[k] = null; });
       if (payload.basic_salary === null || payload.basic_salary === "") payload.basic_salary = 0;
       await API.put("/employees/" + e.id, payload);
       await Store.loadMeta();
@@ -283,6 +583,49 @@ async function viewEmployeeDetail(root, id, initialTab) {
                   + '<span class="tiny muted" style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(dr.title || dr.employee_no) + '</span></div></div>'
                 ).join("") + '</div>'
               : '<div class="small muted">No direct reports assigned.</div>')
+          + '</div></div>'
+
+          // Leave Approvers & Authority Chain Card
+          + '<div class="card"><div class="card-head"><div><h3>Leave Approvers & Authority Chain</h3><div class="sub">3-tier approval hierarchy for leave authorizations</div></div>'
+          + '<div class="right">' + (canSelfOrHr ? '<button class="btn btn-sm btn-ghost" id="btn-edit-approvers">' + icon("edit", 13) + ' Set Approvers</button>' : '') + '</div></div>'
+          + '<div class="card-body">'
+          + '<div class="stack" style="gap:10px">'
+          + '<div class="team-mini-card" style="border:1px solid var(--line);border-radius:8px;padding:8px 12px">'
+          + (e.hod_card ? avatarHTML(e.hod_card.name, "avatar-sm", "", e.hod_card.photo_url) : '<div class="avatar-sm" style="background:var(--paper-2);display:flex;align-items:center;justify-content:center;color:var(--ink-4);font-weight:600">1</div>')
+          + '<div style="flex:1;min-width:0"><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.06em">Level 1 · Head of Department (HoD)</div>'
+          + (e.hod_card ? '<b style="font-size:13px;display:block">' + esc(e.hod_card.name) + '</b><span class="tiny muted">' + esc(e.hod_card.title || "HoD") + '</span>' : '<span class="small muted" style="font-style:italic">Not designated — click Set Approvers</span>')
+          + '</div>'
+          + (e.hod_card ? '<span class="chip teal tiny">Designated</span>' : '<span class="chip amber tiny">Pending</span>')
+          + '</div>'
+          + '<div class="team-mini-card" style="border:1px solid var(--line);border-radius:8px;padding:8px 12px">'
+          + (e.accountant_card ? avatarHTML(e.accountant_card.name, "avatar-sm", "", e.accountant_card.photo_url) : '<div class="avatar-sm" style="background:var(--paper-2);display:flex;align-items:center;justify-content:center;color:var(--ink-4);font-weight:600">2</div>')
+          + '<div style="flex:1;min-width:0"><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.06em">Level 2 · Accountant / Finance</div>'
+          + (e.accountant_card ? '<b style="font-size:13px;display:block">' + esc(e.accountant_card.name) + '</b><span class="tiny muted">' + esc(e.accountant_card.title || "Accountant") + '</span>' : '<span class="small muted" style="font-style:italic">Not designated — click Set Approvers</span>')
+          + '</div>'
+          + (e.accountant_card ? '<span class="chip teal tiny">Designated</span>' : '<span class="chip amber tiny">Pending</span>')
+          + '</div>'
+          + '<div class="team-mini-card" style="border:1px solid var(--line);border-radius:8px;padding:8px 12px">'
+          + (e.md_card ? avatarHTML(e.md_card.name, "avatar-sm", "", e.md_card.photo_url) : '<div class="avatar-sm" style="background:var(--paper-2);display:flex;align-items:center;justify-content:center;color:var(--ink-4);font-weight:600">3</div>')
+          + '<div style="flex:1;min-width:0"><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.06em">Level 3 · Managing Director (MD)</div>'
+          + (e.md_card ? '<b style="font-size:13px;display:block">' + esc(e.md_card.name) + '</b><span class="tiny muted">' + esc(e.md_card.title || "Managing Director") + '</span>' : '<span class="small muted" style="font-style:italic">Not designated — click Set Approvers</span>')
+          + '</div>'
+          + (e.md_card ? '<span class="chip teal tiny">Designated</span>' : '<span class="chip amber tiny">Pending</span>')
+          + '</div>'
+          + '</div>'
+          + '</div></div>'
+
+          // Digital Signature Card
+          + '<div class="card"><div class="card-head"><div><h3>Digital Signature</h3><div class="sub">Used for authorized leave applications & letters</div></div>'
+          + '<div class="right">' + (canSelfOrHr ? '<button class="btn btn-sm btn-ghost" id="btn-edit-signature">' + icon("edit", 13) + ' Update Signature</button>' : '') + '</div></div>'
+          + '<div class="card-body">'
+          + (e.signature_url
+              ? '<div style="text-align:center;padding:12px;background:#fff;border:1px solid var(--line);border-radius:8px;margin-bottom:8px">'
+                + '<img src="' + esc(e.signature_url) + '" style="max-height:60px;max-width:100%;object-fit:contain">'
+                + '</div><div class="row-between"><span class="tiny muted">✓ Verified digital signature on file</span><span class="chip green tiny">Active</span></div>'
+              : '<div style="padding:14px;background:var(--paper-2);border-radius:8px;text-align:center">'
+                + '<div class="small muted" style="margin-bottom:8px">No digital signature uploaded yet.</div>'
+                + (canSelfOrHr ? '<button class="btn btn-sm btn-accent" id="btn-create-sig-prompt">' + icon("edit", 13) + ' Draw or Upload Signature</button>' : '')
+                + '</div>')
           + '</div></div>'
 
           // Skills snapshot
@@ -511,20 +854,41 @@ async function viewEmployeeDetail(root, id, initialTab) {
 
       /* ===================== TAB 6: TIME & LEAVE ===================== */
       if (activeTab === "time") {
-        tabBody = '<div class="row-between" style="margin-bottom:12px"><div class="section-title">Current Year Leave Entitlements</div>'
+        const anlBal = (e.leave_balances || []).find(b => b.code === "ANL") || (e.leave_balances || [])[0] || {};
+        const anlEntitled = Number(anlBal.entitled !== undefined ? anlBal.entitled : 30);
+        const anlCarried = Number(anlBal.carried_over || 0);
+        const anlTotal = anlEntitled + anlCarried;
+        const anlTaken = Number(anlBal.taken || 0);
+        const anlPending = Number(anlBal.pending || 0);
+        const anlRemaining = Math.max(0, anlTotal - anlTaken - anlPending);
+        const anlCarryNext = anlRemaining;
+
+        const kpiRow = '<div class="grid grid-4" style="margin-bottom:18px">'
+          + '<div class="kpi"><div class="label">Annual Entitlement</div><div class="value" style="font-size:24px">' + anlEntitled + ' <span class="tiny muted">days/yr</span></div><div class="sub">Statutory base entitlement</div></div>'
+          + '<div class="kpi"><div class="label">Carried Over (Prior Year)</div><div class="value" style="font-size:24px;color:var(--teal)">+' + anlCarried + ' <span class="tiny muted">days</span></div><div class="sub">Total pool: ' + anlTotal + ' days</div></div>'
+          + '<div class="kpi"><div class="label">Taken & Pending</div><div class="value" style="font-size:24px;color:var(--amber)">' + anlTaken + ' <span class="tiny muted">taken · ' + anlPending + ' pend</span></div><div class="sub">' + (anlTaken + anlPending) + ' working days booked</div></div>'
+          + '<div class="kpi" style="border-left:3px solid var(--teal)"><div class="label" style="color:var(--teal);font-weight:600">Carry-Over to Next Year</div><div class="value" style="font-size:24px;color:var(--teal)">' + anlCarryNext + ' <span class="tiny muted">days</span></div><div class="sub">Eligible to rollover</div></div>'
+          + '</div>';
+
+        tabBody = '<div class="row-between" style="margin-bottom:12px"><div class="section-title">Current Year Leave Entitlements & Carry-Over</div>'
           + (e.is_self && !Store.isReadOnly() ? '<button class="btn btn-sm btn-accent" id="profile-apply-leave">' + icon("calendar", 13) + ' Request leave</button>' : '') + '</div>'
+          + kpiRow
           + '<div class="grid grid-4" style="margin-bottom:18px">'
           + ((e.leave_balances && e.leave_balances.length)
               ? e.leave_balances.map(b => {
                   const alloc = Number(b.entitled || 0);
+                  const carried = Number(b.carried_over || 0);
+                  const totalAlloc = alloc + carried;
                   const used = Number(b.taken || 0);
                   const pend = Number(b.pending || 0);
-                  const rem = Math.max(0, alloc - used - pend);
-                  const pct = alloc > 0 ? Math.min(100, Math.round(((used + pend) / alloc) * 100)) : 0;
+                  const rem = Math.max(0, totalAlloc - used - pend);
+                  const pct = totalAlloc > 0 ? Math.min(100, Math.round(((used + pend) / totalAlloc) * 100)) : 0;
                   return '<div class="kpi"><div class="row-between"><div class="label">' + esc(b.leave_type_name) + '</div><span style="width:9px;height:9px;border-radius:50%;background:' + esc(b.color || "#0f766e") + '"></span></div>'
                     + '<div class="value">' + fmtNumber(rem) + ' <span class="tiny muted">days left</span></div>'
                     + '<div class="progress" style="margin-top:10px"><i style="width:' + pct + '%;background:' + esc(b.color || "var(--teal)") + '"></i></div>'
-                    + '<div class="sub">' + fmtNumber(used) + ' taken · ' + fmtNumber(pend) + ' pending · ' + fmtNumber(alloc) + ' entitled</div></div>';
+                    + '<div class="sub">' + fmtNumber(alloc) + ' base' + (carried > 0 ? ' · +' + fmtNumber(carried) + ' carry' : '') + ' · ' + fmtNumber(used) + ' taken · ' + fmtNumber(pend) + ' pend</div>'
+                    + (b.code === "ANL" ? '<div class="tiny" style="color:var(--teal);margin-top:4px;font-weight:500">Carry-Over to Next Year: ' + fmtNumber(rem) + ' d</div>' : '')
+                    + '</div>';
                 }).join("")
               : '<div class="card card-pad span-4 small muted">No leave balances initialised for this year.</div>')
           + '</div>'
@@ -689,7 +1053,10 @@ async function viewEmployeeDetail(root, id, initialTab) {
         +      (e.tenure_label ? '<span class="cover-pill">' + icon("clock", 12) + ' ' + esc(e.tenure_label) + ' tenure</span>' : '')
         + '  </div></div>'
         + '  <div class="profile-main">'
-        + '    <div class="profile-avatar-holder">' + avatarHTML(e.full_name, "avatar-xl", "", e.photo_url) + '</div>'
+        + '    <div class="profile-avatar-holder" id="btn-change-avatar" style="position:relative;cursor:pointer" title="Click to upload profile photo">'
+        +        avatarHTML(e.full_name, "avatar-xl", "", e.photo_url)
+        +        (canSelfOrHr ? '<span style="position:absolute;bottom:0;right:0;background:var(--accent);color:#fff;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,0.25);border:2px solid #fff">' + icon("camera", 13) + '</span>' : '')
+        + '    </div>'
         + '    <div class="profile-identity">'
         + '      <div class="row" style="gap:10px;flex-wrap:wrap"><h2>' + esc(e.full_name) + '</h2>' + chip(e.status) + '</div>'
         + '      <div class="muted small" style="margin-top:3px">' + esc(e.designation_title || "—") + ' · ' + esc(e.department_name || "—") + ' · ' + esc(e.branch_name || "Head Office") + ' (' + esc(e.work_location || "Office") + ')</div>'
@@ -753,6 +1120,18 @@ async function viewEmployeeDetail(root, id, initialTab) {
       }, loadAndRender);
 
       root.querySelectorAll("[data-prev-cred-del]").forEach(b => b.onclick = () => openDeliveryPreviewModal(b.dataset.prevCredDel, loadAndRender));
+
+      const avatarBtn = root.querySelector("#btn-change-avatar");
+      if (avatarBtn && canSelfOrHr) avatarBtn.onclick = () => openUploadPhotoModal(e, loadAndRender);
+
+      const approversBtn = root.querySelector("#btn-edit-approvers");
+      if (approversBtn) approversBtn.onclick = () => openApproversEditModal(e, loadAndRender);
+
+      const sigBtn = root.querySelector("#btn-edit-signature");
+      if (sigBtn) sigBtn.onclick = () => openUploadSignatureModal(e, loadAndRender);
+
+      const createSigBtn = root.querySelector("#btn-create-sig-prompt");
+      if (createSigBtn) createSigBtn.onclick = () => openUploadSignatureModal(e, loadAndRender);
 
       const selfBtn = root.querySelector("#btn-self-edit");
       if (selfBtn) selfBtn.onclick = () => openSelfEditModal(e, loadAndRender);

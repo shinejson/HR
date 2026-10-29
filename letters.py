@@ -600,7 +600,7 @@ def build_letter_payload(emp, letter=None, standalone=False, auto_print=False):
     )
     default_anl = LeaveType.query.filter_by(code="ANL").first()
     leave_days = int(Decimal(str(
-        annual_bal.entitled if annual_bal else (default_anl.days_per_year if default_anl else 21)
+        annual_bal.entitled if annual_bal else (default_anl.days_per_year if default_anl else 30)
     )))
 
     if emp.confirmation_date:
@@ -745,6 +745,7 @@ def build_letter_payload(emp, letter=None, standalone=False, auto_print=False):
     .el-sheet {
       background: #ffffff;
       color: #162321;
+      width: 100%;
       max-width: 820px;
       margin: 0 auto;
       padding: 46px 52px;
@@ -755,6 +756,7 @@ def build_letter_payload(emp, letter=None, standalone=False, auto_print=False):
       font-size: 13.5px;
       line-height: 1.65;
       position: relative;
+      box-sizing: border-box;
     }
     .el-accent-bar {
       height: 5px;
@@ -881,6 +883,8 @@ def build_letter_payload(emp, letter=None, standalone=False, auto_print=False):
       padding: 13px 16px;
       margin: 16px 0 18px;
       font-family: Inter, -apple-system, sans-serif;
+      box-sizing: border-box;
+      width: 100%;
     }
     .el-meta-cell {
       display: flex;
@@ -889,9 +893,10 @@ def build_letter_payload(emp, letter=None, standalone=False, auto_print=False):
       border-bottom: 1px dashed #e6e1d6;
       padding-bottom: 5px;
       font-size: 12px;
+      min-width: 0;
     }
-    .el-meta-cell .k { color: #687470; }
-    .el-meta-cell .v { color: #142321; font-weight: 600; text-align: right; }
+    .el-meta-cell .k { color: #687470; flex-shrink: 0; }
+    .el-meta-cell .v { color: #142321; font-weight: 600; text-align: right; word-break: break-word; }
     .el-clause { margin: 14px 0; }
     .el-clause h4 {
       font-family: Inter, -apple-system, sans-serif;
@@ -962,6 +967,117 @@ def build_letter_payload(emp, letter=None, standalone=False, auto_print=False):
       font-family: Inter, -apple-system, sans-serif;
       font-size: 10.5px;
       color: #7c8783;
+    }
+    @media (max-width: 768px) {
+      .el-sheet {
+        padding: 22px 14px !important;
+        font-size: 13px !important;
+        line-height: 1.6 !important;
+        border-radius: 8px !important;
+        box-shadow: none !important;
+        border: 1px solid #e6e0d4 !important;
+      }
+      .el-header {
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        gap: 12px !important;
+        padding-bottom: 14px !important;
+      }
+      .el-brand {
+        gap: 10px !important;
+      }
+      .el-crest {
+        width: 44px !important;
+        height: 44px !important;
+        font-size: 20px !important;
+      }
+      .el-comp-name {
+        font-size: 16px !important;
+      }
+      .el-comp-sub {
+        font-size: 10px !important;
+      }
+      .el-comp-contact {
+        text-align: left !important;
+        font-size: 11px !important;
+        max-width: 100% !important;
+        line-height: 1.4 !important;
+      }
+      .el-ref-bar {
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        gap: 6px !important;
+        font-size: 11.5px !important;
+      }
+      .el-cat-badge {
+        font-size: 9.5px !important;
+        padding: 2px 8px !important;
+      }
+      .el-doc-title {
+        font-size: 13px !important;
+        padding: 8px 10px !important;
+        letter-spacing: 0.04em !important;
+        line-height: 1.35 !important;
+      }
+      .el-subject {
+        font-size: 11.5px !important;
+        margin-bottom: 14px !important;
+      }
+      .el-meta-grid {
+        grid-template-columns: 1fr !important;
+        gap: 8px !important;
+        padding: 12px 14px !important;
+        margin: 14px 0 !important;
+      }
+      .el-meta-cell {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        gap: 2px !important;
+        padding-bottom: 6px !important;
+      }
+      .el-meta-cell .k {
+        color: #687470 !important;
+        font-size: 10.5px !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.05em !important;
+        font-weight: 500 !important;
+      }
+      .el-meta-cell .v {
+        color: #142321 !important;
+        font-weight: 600 !important;
+        text-align: left !important;
+        font-size: 12.5px !important;
+        line-height: 1.35 !important;
+      }
+      .el-clause h4 {
+        font-size: 11.5px !important;
+      }
+      .el-clause p {
+        font-size: 12.5px !important;
+        text-align: left !important;
+        line-height: 1.55 !important;
+      }
+      .el-comp-table {
+        display: table !important;
+        width: 100% !important;
+        font-size: 11.5px !important;
+      }
+      .el-comp-table th, .el-comp-table td {
+        padding: 6px 8px !important;
+      }
+      .el-sig-grid {
+        grid-template-columns: 1fr !important;
+        gap: 24px !important;
+        margin-top: 20px !important;
+        padding-top: 14px !important;
+      }
+      .el-footer-note {
+        flex-direction: column !important;
+        gap: 4px !important;
+        text-align: left !important;
+        font-size: 9.5px !important;
+      }
     }
     """
 
