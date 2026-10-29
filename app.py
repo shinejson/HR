@@ -1,3 +1,4 @@
+import hr_crud
 import os
 import re
 import json
@@ -1912,6 +1913,7 @@ def _create(resource, model):
     try:
         fields = writable_fields(model, data)
         finance_fields(model, fields)
+        hr_crud.validate(model, fields)
     except ValueError as e:
         return error(str(e), 422)
     conflict = admin_conflict(model, fields)
@@ -2112,6 +2114,7 @@ def update_resource(resource, rid):
     try:
         fields = writable_fields(model, data)
         finance_fields(model, fields, obj)
+        hr_crud.validate(model, fields, obj)
     except ValueError as e:
         return error(str(e), 422)
     conflict = admin_conflict(model, fields, obj)
@@ -2175,6 +2178,9 @@ def delete_resource(resource, rid):
     if can_self_write(request.user, resource) and not can_write(request.user, resource):
         if getattr(obj, "employee_id", None) != request.user.employee_id:
             return error("You can only delete your own records", 403)
+    conflict = hr_crud.deletion_conflict(model, obj)
+    if conflict:
+        return error(conflict, 409)
     if model in (ExpenseClaim, PayrollRun):
         try:
             finance_fields(model, {}, obj)

@@ -17,17 +17,19 @@ Views.performance = async function (root) {
     if (perfState.tab === "goals") {
       body = renderTable({
         columns: [
+          Records.column("goals"),
           { label: "Goal", render: r => '<b>' + esc(r.title) + '</b><div class="tiny muted">' + esc(Store.employeeName(r.employee_id)) + '</div>' },
           { label: "Weight", render: r => r.weight + '%' },
           { label: "Progress", render: r => '<div class="row" style="gap:8px"><div class="progress" style="width:90px"><div class="bar ' + (r.progress >= 80 ? "green" : r.progress < 40 ? "amber" : "") + '" style="width:' + r.progress + '%"></div></div><span class="tiny"><b>' + r.progress + '%</b></span></div>' },
           { label: "Due", render: r => fmtDate(r.due_date) },
           { label: "Status", render: r => chip(r.status) },
-          { label: "", class: "right", render: r => '<button class="btn btn-sm btn-ghost" data-goal="' + r.id + '">Update</button>' },
+          { label: "", class: "right", render: r => Records.canWrite('goals', r) ? '<button class="btn btn-sm btn-ghost" data-goal="' + r.id + '">Update</button>' : '' },
         ], rows: goals, emptyTitle: "No goals set", emptyText: "Create a goal to track progress.",
       });
     } else if (perfState.tab === "appraisals") {
       body = renderTable({
         columns: [
+          Records.column("appraisals"),
           { label: "Employee", render: r => personCell({ name: r.employee_name }) },
           { label: "Cycle", render: r => esc(r.cycle_name || "—") },
           { label: "Self", render: r => r.self_score || "—" },
@@ -40,6 +42,7 @@ Views.performance = async function (root) {
     } else {
       body = renderTable({
         columns: [
+          Records.column("appraisal-cycles"),
           { label: "Cycle", render: r => '<b>' + esc(r.name) + '</b>' },
           { label: "Opens", render: r => fmtDate(r.start_date) },
           { label: "Closes", render: r => fmtDate(r.end_date) },
@@ -59,14 +62,15 @@ Views.performance = async function (root) {
       + '<div class="tabs" style="margin-bottom:18px">' + tabs.map(t => '<button class="tab ' + (perfState.tab === t[0] ? "active" : "") + '" data-ftab="' + t[0] + '">' + t[1] + '</button>').join("") + '</div>'
       + '<div class="page-enter">' + body + '</div>';
 
+    Records.mount(root, ["goals", "appraisal-cycles", "appraisals"]);
     root.querySelectorAll("[data-ftab]").forEach(b => b.onclick = () => { perfState.tab = b.dataset.ftab; Views.performance(root); });
-    const g = root.querySelector("#perf-goal"); if (g) g.onclick = openGoalForm;
-    const c = root.querySelector("#perf-cycle"); if (c) c.onclick = openCycleForm;
-    onDelegate(root, "click", "[data-goal]", (b) => {
+    const g = root.querySelector("#perf-goal"); if (g) { g.hidden = !Records.canWrite("goals"); g.onclick = () => Records.form("goals").catch(handleErr); }
+    const c = root.querySelector("#perf-cycle"); if (c) { c.hidden = !Records.canWrite("appraisal-cycles"); c.onclick = openCycleForm; }
+    onFinanceDelegate(root, "click", "[data-goal]", (b) => {
       const goal = goals.find(x => x.id === Number(b.dataset.goal));
       openGoalProgressForm(goal);
     });
-    onDelegate(root, "click", "[data-review]", (b) => {
+    onFinanceDelegate(root, "click", "[data-review]", (b) => {
       const ap = appraisals.find(x => x.id === Number(b.dataset.review));
       openAppraisalForm(ap);
     });
@@ -703,6 +707,7 @@ Views.documents = async function (root) {
     const today = todayISO();
     const docsTable = renderTable({
       columns: [
+          Records.column("documents"),
         { label: "Document", render: r => '<div class="row">' + icon("file", 16) + '<div><b>' + esc(r.title) + '</b><div class="tiny muted mono">' + esc(r.file_name || "—") + '</div></div></div>' },
         { label: "Employee", render: r => esc(r.employee_name || "Company") },
         { label: "Category", render: r => '<span class="pill-tag">' + esc((r.category || "").replace(/_/g, " ")) + '</span>' },
@@ -721,6 +726,7 @@ Views.documents = async function (root) {
       const ack = acks[i];
       const mine = ack.employee_ids.includes(Store.user.employee_id);
       return '<div class="card card-pad"><div class="row-between"><span class="chip chip-teal chip-plain">' + esc(p.category || "policy") + '</span><span class="tiny muted">v' + esc(p.version) + '</span></div>'
+        + Records.buttons('policies', p)
         + '<h4 style="font-family:var(--serif);font-size:20px;font-weight:500;margin-top:10px">' + esc(p.title) + '</h4>'
         + '<p class="small muted" style="margin-top:6px;line-height:1.6">' + esc((p.content || "").slice(0, 180)) + (p.content && p.content.length > 180 ? "…" : "") + '</p>'
         + '<div class="divider"></div><div class="row-between"><span class="tiny muted">' + ack.count + ' acknowledgements · published ' + fmtDate(p.published_at) + '</span>'
@@ -739,9 +745,10 @@ Views.documents = async function (root) {
       + '<div class="tabs" style="margin-bottom:18px"><button class="tab ' + (docState.tab === "documents" ? "active" : "") + '" data-dtab="documents">Document vault</button><button class="tab ' + (docState.tab === "policies" ? "active" : "") + '" data-dtab="policies">Policy library</button></div>'
       + '<div class="page-enter">' + (docState.tab === "policies" ? '<div class="grid grid-2">' + (policyCards || emptyState("No policies", "Publish a policy to collect acknowledgements.", "shield")) + '</div>' : docsTable) + '</div>';
 
+    Records.mount(root, ["documents", "policies"]);
     root.querySelectorAll("[data-dtab]").forEach(b => b.onclick = () => { docState.tab = b.dataset.dtab; Views.documents(root); });
     const add = root.querySelector("#doc-add"); if (add) add.onclick = () => openDocumentForm();
-    onDelegate(root, "click", "[data-doc-open-letter]", (b) => openEmploymentLetterModal(Number(b.dataset.docOpenLetter), () => Views.documents(root)));
+    onFinanceDelegate(root, "click", "[data-doc-open-letter]", (b) => openEmploymentLetterModal(Number(b.dataset.docOpenLetter), () => Views.documents(root)));
     root.querySelectorAll("[data-ack]").forEach(b => b.onclick = async () => {
       try { await API.post("/policies/" + b.dataset.ack + "/acknowledge"); toast("Policy acknowledged", "success"); Views.documents(root); }
       catch (e) { handleErr(e); }

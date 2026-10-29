@@ -4,15 +4,17 @@ const recState = { tab: "pipeline", posting: null };
 Views.recruitment = async function (root) {
   root.innerHTML = pageHead("Recruitment", "Loading talent pipeline…") + spinners(3);
   try {
-    const [boardRes, intRes, candRes] = await Promise.all([
+    const [boardRes, intRes, candRes, jobRes, applicationRes] = await Promise.all([
       API.get("/recruitment/board"), API.get("/interviews", { per_page: 100 }),
       API.get("/candidates", { per_page: 100 }),
+      API.get("/job-postings", { per_page: 500 }), API.get("/applications", { per_page: 500 }),
     ]);
-    const board = boardRes.data.board, postings = boardRes.data.postings;
+    const board = boardRes.data.board, postings = jobRes.data;
+    const openPostings = boardRes.data.postings;
     const interviews = intRes.data, candidates = candRes.data;
-    const allApps = Object.values(board).flatMap(b => b.applications);
+    const allApps = applicationRes.data;
     const canRecruit = Store.isRole("super_admin", "hr_admin", "hr_officer", "recruiter");
-    if (!recState.posting || !board[recState.posting]) recState.posting = postings[0] ? String(postings[0].id) : null;
+    if (!recState.posting || !board[recState.posting]) recState.posting = openPostings[0] ? String(openPostings[0].id) : null;
     const appMap = {};
     allApps.forEach(a => { appMap[a.id] = a; });
     const stages = ["applied", "screening", "interview", "assessment", "offer", "hired", "rejected"];
@@ -26,7 +28,7 @@ Views.recruitment = async function (root) {
       } else {
         body = '<div class="row-between wrap" style="margin-bottom:14px"><div class="row wrap">'
           + '<div><div class="tiny muted">Active role</div><b style="font-size:14px">' + esc(current.posting.title) + '</b></div>'
-          + '<select class="select" id="posting-select" style="min-width:220px">' + postings.map(p => '<option value="' + p.id + '"' + (String(p.id) === recState.posting ? " selected" : "") + '>' + esc(p.title) + '</option>').join("") + '</select>'
+          + '<select class="select" id="posting-select" style="min-width:220px">' + openPostings.map(p => '<option value="' + p.id + '"' + (String(p.id) === recState.posting ? " selected" : "") + '>' + esc(p.title) + '</option>').join("") + '</select>'
           + '<span class="chip chip-teal">' + current.applications.length + ' applications</span></div>'
           + '<div class="row"><button class="btn btn-ghost btn-sm" id="add-cand">' + icon("plus", 13) + ' Add candidate</button>' + (canRecruit ? '<button class="btn btn-accent btn-sm" id="add-job">' + icon("plus", 13) + ' Post job</button>' : "") + '</div></div>'
           + '<div class="kanban">' + stages.map(st => {
@@ -40,6 +42,7 @@ Views.recruitment = async function (root) {
     } else if (recState.tab === "jobs") {
       body = renderTable({
         columns: [
+          Records.column("job-postings"),
           { label: "Role", render: r => '<b>' + esc(r.title) + '</b><div class="tiny muted">' + esc(r.location || "—") + '</div>' },
           { label: "Department", render: r => esc(r.department_name || "—") },
           { label: "Type", render: r => '<span style="text-transform:capitalize">' + esc((r.employment_type || "").replace("_", " ")) + '</span>' },
@@ -52,6 +55,7 @@ Views.recruitment = async function (root) {
     } else if (recState.tab === "candidates") {
       body = renderTable({
         columns: [
+          Records.column("candidates"),
           { label: "Candidate", render: r => personCell({ name: r.full_name, email: r.email }) },
           { label: "Phone", render: r => esc(r.phone || "—") },
           { label: "Source", render: r => '<span class="pill-tag">' + esc(r.source || "—") + '</span>' },
@@ -63,6 +67,7 @@ Views.recruitment = async function (root) {
     } else {
       body = renderTable({
         columns: [
+          Records.column("interviews"),
           { label: "Candidate", render: r => '<b>' + esc(r.candidate_name) + '</b><div class="tiny muted">' + esc(r.job_title) + '</div>' },
           { label: "Scheduled", render: r => fmtDateTime(r.scheduled_at) },
           { label: "Type", render: r => '<span style="text-transform:capitalize">' + esc(r.interview_type) + '</span>' },
@@ -77,7 +82,7 @@ Views.recruitment = async function (root) {
     root.innerHTML = pageHead("Recruitment", "From requisition to offer — a single hiring pipeline.",
       canRecruit ? '<button class="btn btn-ghost" id="rec-add-cand">' + icon("user", 15) + ' New candidate</button><button class="btn btn-accent" id="rec-add-job">' + icon("plus", 15) + ' Post a job</button>' : "", "Talent")
       + '<div class="grid grid-4" style="margin-bottom:18px">'
-      + kpiCard({ label: "Open roles", value: postings.length, icon: "briefcase", tone: "teal", foot: "Accepting applications" })
+      + kpiCard({ label: "Open roles", value: openPostings.length, icon: "briefcase", tone: "teal", foot: "Accepting applications" })
       + kpiCard({ label: "Applications", value: allApps.length, icon: "users", tone: "blue", foot: "Across all open roles" })
       + kpiCard({ label: "In interviews", value: allApps.filter(a => a.stage === "interview").length, icon: "calendar", tone: "accent", foot: "Scheduled conversations" })
       + kpiCard({ label: "Offers out", value: allApps.filter(a => a.stage === "offer").length, icon: "star", tone: "purple", foot: "Awaiting acceptance" })
@@ -85,6 +90,13 @@ Views.recruitment = async function (root) {
       + '<div class="tabs" style="margin-bottom:18px">' + tabs.map(t => '<button class="tab ' + (recState.tab === t[0] ? "active" : "") + '" data-rtab="' + t[0] + '">' + t[1] + '</button>').join("") + '</div>'
       + '<div class="page-enter">' + body + '</div>';
 
+    root.insertAdjacentHTML("beforeend", renderTable({
+      id: "recruitment-applications", title: "Applications", columns: [
+        { label: "Candidate", key: "candidate_name" }, { label: "Job", key: "job_title" },
+        { label: "Stage", key: "stage" }, Records.column("applications"),
+      ], rows: allApps, emptyTitle: "No applications",
+    }));
+    Records.mount(root, ["job-postings", "candidates", "applications", "interviews"]);
     root.querySelectorAll("[data-rtab]").forEach(b => b.onclick = () => { recState.tab = b.dataset.rtab; Views.recruitment(root); });
     const ps = root.querySelector("#posting-select");
     if (ps) ps.onchange = (e) => { recState.posting = e.target.value; Views.recruitment(root); };
@@ -200,7 +212,7 @@ function openInterviewForm(appId) {
   formModal({
     title: "Schedule interview",
     fields: [
-      { name: "application_id", label: "Application", type: "select", options: [], value: appId, required: true, hint: "Application #" + appId },
+      { name: "application_id", label: "Application", type: "select", options: [{ value: appId, label: "Application #" + appId }], value: appId, required: true, hint: "Application #" + appId },
       { name: "scheduled_at", label: "Date & time", type: "datetime-local", required: true },
       { name: "interview_type", label: "Type", type: "select", options: ["panel", "technical", "hr", "final"], value: "panel" },
       { name: "location", label: "Location / link", value: "Accra HQ" },
@@ -258,6 +270,7 @@ Views.onboarding = async function (root) {
         },
       ] : [],
       columns: [
+          Records.column("onboarding-tasks"),
         { label: "Task", key: "title", render: r => '<b>' + esc(r.title) + '</b>' + (r.notes ? '<div class="tiny muted">' + esc(r.notes) + '</div>' : '') },
         { label: "Employee", sortKey: "employee_name", render: r => personCell({ name: r.employee_name }, r.department_name) },
         { label: "Owner", key: "owner_role", render: r => '<span class="pill-tag">' + esc(r.owner_role || "HR") + '</span>' },
@@ -277,6 +290,7 @@ Views.onboarding = async function (root) {
         { key: "status", label: "Status" },
       ],
       columns: [
+          Records.column("offboardings"),
         { label: "Employee", sortKey: "employee_name", render: r => personCell({ name: r.employee_name }, r.department_name) },
         { label: "Reason", key: "reason", render: r => '<span style="text-transform:capitalize">' + esc((r.reason || "").replace(/_/g, " ")) + '</span>' },
         { label: "Last day", key: "last_day", render: r => fmtDate(r.last_day) },
@@ -298,11 +312,12 @@ Views.onboarding = async function (root) {
       + '<div class="section-title">Onboarding tasks</div>' + taskBody
       + '<div class="section-title" style="margin-top:22px">Offboarding</div>' + offBody;
 
-    onDelegate(root, "change", "[data-task-status]", async (sel) => {
+    Records.mount(root, ["onboarding-tasks", "offboardings"]);
+    onFinanceDelegate(root, "change", "[data-task-status]", async (sel) => {
       try { await API.put("/onboarding-tasks/" + sel.dataset.taskStatus, { status: sel.value }); toast("Task updated", "success"); Views.onboarding(root); }
       catch (e) { handleErr(e); }
     });
-    onDelegate(root, "click", "[data-complete-off]", (b) => confirmDialog("Complete offboarding", "This marks the offboarding case complete and sets the employee status to resigned.", async () => {
+    onFinanceDelegate(root, "click", "[data-complete-off]", (b) => confirmDialog("Complete offboarding", "This marks the offboarding case complete and sets the employee status to resigned.", async () => {
       await API.put("/offboardings/" + b.dataset.completeOff, { status: "completed" });
       await API.put("/employees/" + b.dataset.emp, { status: "resigned" });
       toast("Offboarding completed", "success"); await Store.loadMeta(); Views.onboarding(root);
