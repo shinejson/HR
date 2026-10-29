@@ -70,6 +70,7 @@ class Company(db.Model, TimestampMixin):
     favicon_url = db.Column(db.Text)
     theme = db.Column(db.String(60), default="meridian")
     website = db.Column(db.String(180))
+    fax = db.Column(db.String(80))
 
 
 class BrandingAsset(db.Model, TimestampMixin):

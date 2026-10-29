@@ -960,10 +960,11 @@ Views.settings = async function (root, params) {
           + '<div class="field"><label>Country</label><input class="input" name="c_country" value="' + esc(c.country || "Ghana") + '"></div>'
           + '<div class="field"><label>Primary currency</label><input class="input" name="c_currency" value="' + esc(c.currency || "GHS") + '"></div>'
           + '<div class="field"><label>Timezone</label><input class="input" name="c_timezone" value="' + esc(c.timezone || "Africa/Accra") + '"></div>'
-          + '<div class="field"><label>Official HR email</label><input class="input" type="email" name="c_email" value="' + esc(c.email || "") + '"></div>'
-          + '<div class="field"><label>Switchboard phone</label><input class="input" name="c_phone" value="' + esc(c.phone || "") + '"></div>'
-          + '<div class="field"><label>Website</label><input class="input" name="c_website" value="' + esc(c.website || "") + '"></div>'
-          + '<div class="field full"><label>Headquarters address</label><input class="input" name="c_address" value="' + esc(c.address || "") + '"></div>'
+          + '<div class="field"><label>Official HR email (shown on forms & letters)</label><input class="input" type="email" name="c_email" value="' + esc(c.email || "") + '" placeholder="info@airportwesthotel.com"></div>'
+          + '<div class="field"><label>Telephone / Switchboard (shown on forms)</label><input class="input" name="c_phone" value="' + esc(c.phone || "") + '" placeholder="+2330302771388/769104/767870/0244358042."></div>'
+          + '<div class="field"><label>Official FAX number (shown on forms)</label><input class="input" name="c_fax" value="' + esc(c.fax || "") + '" placeholder="+2330302765667"></div>'
+          + '<div class="field"><label>Official website</label><input class="input" name="c_website" value="' + esc(c.website || "") + '" placeholder="www.airportwesthotel.com"></div>'
+          + '<div class="field full"><label>Headquarters / Postal address (shown on footer of A4 forms & letters)</label><input class="input" name="c_address" value="' + esc(c.address || "") + '" placeholder="P.O. Box KIA 30675 Airport Accra, Ghana."></div>'
           + '</div></div></div>'
 
           + renderBrandingUploaderHTML(c, true)

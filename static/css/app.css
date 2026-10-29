@@ -1389,7 +1389,9 @@ html[data-dt-density="compact"] .avatar-sm { width: 25px; height: 25px; font-siz
     width: 100% !important;
   }
   body.printing-letter #print-letter-portal .el-sheet,
-  .el-sheet {
+  body.printing-letter #print-letter-portal .lf-sheet,
+  .el-sheet,
+  .lf-sheet {
     border: none !important;
     box-shadow: none !important;
     max-width: 100% !important;

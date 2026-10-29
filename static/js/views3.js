@@ -141,22 +141,44 @@ Views.training = async function (root) {
     const [trRes, enRes] = await Promise.all([API.get("/trainings", { per_page: 100 }), API.get("/enrolments", { per_page: 200 })]);
     const trainings = trRes.data, enrolments = enRes.data;
     const completed = enrolments.filter(e => e.status === "completed").length;
+    const canManage = Store.canManage();
+    
     const catalogue = trainings.map(t => {
       const enrolled = enrolments.filter(e => e.training_id === t.id);
       const mine = enrolled.find(e => e.employee_id === Store.user.employee_id);
+      
+      let employeeActions = '';
+      if (mine) {
+        if (mine.status === "completed") {
+          employeeActions = '<span class="chip chip-green">Completed</span>';
+        } else {
+          employeeActions = '<button class="btn btn-sm btn-soft" data-complete-training="' + mine.id + '">' + icon("check", 12) + ' Mark complete</button>';
+        }
+      } else {
+        employeeActions = '<button class="btn btn-sm btn-accent" data-enrol="' + t.id + '">' + icon("plus", 12) + ' Enrol</button>';
+      }
+      
+      let adminActions = '';
+      if (canManage) {
+        adminActions = '<div class="row" style="gap:6px;margin-top:10px">'
+          + '<button class="btn btn-sm btn-soft" data-edit-training="' + t.id + '" title="Edit training">' + icon("edit", 12) + ' Edit</button>'
+          + '<button class="btn btn-sm btn-danger" data-delete-training="' + t.id + '" title="Delete training">' + icon("trash", 12) + '</button>'
+          + '</div>';
+      }
+      
       return '<div class="card card-pad"><div class="row-between"><span class="chip chip-teal chip-plain">' + esc(t.category || "General") + '</span>' + chip(t.status) + '</div>'
         + '<h4 style="font-family:var(--serif);font-size:19px;font-weight:500;margin-top:10px">' + esc(t.title) + '</h4>'
         + '<div class="tiny muted" style="margin-top:2px">' + esc(t.provider || "") + '</div>'
         + '<div class="row wrap tiny muted" style="gap:12px;margin-top:12px">' + icon("calendar", 12) + '<span>' + fmtDate(t.start_date) + '</span>' + icon("users", 12) + '<span>' + enrolled.length + ' / ' + (t.capacity || "∞") + '</span>' + icon("wallet", 12) + '<span>' + (Number(t.cost) ? money(t.cost) : "Free") + '</span></div>'
         + (t.description ? '<p class="small muted" style="margin-top:10px">' + esc(t.description) + '</p>' : "")
-        + '<div class="row" style="margin-top:14px">' + (mine
-          ? (mine.status === "completed" ? '<span class="chip chip-green">Completed</span>' : '<button class="btn btn-sm btn-soft" data-complete-training="' + mine.id + '">' + icon("check", 12) + ' Mark complete</button>')
-          : '<button class="btn btn-sm btn-accent" data-enrol="' + t.id + '">' + icon("plus", 12) + ' Enrol</button>')
-        + '<span class="tiny muted" style="margin-left:auto">' + esc((t.mode || "").replace("_", " ")) + '</span></div></div>';
+        + '<div class="row" style="margin-top:14px">' + employeeActions
+        + '<span class="tiny muted" style="margin-left:auto">' + esc((t.mode || "").replace("_", " ")) + '</span></div>'
+        + adminActions
+        + '</div>';
     }).join("");
 
     root.innerHTML = pageHead("Training", "Plans, delivers and records employee learning.",
-      Store.canManage() ? '<button class="btn btn-accent" id="training-add">' + icon("plus", 15) + ' Add training</button>' : "", "Talent")
+      canManage ? '<button class="btn btn-accent" id="training-add">' + icon("plus", 15) + ' Add training</button>' : "", "Talent")
       + '<div class="grid grid-3" style="margin-bottom:18px">'
       + kpiCard({ label: "Sessions available", value: trainings.length, icon: "graduation", tone: "teal", foot: "Internal, external and online" })
       + kpiCard({ label: "My enrolments", value: enrolments.filter(e => e.employee_id === Store.user.employee_id).length, icon: "user", tone: "blue", foot: "Learning paths in progress" })
@@ -179,40 +201,105 @@ Views.training = async function (root) {
           { label: "Status", key: "status", render: r => chip(r.status) },
           { label: "Score", sortValue: r => Number(r.score || 0), render: r => r.score ? r.score + "%" : "—" },
           { label: "Completed", key: "completed_at", render: r => fmtDate(r.completed_at) },
+          ...(canManage ? [{ label: "Actions", render: r => '<button class="btn btn-sm btn-soft" data-edit-enrolment="' + r.id + '" title="Edit enrolment">' + icon("edit", 12) + '</button> <button class="btn btn-sm btn-danger" data-delete-enrolment="' + r.id + '" title="Remove enrolment">' + icon("trash", 12) + '</button>' }] : []),
         ],
         rows: enrolments, emptyTitle: "No enrolments",
       });
 
     root.querySelectorAll("[data-enrol]").forEach(b => b.onclick = () => openEnrolForm(Number(b.dataset.enrol)));
+    
     onDelegate(root, "click", "[data-complete-training]", async (b) => {
-      try { await API.put("/enrolments/" + b.dataset.completeTraining, { status: "completed", completed_at: todayISO() }); toast("Training completed", "success"); Views.training(root); }
-      catch (e) { handleErr(e); }
+      try { 
+        await API.put("/enrolments/" + b.dataset.completeTraining, { status: "completed", completed_at: todayISO() }); 
+        toast("Training completed", "success"); 
+        Views.training(root); 
+      } catch (e) { 
+        handleErr(e); 
+      }
     });
+    
+    onDelegate(root, "click", "[data-edit-training]", async (b) => {
+      const id = Number(b.dataset.editTraining);
+      const training = trainings.find(t => t.id === id);
+      if (!training) return;
+      openTrainingForm(training);
+    });
+    
+    onDelegate(root, "click", "[data-delete-training]", async (b) => {
+      const id = Number(b.dataset.deleteTraining);
+      const enrolledCount = enrolments.filter(e => e.training_id === id).length;
+      
+      if (enrolledCount > 0) {
+        if (!confirm(`This training has ${enrolledCount} enrolled employee(s). Delete anyway?`)) return;
+      } else {
+        if (!confirm("Delete this training session?")) return;
+      }
+      
+      try {
+        await API.delete("/trainings/" + id);
+        toast("Training deleted", "success");
+        Views.training(root);
+      } catch (e) {
+        handleErr(e);
+      }
+    });
+    
+    onDelegate(root, "click", "[data-edit-enrolment]", async (b) => {
+      const id = Number(b.dataset.editEnrolment);
+      const enrolment = enrolments.find(e => e.id === id);
+      if (!enrolment) return;
+      openEditEnrolmentForm(enrolment);
+    });
+    
+    onDelegate(root, "click", "[data-delete-enrolment]", async (b) => {
+      if (!confirm("Remove this enrolment?")) return;
+      try {
+        await API.delete("/enrolments/" + b.dataset.deleteEnrolment);
+        toast("Enrolment removed", "success");
+        Views.training(root);
+      } catch (e) {
+        handleErr(e);
+      }
+    });
+    
     const add = root.querySelector("#training-add");
-    if (add) add.onclick = openTrainingForm;
+    if (add) add.onclick = () => openTrainingForm();
   } catch (e) {
     root.innerHTML = pageHead("Training", "Unavailable") + emptyState("Could not load training", e.message, "alert");
   }
 };
 
-function openTrainingForm() {
+function openTrainingForm(existing = null) {
   formModal({
-    title: "Add training session",
+    title: existing ? "Edit training session" : "Add training session",
     wide: true,
     fields: [
-      { name: "title", label: "Title", required: true, full: true },
-      { name: "provider", label: "Provider", value: "Internal" },
-      { name: "category", label: "Category", type: "select", options: ["compliance", "technical", "leadership", "soft_skills", "health_safety"] },
-      { name: "mode", label: "Mode", type: "select", options: ["internal", "external", "online"], value: "internal" },
-      { name: "cost", label: "Cost (GHS)", type: "number", value: 0, min: 0 },
-      { name: "capacity", label: "Capacity", type: "number", value: 20, min: 1 },
-      { name: "start_date", label: "Start date", type: "date", required: true },
-      { name: "end_date", label: "End date", type: "date" },
-      { name: "description", label: "Description", type: "textarea", full: true },
+      { name: "title", label: "Title", required: true, full: true, value: existing?.title },
+      { name: "provider", label: "Provider", value: existing?.provider || "Internal" },
+      { name: "category", label: "Category", type: "select", options: ["compliance", "technical", "leadership", "soft_skills", "health_safety"], value: existing?.category },
+      { name: "mode", label: "Mode", type: "select", options: ["internal", "external", "online"], value: existing?.mode || "internal" },
+      { name: "cost", label: "Cost (GHS)", type: "number", value: existing?.cost || 0, min: 0 },
+      { name: "capacity", label: "Capacity", type: "number", value: existing?.capacity || 20, min: 1 },
+      { name: "start_date", label: "Start date", type: "date", required: true, value: existing?.start_date },
+      { name: "end_date", label: "End date", type: "date", value: existing?.end_date },
+      { name: "status", label: "Status", type: "select", options: ["scheduled", "ongoing", "completed", "cancelled"], value: existing?.status || "scheduled" },
+      { name: "description", label: "Description", type: "textarea", full: true, value: existing?.description },
     ],
-    onSubmit: async (data) => { data.status = "scheduled"; data.cost = data.cost || 0; await API.post("/trainings", data); navigate(); },
+    onSubmit: async (data) => {
+      data.cost = data.cost || 0;
+      if (existing) {
+        await API.put("/trainings/" + existing.id, data);
+        toast("Training updated", "success");
+      } else {
+        data.status = data.status || "scheduled";
+        await API.post("/trainings", data);
+        toast("Training created", "success");
+      }
+      navigate();
+    },
   });
 }
+
 
 function openEnrolForm(trainingId) {
   const canPick = Store.canManage() || Store.isRole("manager");
@@ -223,6 +310,24 @@ function openEnrolForm(trainingId) {
     ],
     onSubmit: async (data) => {
       await API.post("/enrolments", { training_id: trainingId, employee_id: Number(data.employee_id || Store.user.employee_id), status: "enrolled" });
+      toast("Enrolled successfully", "success");
+      navigate();
+    },
+  });
+}
+
+function openEditEnrolmentForm(existing) {
+  formModal({
+    title: "Edit enrolment",
+    sub: existing.training_title + " · " + existing.employee_name,
+    fields: [
+      { name: "status", label: "Status", type: "select", options: ["enrolled", "in_progress", "completed", "cancelled"], value: existing.status, required: true },
+      { name: "score", label: "Score (%)", type: "number", value: existing.score, min: 0, max: 100 },
+      { name: "completed_at", label: "Completion date", type: "date", value: existing.completed_at },
+    ],
+    onSubmit: async (data) => {
+      await API.put("/enrolments/" + existing.id, data);
+      toast("Enrolment updated", "success");
       navigate();
     },
   });

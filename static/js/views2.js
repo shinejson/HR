@@ -478,6 +478,9 @@ Views.leave = async function (root) {
     const inbox = inboxRes.data.filter(i => i.type === "leave");
     const balances = balRes.data || [];
     const metrics = balRes.metrics || {};
+    leaveState.requests = requests;
+    leaveState.balances = balances;
+    leaveState.metrics = metrics;
     const canManage = Store.canManage();
     const canApprove = Store.isRole("super_admin", "hr_admin", "hr_officer", "manager");
     const isEmployee = Store.isRole("employee");
@@ -592,10 +595,11 @@ Views.leave = async function (root) {
               const emp = user.employee;
               const role = user.role?.slug;
               
-              // Show PDF download for approved requests
+              // Official Leave Form preview & PDF for approved and active requests
               if (r.status === "approved") {
-                btns += '<button class="btn btn-sm btn-accent" data-download-pdf="' + r.id + '" title="Download PDF">' + icon("download", 12) + ' PDF</button> ';
-                return btns;
+                btns += '<button class="btn btn-sm btn-teal" data-preview-leave-form="' + r.id + '" title="Preview, print or save official Leave Request Form">' + icon("file", 12) + ' View Form / PDF</button> ';
+              } else {
+                btns += '<button class="btn btn-sm btn-ghost" data-preview-leave-form="' + r.id + '" title="Preview official Leave Request Form">' + icon("file", 12) + ' Form</button> ';
               }
               
               if (r.status !== "pending") return btns;
@@ -628,7 +632,9 @@ Views.leave = async function (root) {
               return btns;
             } },
           ],
-          rows: requests, emptyTitle: "No leave requests", emptyText: "Apply for leave to see it here.",
+          rows: requests,
+          onRowClick: (r) => openLeaveFormPreviewModal(r.id),
+          emptyTitle: "No leave requests", emptyText: "Apply for leave to see it here.",
         });
     } else if (leaveState.tab === "calendar") {
       body = monthCalendar(leaveState.month, requests.filter(r => r.status !== "rejected"), holidays, types);
@@ -763,11 +769,13 @@ Views.leave = async function (root) {
         Views.leave(root);
       } catch (err) { handleErr(err); }
     });
-    onDelegate(root, "click", "[data-download-pdf]", (b) => {
-      const leaveId = b.dataset.downloadPdf;
-      const url = `/api/v1/leave-requests/${leaveId}/pdf?token=${API.token}`;
-      window.open(url, '_blank');
-      toast("PDF download started", "success");
+    onDelegate(root, "click", "[data-preview-leave-form]", (b, ev) => {
+      if (ev) ev.stopPropagation();
+      openLeaveFormPreviewModal(b.dataset.previewLeaveForm);
+    });
+    onDelegate(root, "click", "[data-download-pdf]", (b, ev) => {
+      if (ev) ev.stopPropagation();
+      openLeaveFormPreviewModal(b.dataset.downloadPdf);
     });
     onDelegate(root, "click", "[data-reject-leave]", (b) => {
       formModal({
@@ -790,6 +798,68 @@ Views.leave = async function (root) {
     root.querySelectorAll("[data-cal-next]").forEach(b => b.onclick = () => { leaveState.month = new Date(leaveState.month.getFullYear(), leaveState.month.getMonth() + 1, 1); Views.leave(root); });
   } catch (e) {
     root.innerHTML = pageHead("Leave", "Unavailable") + emptyState("Could not load leave", e.message, "alert");
+  }
+};
+
+
+/* ---------------- OFFICIAL LEAVE REQUEST FORM PREVIEW & PDF MODAL ---------------- */
+window.openLeaveFormPreviewModal = async function(leaveId) {
+  try {
+    const res = await API.get("/leave-requests/" + leaveId + "/preview");
+    const d = res.data;
+    const printUrl = "/api/v1/leave-requests/" + leaveId + "/print?token=" + encodeURIComponent(API.token || "");
+    const pdfUrl = "/api/v1/leave-requests/" + leaveId + "/pdf?token=" + encodeURIComponent(API.token || "");
+
+    const isApproved = d.status === "approved";
+    const statusChip = isApproved
+      ? '<span class="chip green">Approved & Signed</span>'
+      : (d.status === "pending"
+          ? '<span class="chip amber">Pending Multi-Tier Approvals</span>'
+          : '<span class="chip red">' + esc(d.status) + '</span>');
+
+    openModal({
+      title: "Employees' Leave Request Form",
+      sub: esc(d.employee_name) + " (" + esc(d.employee_no || "") + ") · " + esc(d.leave_type) + " · " + d.days + " day(s)",
+      wide: true,
+      body: '<div class="stack">'
+        + '<div class="row-between" style="background:var(--surface-2);padding:10px 14px;border-radius:10px;border:1px solid var(--line);flex-wrap:wrap;gap:10px">'
+        + '  <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">'
+        +      statusChip
+        + '    <span class="tiny muted mono">Ref: LR-' + d.id + '</span>'
+        + '  </div>'
+        + '  <div class="row" style="gap:8px;flex-wrap:wrap">'
+        + '    <a class="btn btn-sm btn-ghost" href="' + esc(printUrl) + '" target="_blank" rel="noopener">' + icon("externalLink", 13) + ' Open Print Tab</a>'
+        + '    <button class="btn btn-sm btn-teal" id="modal-leave-print">' + icon("printer", 13) + ' Print Form</button>'
+        + '    <a class="btn btn-sm btn-accent" href="' + esc(pdfUrl) + '" target="_blank" download>' + icon("download", 13) + ' Save as PDF</a>'
+        + '  </div>'
+        + '</div>'
+        + '<div class="letter-preview-canvas" style="background:#ede9e0;padding:18px 12px;border-radius:12px;overflow-x:auto">'
+        +    d.html
+        + '</div>'
+        + '</div>',
+      footer: '<div class="row" style="width:100%;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">'
+        + '<span class="tiny muted">Airport West Hotel Accra-Ghana &middot; Official HR Leave Record</span>'
+        + '<div class="row" style="gap:8px">'
+        + '  <button class="btn btn-teal" id="modal-leave-print-foot">' + icon("printer", 14) + ' Print Form</button>'
+        + '  <a class="btn btn-accent" href="' + esc(pdfUrl) + '" target="_blank" download>' + icon("download", 14) + ' Save as PDF</a>'
+        + '  <button class="btn btn-ghost" data-close-modal>Close</button>'
+        + '</div></div>',
+    });
+
+    const triggerPrint = () => {
+      const sheet = document.getElementById("leave-request-form-sheet");
+      if (typeof printLetterHtml === "function" && sheet) {
+        printLetterHtml(sheet.outerHTML);
+      } else {
+        window.open(printUrl, "_blank");
+      }
+    };
+    const p1 = document.getElementById("modal-leave-print");
+    const p2 = document.getElementById("modal-leave-print-foot");
+    if (p1) p1.onclick = triggerPrint;
+    if (p2) p2.onclick = triggerPrint;
+  } catch (err) {
+    handleErr(err);
   }
 };
 
@@ -821,6 +891,21 @@ function openLeaveForm(prefill) {
   const mdName = mdEmp ? (mdEmp.name + ' (Designated MD)') : (emp?.md_name ? emp.md_name + ' (Designated MD)' : 'Not set on profile');
 
   const sigUrl = emp?.signature_url || '';
+
+  // Dynamic leave already taken calculation for current calendar year
+  let alreadyTakenDays = 0;
+  if (leaveState.balances && leaveState.balances.length) {
+    const anlBal = leaveState.balances.find(b => b.leave_type_code === 'ANL') || leaveState.balances[0];
+    if (anlBal && typeof anlBal.taken === 'number' && anlBal.taken > 0) {
+      alreadyTakenDays = anlBal.taken;
+    }
+  }
+  if (!alreadyTakenDays && Array.isArray(leaveState.requests) && emp) {
+    const curYear = new Date().getFullYear();
+    alreadyTakenDays = leaveState.requests
+      .filter(r => r.employee_id === emp.id && (r.status === 'approved' || r.status === 'completed') && (r.start_date || '').startsWith(String(curYear)))
+      .reduce((sum, r) => sum + (Number(r.days) || 0), 0);
+  }
 
   openModal({
     title: "Employees' Leave Request Form",
@@ -854,9 +939,9 @@ function openLeaveForm(prefill) {
       + '<div class="tiny muted">working day(s) requested</div>'
       + '</div>'
       + '<div class="form-grid">'
-      + '<div class="field"><label>No. of leave already taken</label><input class="input" type="number" name="leave_already_taken" value="0" step="0.5"></div>'
+      + '<div class="field"><label>No. of leave already taken</label><input class="input" type="number" name="leave_already_taken" value="' + alreadyTakenDays + '" step="0.5" min="0"></div>'
       + '<div class="field"><label>Date Employed</label><input class="input" type="date" name="date_employed" value="' + esc(dateEmployed) + '" readonly></div>'
-      + '<div class="field" style="grid-column:1/-1"><label>Resumption Date</label><input class="input" type="date" name="resumption_date" readonly style="font-weight:500"></div>'
+      + '<div class="field" style="grid-column:1/-1"><label>Resumption Date <span class="req">*</span></label><input class="input" type="date" name="resumption_date" required style="font-weight:600" title="Auto-calculated from end date or choose custom resumption date"></div>'
       + '</div>'
       + '<input type="hidden" name="days" value="1">'
       + '<div class="field" style="margin-top:12px"><label>Employee Signature <span class="req">*</span></label>'
@@ -913,13 +998,15 @@ function openLeaveForm(prefill) {
             setTimeout(() => { daysDisplay.style.transform = 'scale(1)'; }, 150);
           }
           
-          // Calculate resumption date (next working day after end)
-          let resumption = new Date(end);
-          resumption.setDate(resumption.getDate() + 1);
-          while (resumption.getDay() === 0 || resumption.getDay() === 6) {
+          // Calculate resumption date (next working day after end) unless manually modified
+          if (!resumptionManuallySet || !resumptionInput.value) {
+            let resumption = new Date(end);
             resumption.setDate(resumption.getDate() + 1);
+            while (resumption.getDay() === 0 || resumption.getDay() === 6) {
+              resumption.setDate(resumption.getDate() + 1);
+            }
+            resumptionInput.value = resumption.toISOString().split('T')[0];
           }
-          resumptionInput.value = resumption.toISOString().split('T')[0];
         }
       }
       
@@ -927,6 +1014,8 @@ function openLeaveForm(prefill) {
         daysDisplay.style.transition = 'transform 0.15s ease-out';
       }
       
+      let resumptionManuallySet = false;
+      resumptionInput.addEventListener('input', () => { resumptionManuallySet = true; });
       startInput.addEventListener('change', updateCalculations);
       endInput.addEventListener('change', updateCalculations);
       updateCalculations();

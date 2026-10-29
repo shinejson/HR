@@ -1876,6 +1876,21 @@ def _create(resource, model):
             obj.approver_id = emp.hod_id or emp.manager_id
             if not getattr(obj, "employee_signature", None) and getattr(emp, "signature_url", None):
                 obj.employee_signature = emp.signature_url
+        # Automatically calculate leave_already_taken if not explicitly provided
+        if not getattr(obj, "leave_already_taken", None) or float(obj.leave_already_taken or 0) == 0:
+            yr = obj.start_date.year if obj.start_date else datetime.utcnow().year
+            prior_approved = LeaveRequest.query.filter(
+                LeaveRequest.employee_id == obj.employee_id,
+                LeaveRequest.status == "approved",
+                db.func.extract("year", LeaveRequest.start_date) == yr
+            ).all()
+            obj.leave_already_taken = sum(float(r.days or 0) for r in prior_approved)
+        # Default resumption_date if not explicitly provided
+        if not getattr(obj, "resumption_date", None) and obj.end_date:
+            nxt = obj.end_date + timedelta(days=1)
+            while nxt.weekday() >= 5:
+                nxt += timedelta(days=1)
+            obj.resumption_date = nxt
     db.session.add(obj)
     db.session.flush()
     credentials_dispatch = None
@@ -3828,348 +3843,76 @@ def reject_leave_level(rid):
     return jsonify({"data": serialize(lr, "leave-requests")})
 
 
+@app.get("/api/v1/leave-requests/<int:rid>/preview")
+@login_required
+def preview_leave_request(rid):
+    """Return JSON with rendered HTML form for in-app preview modal"""
+    lr = db.session.get(LeaveRequest, rid)
+    if not lr:
+        return error("Not found", 404)
+    user = request.user
+    role = role_of(user)
+    if lr.employee_id != user.employee_id and role not in ("super_admin", "hr_admin", "hr_officer", "manager"):
+        return error("You do not have permission to view this leave request", 403)
+    
+    from leave_form import build_leave_form_html
+    html_content = build_leave_form_html(lr, standalone=False)
+    return jsonify({
+        "data": {
+            "id": lr.id,
+            "status": lr.status,
+            "employee_id": lr.employee_id,
+            "employee_name": lr.employee.full_name if lr.employee else "",
+            "employee_no": lr.employee.employee_no if lr.employee else "",
+            "leave_type": lr.leave_type.name if lr.leave_type else "",
+            "start_date": lr.start_date.strftime("%Y-%m-%d") if lr.start_date else None,
+            "end_date": lr.end_date.strftime("%Y-%m-%d") if lr.end_date else None,
+            "days": float(lr.days or 0),
+            "html": html_content,
+        }
+    })
+
+
+@app.get("/api/v1/leave-requests/<int:rid>/print")
+@login_required
+def print_leave_request(rid):
+    """Standalone printable HTML page matching the official Leave Request Form"""
+    lr = db.session.get(LeaveRequest, rid)
+    if not lr:
+        return error("Not found", 404)
+    user = request.user
+    role = role_of(user)
+    if lr.employee_id != user.employee_id and role not in ("super_admin", "hr_admin", "hr_officer", "manager"):
+        return error("You do not have permission to print this leave request", 403)
+    
+    from leave_form import build_leave_form_html
+    return build_leave_form_html(lr, standalone=True)
+
+
 @app.get("/api/v1/leave-requests/<int:rid>/pdf")
 @login_required
 def download_leave_request_pdf(rid):
-    """Generate PDF for approved leave request with all signatures"""
-    from reportlab.lib.pagesizes import letter, A4
-    from reportlab.lib.units import inch
-    from reportlab.lib import colors
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-    from reportlab.pdfgen import canvas
-    from PIL import Image as PILImage
-    
+    """Generate official single-page PDF matching Airport West Hotel Leave Request Form"""
     user = request.user
     lr = db.session.get(LeaveRequest, rid)
     if not lr:
         return error("Not found", 404)
     
-    # Check permission: employee can download own, HR/managers can download any
     role = role_of(user)
     if lr.employee_id != user.employee_id and role not in ("super_admin", "hr_admin", "hr_officer", "manager"):
         return error("You do not have permission to download this leave request", 403)
     
-    # Only allow PDF download for approved requests
-    if lr.status != "approved":
-        return error("PDF can only be generated for approved leave requests", 400)
+    from leave_form import build_leave_form_pdf
+    pdf_bytes = build_leave_form_pdf(lr)
+    buffer = io.BytesIO(pdf_bytes)
     
-    # Get employee and company data
     emp = lr.employee
-    company = Company.query.first()
-    comp_name = (company.name if company else "Airport West Hotel").upper()
-    
-    # Get approver details
-    hod_approver = db.session.get(Employee, lr.hod_approved_by) if lr.hod_approved_by else None
-    acc_approver = db.session.get(Employee, lr.accountant_approved_by) if lr.accountant_approved_by else None
-    md_approver = db.session.get(Employee, lr.md_approved_by) if lr.md_approved_by else None
-    
-    # Create PDF in memory
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=0.5*inch, leftMargin=0.5*inch,
-                           topMargin=0.4*inch, bottomMargin=0.4*inch)
-    
-    # Container for PDF elements
-    elements = []
-    styles = getSampleStyleSheet()
-    
-    # Custom styles
-    title_style = ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Heading1'],
-        fontSize=16,
-        textColor=colors.HexColor('#10201f'),
-        spaceAfter=20,
-        alignment=TA_CENTER,
-        fontName='Helvetica-Bold'
-    )
-    
-    heading_style = ParagraphStyle(
-        'CustomHeading',
-        parent=styles['Heading2'],
-        fontSize=11,
-        textColor=colors.white,
-        backColor=colors.HexColor('#10201f'),
-        spaceAfter=8,
-        spaceBefore=12,
-        alignment=TA_CENTER,
-        fontName='Helvetica-Bold'
-    )
-    
-    label_style = ParagraphStyle(
-        'Label',
-        parent=styles['Normal'],
-        fontSize=9,
-        textColor=colors.HexColor('#666666'),
-        fontName='Helvetica-Bold'
-    )
-    
-    value_style = ParagraphStyle(
-        'Value',
-        parent=styles['Normal'],
-        fontSize=10,
-        textColor=colors.HexColor('#10201f'),
-        fontName='Helvetica'
-    )
-    
-    # Add company logo if available
-    if company and company.logo_url:
-        try:
-            # Try to load logo (handle both URLs and file paths)
-            logo_path = company.logo_url
-            if logo_path.startswith('/uploads/'):
-                logo_path = os.path.join('uploads', logo_path.split('/uploads/')[-1])
-            
-            if os.path.exists(logo_path):
-                img = Image(logo_path, width=2*inch, height=0.8*inch, kind='proportional')
-                elements.append(img)
-                elements.append(Spacer(1, 0.2*inch))
-        except:
-            pass
-    
-    # Title
-    elements.append(Paragraph(comp_name, title_style))
-    elements.append(Paragraph("EMPLOYEES' LEAVE REQUEST FORM", heading_style))
-    elements.append(Spacer(1, 0.3*inch))
-    
-    # Employee Information Section
-    emp_data = [
-        [Paragraph("<b>EMPLOYEE INFORMATION</b>", heading_style)],
-    ]
-    emp_table = Table(emp_data, colWidths=[7*inch])
-    emp_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#10201f')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 11),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-        ('TOPPADDING', (0, 0), (-1, 0), 8),
-    ]))
-    elements.append(emp_table)
-    elements.append(Spacer(1, 0.1*inch))
-    
-    emp_info = [
-        ['Employee Name:', emp.full_name or '', 'Date:', lr.created_at.strftime('%Y-%m-%d') if lr.created_at else ''],
-        ['Department:', emp.department.name if emp.department else '—', 'Position:', emp.designation.title if emp.designation else '—'],
-    ]
-    emp_info_table = Table(emp_info, colWidths=[1.3*inch, 2.2*inch, 1.0*inch, 2.5*inch])
-    emp_info_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#666666')),
-        ('TEXTCOLOR', (2, 0), (2, -1), colors.HexColor('#666666')),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cccccc')),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 8),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-        ('TOPPADDING', (0, 0), (-1, -1), 6),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-    ]))
-    elements.append(emp_info_table)
-    elements.append(Spacer(1, 0.2*inch))
-    
-    # Reason for Leave
-    reason_data = [
-        [Paragraph("<b>REASON FOR LEAVE</b>", heading_style)],
-    ]
-    reason_table = Table(reason_data, colWidths=[7*inch])
-    reason_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#10201f')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 11),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-        ('TOPPADDING', (0, 0), (-1, 0), 8),
-    ]))
-    elements.append(reason_table)
-    elements.append(Spacer(1, 0.1*inch))
-    
-    leave_type_name = lr.leave_type.name if lr.leave_type else 'Not specified'
-    reason_text = lr.reason if lr.reason else 'N/A'
-    
-    reason_info = [
-        ['Leave Type:', leave_type_name],
-        ['Additional Details:', reason_text],
-    ]
-    reason_info_table = Table(reason_info, colWidths=[1.5*inch, 5.5*inch])
-    reason_info_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#666666')),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cccccc')),
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 8),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-        ('TOPPADDING', (0, 0), (-1, -1), 6),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-    ]))
-    elements.append(reason_info_table)
-    elements.append(Spacer(1, 0.2*inch))
-    
-    # Leave Requested Section
-    leave_data = [
-        [Paragraph("<b>LEAVE REQUESTED</b>", heading_style)],
-    ]
-    leave_table = Table(leave_data, colWidths=[7*inch])
-    leave_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#10201f')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 11),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-        ('TOPPADDING', (0, 0), (-1, 0), 8),
-    ]))
-    elements.append(leave_table)
-    elements.append(Spacer(1, 0.1*inch))
-    
-    leave_info = [
-        ['From:', lr.start_date.strftime('%Y-%m-%d') if lr.start_date else '', 'To:', lr.end_date.strftime('%Y-%m-%d') if lr.end_date else ''],
-        ['No. of Days Requested:', str(lr.days or 0), 'No. of leave already taken:', str(lr.leave_already_taken or 0)],
-        ['Date Employed:', emp.hire_date.strftime('%Y-%m-%d') if emp.hire_date else '—', 'Resumption Date:', lr.resumption_date.strftime('%Y-%m-%d') if lr.resumption_date else '—'],
-    ]
-    leave_info_table = Table(leave_info, colWidths=[1.5*inch, 2.0*inch, 1.8*inch, 1.7*inch])
-    leave_info_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#666666')),
-        ('TEXTCOLOR', (2, 0), (2, -1), colors.HexColor('#666666')),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cccccc')),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 8),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-        ('TOPPADDING', (0, 0), (-1, -1), 6),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-    ]))
-    elements.append(leave_info_table)
-    elements.append(Spacer(1, 0.15*inch))
-    
-    # Employee Signature with image
-    emp_sig_content = None
-    if emp.signature_url:
-        try:
-            sig_path = emp.signature_url
-            if sig_path.startswith('/uploads/'):
-                sig_path = sig_path.lstrip('/')
-            
-            if os.path.exists(sig_path):
-                emp_sig_content = Image(sig_path, width=2.0*inch, height=0.6*inch, kind='proportional')
-        except Exception as e:
-            print(f"Failed to load employee signature: {e}")
-            emp_sig_content = Paragraph(lr.employee_signature or emp.full_name or '—', value_style)
-    else:
-        emp_sig_content = Paragraph(lr.employee_signature or emp.full_name or '—', value_style)
-    
-    emp_sig_data = [
-        ['Employee Signature:', emp_sig_content, 'Date:', lr.created_at.strftime('%Y-%m-%d') if lr.created_at else ''],
-    ]
-    emp_sig_table = Table(emp_sig_data, colWidths=[1.5*inch, 4.0*inch, 0.7*inch, 0.8*inch])
-    emp_sig_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (0, 0), 'Helvetica-Bold'),
-        ('FONTNAME', (2, 0), (2, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('TEXTCOLOR', (0, 0), (0, 0), colors.HexColor('#666666')),
-        ('TEXTCOLOR', (2, 0), (2, 0), colors.HexColor('#666666')),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cccccc')),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 8),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-        ('TOPPADDING', (0, 0), (-1, -1), 6),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-    ]))
-    elements.append(emp_sig_table)
-    elements.append(Spacer(1, 0.3*inch))
-    
-    # Management Approvals Section
-    mgmt_data = [
-        [Paragraph("<b>MANAGEMENT APPROVALS</b>", heading_style)],
-    ]
-    mgmt_table = Table(mgmt_data, colWidths=[7*inch])
-    mgmt_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#10201f')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 11),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-        ('TOPPADDING', (0, 0), (-1, 0), 8),
-    ]))
-    elements.append(mgmt_table)
-    elements.append(Spacer(1, 0.1*inch))
-    
-    # Approval signatures with images
-    def get_signature_content(approver, signature_url_field=None):
-        """Get signature image or fallback to name"""
-        if not approver:
-            return Paragraph('—', value_style)
-        
-        # Try to load signature image
-        sig_url = signature_url_field or (approver.signature_url if hasattr(approver, 'signature_url') else None)
-        if sig_url:
-            try:
-                sig_path = sig_url
-                if sig_path.startswith('/uploads/'):
-                    sig_path = sig_path.lstrip('/')
-                
-                if os.path.exists(sig_path):
-                    return Image(sig_path, width=2.0*inch, height=0.5*inch, kind='proportional')
-            except Exception as e:
-                print(f"Failed to load signature for {approver.full_name}: {e}")
-        
-        # Fallback to name
-        return Paragraph(approver.full_name, value_style)
-    
-    hod_sig = get_signature_content(hod_approver, lr.hod_signature)
-    acc_sig = get_signature_content(acc_approver, lr.accountant_signature)
-    md_sig = get_signature_content(md_approver, lr.md_signature)
-    
-    approval_data = [
-        ['Approved by:', '', 'Date:'],
-        ['Head of Department:', hod_sig, lr.hod_approved_at.strftime('%Y-%m-%d') if lr.hod_approved_at else '—'],
-        ['Accountant:', acc_sig, lr.accountant_approved_at.strftime('%Y-%m-%d') if lr.accountant_approved_at else '—'],
-        ['Managing Director:', md_sig, lr.md_approved_at.strftime('%Y-%m-%d') if lr.md_approved_at else '—'],
-    ]
-    approval_table = Table(approval_data, colWidths=[1.8*inch, 4.0*inch, 1.2*inch])
-    approval_table.setStyle(TableStyle([
-        ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#666666')),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cccccc')),
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f0f0f0')),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 8),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-        ('TOPPADDING', (0, 0), (-1, -1), 8),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
-    ]))
-    elements.append(approval_table)
-    elements.append(Spacer(1, 0.2*inch))
-    
-    # Footer
-    footer_text = Paragraph(
-        f"<i>This is an official document generated from {comp_name} HR System on {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}</i>",
-        ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#999999'), alignment=TA_CENTER)
-    )
-    elements.append(footer_text)
-    
-    # Build PDF
-    doc.build(elements)
-    
-    # Get PDF data
-    buffer.seek(0)
-    
-    # Send file
     filename = f"Leave_Request_{emp.employee_no or emp.id}_{lr.start_date.strftime('%Y%m%d') if lr.start_date else 'request'}.pdf"
     return send_file(
         buffer,
         as_attachment=True,
         download_name=filename,
-        mimetype='application/pdf'
+        mimetype="application/pdf",
     )
 
 
@@ -5353,7 +5096,7 @@ def update_company_settings():
     old_logo = comp.logo_url
     old_favicon = comp.favicon_url
     for k in ("name", "legal_name", "country", "city", "location_name", "tagline", "currency", "timezone", "address",
-              "phone", "email", "tax_id", "logo_url", "favicon_url", "theme", "website"):
+              "phone", "email", "tax_id", "logo_url", "favicon_url", "theme", "website", "fax"):
         if k in comp_in:
             setattr(comp, k, comp_in[k])
     group_map = {
