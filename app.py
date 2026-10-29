@@ -6,7 +6,8 @@ import secrets
 import csv
 import io
 import base64
-from datetime import datetime, date, timedelta
+from html import escape as html_escape
+from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from functools import wraps
 
@@ -29,8 +30,12 @@ from models import (
     Ticket, TicketComment, Announcement, CompanyEvent, EventRsvp, Notification,
     NotificationPreference, NotificationDelivery, Approval, AuditLog, Setting,
     LoginHistory,
+<<<<<<< HEAD
     HotelInventoryItem, HotelStockMovement, HotelWorkOrder,
     HotelStoreroom, HotelStoreroomSection,
+=======
+    HotelInventoryItem, HotelStockMovement, HotelWorkOrder, MaintenanceWork,
+>>>>>>> bd6b7fbf0df3c674ac1949cf8396ebe28b0b102e
 )
 import models
 import messaging
@@ -2556,6 +2561,7 @@ def update_operations_work_order_status(wo_id):
     return jsonify({"message": f"Work order #{wo.order_no} status changed to {new_status}"})
 
 
+<<<<<<< HEAD
 
 def _serialize_equipment(asset):
     return {
@@ -2647,6 +2653,415 @@ def _serialize_storeroom(s, include_sections=True):
     if include_sections:
         data["sections"] = [_serialize_section(sec) for sec in sections]
     return data
+=======
+MAINTENANCE_CATEGORIES = ("Preventive", "Repair", "Inspection", "Electrical", "Plumbing", "HVAC", "Other")
+MAINTENANCE_STATUSES = ("scheduled", "in_progress", "completed", "cancelled")
+
+
+def _maintenance_work_dict(work):
+    return {
+        "id": work.id,
+        "reference_no": work.reference_no,
+        "title": work.title,
+        "category": work.category,
+        "location": work.location,
+        "scheduled_at": conv(work.scheduled_at),
+        "description": work.description,
+        "worker_id": work.worker_id,
+        "worker_name": work.worker_name or (work.worker.full_name if work.worker else ""),
+        "amount": float(work.amount or 0),
+        "status": work.status,
+        "remarks": work.remarks,
+        "completed_at": conv(work.completed_at),
+        "created_at": conv(work.created_at),
+        "updated_at": conv(work.updated_at),
+    }
+
+
+def _maintenance_filters_query(filters):
+    """Build the same validated filtered set for the screen and its report actions."""
+    status = str(filters.get("status") or "").strip().lower()
+    if status and status not in MAINTENANCE_STATUSES:
+        return None, None, "Invalid maintenance status filter"
+
+    parsed_dates = {}
+    for key in ("from_date", "to_date"):
+        raw = str(filters.get(key) or "").strip()
+        if not raw:
+            parsed_dates[key] = None
+            continue
+        try:
+            parsed_dates[key] = date.fromisoformat(raw)
+        except (TypeError, ValueError):
+            return None, None, f"{key.replace('_', ' ').title()} must be a valid date"
+
+    from_date = parsed_dates["from_date"]
+    to_date = parsed_dates["to_date"]
+    if from_date and to_date and from_date > to_date:
+        return None, None, "The end date must be on or after the start date"
+
+    query = MaintenanceWork.query.outerjoin(Employee, MaintenanceWork.worker_id == Employee.id)
+    if status:
+        query = query.filter(MaintenanceWork.status == status)
+    if from_date:
+        query = query.filter(MaintenanceWork.scheduled_at >= datetime.combine(from_date, datetime.min.time()))
+    if to_date:
+        query = query.filter(MaintenanceWork.scheduled_at < datetime.combine(to_date + timedelta(days=1), datetime.min.time()))
+
+    search = re.sub(r"[\r\n\t]+", " ", str(filters.get("q") or filters.get("search") or "").strip())[:120]
+    if search:
+        pattern = f"%{search}%"
+        query = query.filter(or_(
+            MaintenanceWork.reference_no.ilike(pattern),
+            MaintenanceWork.title.ilike(pattern),
+            MaintenanceWork.category.ilike(pattern),
+            MaintenanceWork.location.ilike(pattern),
+            MaintenanceWork.description.ilike(pattern),
+            MaintenanceWork.worker_name.ilike(pattern),
+            MaintenanceWork.remarks.ilike(pattern),
+            Employee.first_name.ilike(pattern),
+            Employee.last_name.ilike(pattern),
+        ))
+    query = query.order_by(MaintenanceWork.scheduled_at.desc(), MaintenanceWork.id.desc())
+    return query, {
+        "status": status,
+        "from_date": from_date,
+        "to_date": to_date,
+        "search": search,
+    }, None
+
+
+def _maintenance_schedule_value(raw):
+    if not raw:
+        return None
+    try:
+        scheduled_at = datetime.fromisoformat(str(raw).strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if scheduled_at.tzinfo:
+        scheduled_at = scheduled_at.astimezone(timezone.utc).replace(tzinfo=None)
+    return scheduled_at
+
+
+def _maintenance_input_values(data, work=None, creating=False):
+    values = {}
+    text_fields = (("title", 180, True), ("location", 180, True))
+    for key, max_length, required in text_fields:
+        if creating or key in data:
+            value = str(data.get(key) or "").strip()
+            if required and not value:
+                return None, f"{key.title()} is required"
+            if len(value) > max_length:
+                return None, f"{key.title()} must be {max_length} characters or fewer"
+            values[key] = value
+
+    if creating or "category" in data:
+        category = str(data.get("category") or ("Repair" if creating else "")).strip()
+        if category not in MAINTENANCE_CATEGORIES:
+            return None, "Choose a valid maintenance category"
+        values["category"] = category
+
+    if creating or "scheduled_at" in data:
+        scheduled_at = _maintenance_schedule_value(data.get("scheduled_at"))
+        if not scheduled_at:
+            return None, "A valid scheduled date and time are required"
+        values["scheduled_at"] = scheduled_at
+
+    if creating or "description" in data:
+        description = str(data.get("description") or "").strip()
+        if len(description) > 4000:
+            return None, "Work details must be 4,000 characters or fewer"
+        values["description"] = description or None
+
+    if creating or "remarks" in data:
+        remarks = str(data.get("remarks") or "").strip()
+        if len(remarks) > 4000:
+            return None, "Remarks must be 4,000 characters or fewer"
+        values["remarks"] = remarks or None
+
+    if creating or "worker_id" in data or "worker_name" in data:
+        raw_worker_id = data.get("worker_id", work.worker_id if work else None)
+        raw_worker_name = data.get("worker_name", work.worker_name if work else None)
+        if raw_worker_id in (None, "", "external"):
+            worker_name = str(raw_worker_name or "").strip()
+            if not worker_name:
+                return None, "Select an employee or enter the external worker's name"
+            if len(worker_name) > 120:
+                return None, "Worker name must be 120 characters or fewer"
+            values["worker_id"] = None
+            values["worker_name"] = worker_name
+        else:
+            try:
+                worker_id = int(raw_worker_id)
+            except (TypeError, ValueError):
+                return None, "Choose a valid worker"
+            worker = db.session.get(Employee, worker_id)
+            if not worker or worker.deleted_at or worker.status not in ("active", "probation"):
+                return None, "The selected worker is not an active employee"
+            values["worker_id"] = worker.id
+            values["worker_name"] = worker.full_name
+
+    if creating or "amount" in data:
+        raw_amount = data.get("amount", 0 if creating else None)
+        try:
+            amount = Decimal(str(raw_amount))
+        except (InvalidOperation, TypeError, ValueError):
+            return None, "Enter a valid maintenance charge in GHS"
+        if not amount.is_finite() or amount < 0 or amount > Decimal("9999999999.99"):
+            return None, "The maintenance charge must be between GHS 0.00 and GHS 9,999,999,999.99"
+        values["amount"] = amount.quantize(Decimal("0.01"))
+
+    if not creating and "status" in data:
+        status = str(data.get("status") or "").strip().lower()
+        if status not in MAINTENANCE_STATUSES:
+            return None, "Choose a valid maintenance status"
+        values["status"] = status
+
+    return values, None
+
+
+def _maintenance_period_label(filters):
+    start = filters.get("from_date")
+    end = filters.get("to_date")
+    if start and end:
+        label = f"{start.strftime('%d %b %Y')} – {end.strftime('%d %b %Y')}"
+    elif start:
+        label = f"From {start.strftime('%d %b %Y')} onward"
+    elif end:
+        label = f"Through {end.strftime('%d %b %Y')}"
+    else:
+        label = "All scheduled dates"
+    if filters.get("status"):
+        label += f" · {filters['status'].replace('_', ' ').title()}"
+    if filters.get("search"):
+        label += f" · Search: {filters['search']}"
+    return label
+
+
+def _maintenance_md_contact():
+    candidates = []
+    actor_employee = request.user.employee if request.user else None
+    if actor_employee and actor_employee.md_id:
+        md = db.session.get(Employee, actor_employee.md_id)
+        if md and not md.deleted_at and md.status in ("active", "probation"):
+            candidates.append(md)
+
+    executives = (Employee.query.join(Designation, Employee.designation_id == Designation.id)
+                  .filter(Employee.deleted_at.is_(None), Employee.status.in_(["active", "probation"]),
+                          or_(Designation.title.ilike("%managing director%"),
+                              Designation.title.ilike("%chief executive%"),
+                              func.lower(Designation.title).in_(["ceo", "md"])))
+                  .order_by(Designation.level.desc(), Employee.id.asc()).all())
+    candidates.extend(executives)
+
+    admin_user = (User.query.join(Role, User.role_id == Role.id)
+                  .filter(Role.slug == "super_admin", User.status == "active", User.deleted_at.is_(None))
+                  .order_by(User.id.asc()).first())
+    if admin_user and admin_user.employee:
+        candidates.append(admin_user.employee)
+
+    seen = set()
+    for employee in candidates:
+        if not employee or employee.id in seen or employee.deleted_at:
+            continue
+        seen.add(employee.id)
+        user = (User.query.filter_by(employee_id=employee.id, status="active")
+                .filter(User.deleted_at.is_(None)).first())
+        emails = (employee.email, employee.personal_email, user.email if user else None)
+        email = next((value.strip() for value in emails
+                      if value and _VALID_EMAIL_RE.match(value.strip())), None)
+        if email:
+            return employee, user, email
+    return None, None, None
+
+
+@app.get("/api/v1/operations/maintenance")
+@operations_required
+def get_operations_maintenance():
+    query, filters, filter_error = _maintenance_filters_query(request.args)
+    if filter_error:
+        return error(filter_error, 422)
+    return jsonify({"data": [_maintenance_work_dict(work) for work in query.all()]})
+
+
+@app.post("/api/v1/operations/maintenance")
+@operations_required
+def create_operations_maintenance():
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return error("Maintenance work must be submitted as an object", 422)
+    values, validation_error = _maintenance_input_values(body, creating=True)
+    if validation_error:
+        return error(validation_error, 422)
+
+    work = MaintenanceWork(
+        reference_no=f"MW-{date.today().strftime('%Y%m%d')}-{secrets.token_hex(4).upper()}",
+        status="scheduled",
+        created_by=request.user.id,
+        **values,
+    )
+    db.session.add(work)
+    db.session.flush()
+    audit(request.user, "maintenance_work_scheduled", "maintenance_works", work.id, None,
+          {"reference_no": work.reference_no, "title": work.title, "worker": work.worker_name,
+           "amount": str(work.amount), "scheduled_at": work.scheduled_at.isoformat()})
+    db.session.commit()
+    return jsonify({"message": "Maintenance work scheduled", "data": _maintenance_work_dict(work)}), 201
+
+
+@app.put("/api/v1/operations/maintenance/<int:work_id>")
+@operations_required
+def update_operations_maintenance(work_id):
+    work = db.session.get(MaintenanceWork, work_id)
+    if not work:
+        return error("Maintenance work not found", 404)
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return error("Maintenance updates must be submitted as an object", 422)
+    values, validation_error = _maintenance_input_values(body, work=work)
+    if validation_error:
+        return error(validation_error, 422)
+    if not values:
+        return error("No maintenance fields were provided", 422)
+
+    old_values = {key: getattr(work, key) for key in values}
+    old_status = work.status
+    for key, value in values.items():
+        setattr(work, key, value)
+    if "status" in values:
+        if values["status"] == "completed" and not work.completed_at:
+            work.completed_at = datetime.utcnow()
+        elif values["status"] != "completed":
+            work.completed_at = None
+    work.updated_by = request.user.id
+    audit(request.user, "maintenance_work_updated", "maintenance_works", work.id,
+          {key: str(value) for key, value in old_values.items()},
+          {key: str(getattr(work, key)) for key in values})
+    if old_status != work.status:
+        audit(request.user, "maintenance_status_updated", "maintenance_works", work.id,
+              {"status": old_status}, {"status": work.status})
+    db.session.commit()
+    return jsonify({"message": "Maintenance work updated", "data": _maintenance_work_dict(work)})
+
+
+@app.post("/api/v1/operations/maintenance/report/send")
+@operations_required
+def send_operations_maintenance_report():
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return error("Report filters must be submitted as an object", 422)
+    query, filters, filter_error = _maintenance_filters_query(body)
+    if filter_error:
+        return error(filter_error, 422)
+    records = query.all()
+    employee, recipient_user, recipient_email = _maintenance_md_contact()
+    if not recipient_email:
+        return error("No Managing Director email is configured. Add an active MD or CEO employee with an email address.", 422)
+
+    company = Company.query.first()
+    company_name = company.name if company and company.name else "Company"
+    period = _maintenance_period_label(filters)
+    total_amount = sum((work.amount or Decimal("0.00") for work in records), Decimal("0.00"))
+    title = f"Maintenance work report — {period}"
+    prepared_by = request.user.employee.full_name if request.user.employee else request.user.email
+    intro = (f"The maintenance report for {period} includes {len(records)} work item(s), "
+             f"with total charges of GHS {total_amount:,.2f}. Prepared by {prepared_by}.")
+
+    plain_lines = [title, company_name, intro, ""]
+    if records:
+        for work in records:
+            schedule = work.scheduled_at.strftime("%d %b %Y, %H:%M")
+            worker_name = work.worker_name or (work.worker.full_name if work.worker else "Unassigned")
+            plain_lines.extend([
+                f"{work.reference_no} | {schedule} | {work.title}",
+                f"Location: {work.location} | Worker: {worker_name} | Charge: GHS {float(work.amount or 0):,.2f} | Status: {work.status.replace('_', ' ').title()}",
+                f"Details: {work.description or '—'}",
+                f"Remarks: {work.remarks or '—'}",
+                "",
+            ])
+    else:
+        plain_lines.append("No maintenance works match the selected report filters.")
+    plain_body = "\n".join(plain_lines)
+
+    table_rows = []
+    for work in records:
+        worker_name = work.worker_name or (work.worker.full_name if work.worker else "Unassigned")
+        work_details_html = (
+            f'<br><span style="color:#69756f">{html_escape(work.description)}</span>'
+            if work.description else ""
+        )
+        table_rows.append(
+            "<tr>"
+            f"<td>{html_escape(work.reference_no or '')}</td>"
+            f"<td>{html_escape(work.scheduled_at.strftime('%d %b %Y, %H:%M'))}</td>"
+            f"<td><strong>{html_escape(work.title)}</strong>{work_details_html}</td>"
+            f"<td>{html_escape(work.location)}</td>"
+            f"<td>{html_escape(worker_name)}</td>"
+            f'<td style="text-align:right;white-space:nowrap">GHS {float(work.amount or 0):,.2f}</td>'
+            f"<td>{html_escape(work.status.replace('_', ' ').title())}</td>"
+            f"<td>{html_escape(work.remarks or '—')}</td>"
+            "</tr>"
+        )
+    report_table = (
+        '<div style="margin-top:20px;overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:12px">'
+        '<thead><tr style="background:#f4f1ea;text-align:left">'
+        '<th style="padding:8px;border-bottom:1px solid #d8d2c7">Ref</th>'
+        '<th style="padding:8px;border-bottom:1px solid #d8d2c7">Scheduled</th>'
+        '<th style="padding:8px;border-bottom:1px solid #d8d2c7">Work</th>'
+        '<th style="padding:8px;border-bottom:1px solid #d8d2c7">Location</th>'
+        '<th style="padding:8px;border-bottom:1px solid #d8d2c7">Worker</th>'
+        '<th style="padding:8px;border-bottom:1px solid #d8d2c7;text-align:right">Charge</th>'
+        '<th style="padding:8px;border-bottom:1px solid #d8d2c7">Status</th>'
+        '<th style="padding:8px;border-bottom:1px solid #d8d2c7">Remarks</th>'
+        '</tr></thead><tbody>'
+        + ("".join(table_rows) if table_rows else '<tr><td colspan="8" style="padding:12px">No maintenance works match the selected filters.</td></tr>')
+        + '</tbody></table></div>'
+        + f'<p style="margin-top:16px;font-weight:700">Total maintenance charges: GHS {total_amount:,.2f}</p>'
+    )
+    html_body = messaging.html_email(
+        title, intro, public_app_link("/operations/maintenance"),
+        meta_rows=[("Report period", period), ("Work items", str(len(records))),
+                   ("Total charges", f"GHS {total_amount:,.2f}"), ("Prepared by", prepared_by)],
+        badge="Maintenance report", action_label="Open maintenance schedule", extra_html=report_table,
+    )
+    mail_result = messaging.send_email(recipient_email, title, plain_body, html_body)
+
+    notification = None
+    if recipient_user:
+        notification = Notification(
+            user_id=recipient_user.id,
+            title="Maintenance report shared",
+            body=f"{len(records)} work item(s) · GHS {total_amount:,.2f} · {period}",
+            link="/operations/maintenance",
+            category="Operations",
+            event_key="maintenance_report",
+        )
+        db.session.add(notification)
+        db.session.flush()
+    _record_delivery(
+        mail_result, recipient_user, "maintenance_report", "email", recipient_email, title,
+        body=plain_body, html_body=html_body,
+        notification_id=notification.id if notification else None,
+    )
+    audit(request.user, "maintenance_report_sent", "maintenance_works", None, None,
+          {"recipient": recipient_email, "record_count": len(records),
+           "total_amount": str(total_amount), "email_status": mail_result.get("status")})
+    db.session.commit()
+
+    return jsonify({
+        "message": "Maintenance report shared with the Managing Director",
+        "data": {
+            "recipient_name": employee.full_name if employee else recipient_email,
+            "recipient_email": recipient_email,
+            "email_status": mail_result.get("status", "failed"),
+            "email_error": mail_result.get("error"),
+            "email_mode": messaging.config().get("email_mode", "smtp"),
+            "in_app_notified": bool(notification),
+            "record_count": len(records),
+            "total_amount": float(total_amount),
+        },
+    })
+>>>>>>> bd6b7fbf0df3c674ac1949cf8396ebe28b0b102e
 
 
 @app.get("/api/v1/operations/storerooms")
