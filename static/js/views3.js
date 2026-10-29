@@ -402,7 +402,8 @@ Views.expenses = async function (root) {
         { label: "Amount", sortValue: r => Number(r.amount || 0), render: r => '<b>' + money(r.amount) + '</b>' },
         { label: "Status", key: "status", render: r => chip(r.status) },
         { label: "", class: "right", sortable: false, render: r => {
-          let b = "";
+          let b = '<button class="btn btn-sm btn-ghost" data-claim-view="' + r.id + '">View</button> ';
+          if (r.status === "pending" && (canPay || r.employee_id === Store.user.employee_id)) b += '<button class="btn btn-sm btn-soft" data-claim-edit="' + r.id + '">Edit</button> <button class="btn btn-sm btn-danger" data-claim-delete="' + r.id + '">Delete</button> ';
           if (canApprove && r.status === "pending") b += '<button class="btn btn-sm btn-soft" data-claim-approve="' + r.id + '">Approve</button> <button class="btn btn-sm btn-danger" data-claim-reject="' + r.id + '">Reject</button>';
           if (canPay && r.status === "approved") b += '<button class="btn btn-sm btn-accent" data-claim-pay="' + r.id + '">Pay</button>';
           return b;
@@ -412,11 +413,13 @@ Views.expenses = async function (root) {
 
     const catTbl = renderTable({
       id: "expense-categories-table",
+      actions: canPay ? '<button class="btn btn-sm btn-accent" id="category-add">New category</button>' : "",
       exportName: "expense-categories",
       columns: [
         { label: "Category", key: "name", render: r => '<b>' + esc(r.name) + '</b>' },
         { label: "Limit", sortValue: r => r.limit_amount ? Number(r.limit_amount) : 1e12, render: r => r.limit_amount ? money(r.limit_amount) : "No limit" },
         { label: "Receipt", sortValue: r => r.requires_receipt ? 1 : 0, render: r => r.requires_receipt ? "Required" : "Optional" },
+        ...(canPay ? [{ label: "Actions", sortable: false, render: r => '<button class="btn btn-sm btn-soft" data-category-edit="' + r.id + '">Edit</button> <button class="btn btn-sm btn-danger" data-category-delete="' + r.id + '">Delete</button>' }] : []),
       ], rows: cats, emptyTitle: "No categories",
     });
 
@@ -430,10 +433,20 @@ Views.expenses = async function (root) {
       + '<div class="page-enter">' + (claimState.tab === "categories" ? catTbl : tbl) + '</div>';
 
     root.querySelectorAll("[data-etab]").forEach(b => b.onclick = () => { claimState.tab = b.dataset.etab; Views.expenses(root); });
-    root.querySelector("#claim-add").onclick = openClaimForm;
-    onDelegate(root, "click", "[data-claim-approve]", (b) => claimAction(b.dataset.claimApprove, "approve", root));
-    onDelegate(root, "click", "[data-claim-reject]", (b) => claimAction(b.dataset.claimReject, "reject", root));
-    onDelegate(root, "click", "[data-claim-pay]", (b) => claimAction(b.dataset.claimPay, "pay", root));
+    root.querySelector("#claim-add").onclick = () => openClaimForm(null, cats);
+    const categoryAdd = root.querySelector("#category-add");
+    if (categoryAdd) categoryAdd.onclick = () => openExpenseCategoryForm();
+    onFinanceDelegate(root, "click", "[data-claim-edit]", b => openClaimForm(claims.find(c => c.id === Number(b.dataset.claimEdit)), cats));
+    onFinanceDelegate(root, "click", "[data-claim-view]", b => {
+      const c = claims.find(c => c.id === Number(b.dataset.claimView));
+      openModal({ title: c.title, sub: c.employee_name || "Expense claim", body: '<p>' + esc(c.category_name || "") + ' · ' + fmtDate(c.claim_date) + '</p><p>' + money(c.amount) + ' ' + chip(c.status) + '</p><p style="white-space:pre-wrap">' + esc(c.description || "No description") + '</p>' });
+    });
+    onFinanceDelegate(root, "click", "[data-claim-delete]", b => deleteFinanceRecord("claims", b.dataset.claimDelete, () => Views.expenses(root)));
+    onFinanceDelegate(root, "click", "[data-category-edit]", b => openExpenseCategoryForm(cats.find(c => c.id === Number(b.dataset.categoryEdit))));
+    onFinanceDelegate(root, "click", "[data-category-delete]", b => deleteFinanceRecord("expense-categories", b.dataset.categoryDelete, () => Views.expenses(root)));
+    onFinanceDelegate(root, "click", "[data-claim-approve]", (b) => claimAction(b.dataset.claimApprove, "approve", root));
+    onFinanceDelegate(root, "click", "[data-claim-reject]", (b) => claimAction(b.dataset.claimReject, "reject", root));
+    onFinanceDelegate(root, "click", "[data-claim-pay]", (b) => claimAction(b.dataset.claimPay, "pay", root));
   } catch (e) {
     root.innerHTML = pageHead("Expenses", "Unavailable") + emptyState("Could not load expenses", e.message, "alert");
   }
@@ -447,18 +460,48 @@ async function claimAction(id, action, root) {
   } catch (e) { handleErr(e); }
 }
 
-function openClaimForm() {
+async function deleteFinanceRecord(resource, id, refresh) {
+  if (!confirm("Delete this record? This action cannot be undone.")) return;
+  try { await API.del("/" + resource + "/" + id); toast("Deleted successfully", "success"); await refresh(); }
+  catch (e) { handleErr(e); }
+}
+
+function openExpenseCategoryForm(category) {
+  const c = category || {};
   formModal({
-    title: "Submit expense claim",
-    sub: "Attach receipts with your manager after submission",
+    title: c.id ? "Edit expense category" : "New expense category",
     fields: [
-      { name: "title", label: "Claim title", required: true, full: true, placeholder: "e.g. Client visit – Kumasi" },
-      { name: "category_id", label: "Category", type: "select", options: (Store.meta.expense_categories || []).map(c => ({ value: c.id, label: c.name })), required: true },
-      { name: "amount", label: "Amount (GHS)", type: "number", required: true, min: 0, step: "0.01" },
-      { name: "claim_date", label: "Expense date", type: "date", value: todayISO(), required: true },
-      { name: "description", label: "Description", type: "textarea", full: true },
+      { name: "name", label: "Name", value: c.name, required: true },
+      { name: "limit_amount", label: "Limit (GHS, blank for no limit)", type: "number", min: 0, step: "0.01", value: c.limit_amount },
+      { name: "requires_receipt", label: "Receipt required", type: "checkbox", value: c.requires_receipt ?? true },
     ],
-    onSubmit: async (data) => { data.status = "pending"; await API.post("/claims", data); navigate(); },
+    onSubmit: async data => {
+      if (c.id) await API.put("/expense-categories/" + c.id, data);
+      else await API.post("/expense-categories", data);
+      await Store.loadMeta();
+      navigate();
+    },
+  });
+}
+
+function openClaimForm(claim, categories) {
+  const c = claim || {};
+  formModal({
+    title: c.id ? "Edit expense claim" : "Submit expense claim",
+    sub: "Only pending claims can be changed. Attach receipts with your manager after submission.",
+    fields: [
+      ...(!c.id && Store.canPayroll() ? [{ name: "employee_id", label: "Employee", type: "select", options: (Store.meta.employees || []).map(e => ({ value: e.id, label: e.full_name || e.name || e.employee_no })), value: Store.user.employee_id, required: true }] : []),
+      { name: "title", label: "Claim title", value: c.title, required: true, full: true, placeholder: "e.g. Client visit – Kumasi" },
+      { name: "category_id", label: "Category", type: "select", value: c.category_id, options: (categories || Store.meta.expense_categories || []).map(c => ({ value: c.id, label: c.name })), required: true },
+      { name: "amount", label: "Amount (GHS)", type: "number", value: c.amount, required: true, min: 0.01, step: "0.01" },
+      { name: "claim_date", label: "Expense date", type: "date", value: c.claim_date || todayISO(), required: true },
+      { name: "description", label: "Description", type: "textarea", value: c.description, full: true },
+    ],
+    onSubmit: async data => {
+      if (c.id) await API.put("/claims/" + c.id, data);
+      else await API.post("/claims", data);
+      navigate();
+    },
   });
 }
 

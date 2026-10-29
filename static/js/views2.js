@@ -1107,6 +1107,26 @@ function monthCalendar(month, requests, holidays, types) {
 /* ============================================================ PAYROLL */
 const payState = { tab: "runs" };
 
+// These views reuse the same root when switching tabs or refreshing after CRUD.
+// Keep one listener per selector and replace its closure with the latest data.
+const financeDelegates = new WeakMap();
+function onFinanceDelegate(container, eventType, selector, handler) {
+  let bindings = financeDelegates.get(container);
+  if (!bindings) {
+    bindings = new Map();
+    financeDelegates.set(container, bindings);
+  }
+  const key = eventType + ":" + selector;
+  const previous = bindings.get(key);
+  if (previous) container.removeEventListener(eventType, previous);
+  const listener = ev => {
+    const target = ev.target && ev.target.closest ? ev.target.closest(selector) : null;
+    if (target && container.contains(target)) handler(target, ev);
+  };
+  bindings.set(key, listener);
+  container.addEventListener(eventType, listener);
+}
+
 Views.payroll = async function (root) {
   root.innerHTML = pageHead("Payroll", "Loading payroll data…") + spinners(3);
   try {
@@ -1141,7 +1161,7 @@ Views.payroll = async function (root) {
             { label: "", class: "right", sortable: false, render: r => '<button class="btn btn-sm btn-ghost" data-payslip="' + r.id + '">' + icon("eye", 13) + ' View</button>' },
           ], rows: slips, emptyTitle: "No payslips yet",
         });
-      onDelegate(root, "click", "[data-payslip]", (b) => openPayslipModal(Number(b.dataset.payslip)));
+      onFinanceDelegate(root, "click", "[data-payslip]", (b) => openPayslipModal(Number(b.dataset.payslip)));
       return;
     }
 
@@ -1183,6 +1203,7 @@ Views.payroll = async function (root) {
             if (canApprove && r.status === "calculated") btns += '<button class="btn btn-sm btn-soft" data-run-approve="' + r.id + '">Approve</button> ';
             if (canRun && r.status === "approved") btns += '<button class="btn btn-sm btn-soft" data-run-lock="' + r.id + '">Lock</button> ';
             if (canRun && r.status === "locked") btns += '<button class="btn btn-sm btn-accent" data-run-pay="' + r.id + '">Mark paid</button>';
+            if (canRun && ["draft", "calculated"].includes(r.status)) btns += ' <button class="btn btn-sm btn-soft" data-run-edit="' + r.id + '">Edit</button> <button class="btn btn-sm btn-danger" data-run-delete="' + r.id + '">Delete</button>';
             return btns;
           } },
         ],
@@ -1240,6 +1261,7 @@ Views.payroll = async function (root) {
             { label: "Kind", key: "kind", render: r => chip(r.kind === "earning" ? "active" : "locked", r.kind) },
             { label: "Taxable", sortValue: r => r.is_taxable ? 1 : 0, render: r => r.is_taxable ? "Yes" : "No" },
             { label: "Calculation", key: "calculation", render: r => esc(r.calculation || "fixed") },
+            ...(canRun ? [{ label: "Actions", sortable: false, render: r => '<button class="btn btn-sm btn-soft" data-comp-edit="' + r.id + '">Edit</button> <button class="btn btn-sm btn-danger" data-comp-delete="' + r.id + '">Delete</button>' }] : []),
           ], rows: comps, emptyTitle: "No components",
         })
         + renderTable({
@@ -1268,16 +1290,20 @@ Views.payroll = async function (root) {
       + '<div class="page-enter">' + body + '</div>';
 
     root.querySelectorAll("[data-ptab]").forEach(b => b.onclick = () => { payState.tab = b.dataset.ptab; Views.payroll(root); });
-    onDelegate(root, "click", "[data-payslip]", (b) => openPayslipModal(Number(b.dataset.payslip)));
-    const nr = root.querySelector("#pay-new-run"); if (nr) nr.onclick = openPayrollRunForm;
+    onFinanceDelegate(root, "click", "[data-payslip]", (b) => openPayslipModal(Number(b.dataset.payslip)));
+    const nr = root.querySelector("#pay-new-run"); if (nr) nr.onclick = () => openPayrollRunForm();
     const ex = root.querySelector("#pay-export"); if (ex) ex.onclick = () => downloadBankScheduleCSV(latest, slips);
-    const comp = root.querySelector("#add-comp"); if (comp) comp.onclick = openComponentForm;
-    onDelegate(root, "click", "[data-run-calc]", (b) => runAction("/payroll-runs/" + b.dataset.runCalc + "/calculate", "Payroll calculated", root));
-    onDelegate(root, "click", "[data-run-approve]", (b) => runAction("/payroll-runs/" + b.dataset.runApprove + "/approve", "Payroll approved", root));
-    onDelegate(root, "click", "[data-run-lock]", (b) => runAction("/payroll-runs/" + b.dataset.runLock + "/lock", "Payroll locked", root));
-    onDelegate(root, "click", "[data-run-pay]", (b) => runAction("/payroll-runs/" + b.dataset.runPay + "/pay", "Payroll marked paid", root));
-    onDelegate(root, "click", "[data-run-view]", (b) => openRunPayslips(Number(b.dataset.runView)));
-    onDelegate(root, "click", "[data-loan-approve]", async (b) => {
+    const comp = root.querySelector("#add-comp"); if (comp) comp.onclick = () => openComponentForm();
+    onFinanceDelegate(root, "click", "[data-comp-edit]", b => openComponentForm(comps.find(c => c.id === Number(b.dataset.compEdit))));
+    onFinanceDelegate(root, "click", "[data-comp-delete]", b => deleteFinanceRecord("salary-components", b.dataset.compDelete, () => Views.payroll(root)));
+    onFinanceDelegate(root, "click", "[data-run-edit]", b => openPayrollRunForm(runs.find(r => r.id === Number(b.dataset.runEdit))));
+    onFinanceDelegate(root, "click", "[data-run-delete]", b => deleteFinanceRecord("payroll-runs", b.dataset.runDelete, () => Views.payroll(root)));
+    onFinanceDelegate(root, "click", "[data-run-calc]", (b) => runAction("/payroll-runs/" + b.dataset.runCalc + "/calculate", "Payroll calculated", root));
+    onFinanceDelegate(root, "click", "[data-run-approve]", (b) => runAction("/payroll-runs/" + b.dataset.runApprove + "/approve", "Payroll approved", root));
+    onFinanceDelegate(root, "click", "[data-run-lock]", (b) => runAction("/payroll-runs/" + b.dataset.runLock + "/lock", "Payroll locked", root));
+    onFinanceDelegate(root, "click", "[data-run-pay]", (b) => runAction("/payroll-runs/" + b.dataset.runPay + "/pay", "Payroll marked paid", root));
+    onFinanceDelegate(root, "click", "[data-run-view]", (b) => openRunPayslips(Number(b.dataset.runView)));
+    onFinanceDelegate(root, "click", "[data-loan-approve]", async (b) => {
       try { await API.post("/loans/" + b.dataset.loanApprove + "/approve"); toast("Loan approved", "success"); Views.payroll(root); } catch (e) { handleErr(e); }
     });
   } catch (e) {
@@ -1323,17 +1349,24 @@ async function runAction(path, message, root) {
   } catch (e) { handleErr(e); }
 }
 
-function openPayrollRunForm() {
+function openPayrollRunForm(run) {
+  const r = run || {};
   const now = new Date();
   formModal({
-    title: "New payroll run",
+    title: r.id ? "Edit payroll run" : "New payroll run",
     sub: "Calculates PAYE, SSNIT and loan deductions for all active employees",
     fields: [
-      { name: "period_month", label: "Month", type: "select", options: Array.from({ length: 12 }).map((_, i) => ({ value: i + 1, label: monthName(i + 1) })), value: now.getMonth() + 1, required: true },
-      { name: "period_year", label: "Year", type: "number", value: now.getFullYear(), required: true },
-      { name: "notes", label: "Notes", type: "textarea", full: true },
+      { name: "period_month", label: "Month", type: "select", options: Array.from({ length: 12 }).map((_, i) => ({ value: i + 1, label: monthName(i + 1) })), value: r.period_month || now.getMonth() + 1, required: true },
+      { name: "period_year", label: "Year", type: "number", value: r.period_year || now.getFullYear(), min: 2000, max: 2100, required: true },
+      { name: "notes", label: "Notes", type: "textarea", value: r.notes, full: true },
     ],
     onSubmit: async (data) => {
+      if (r.id) {
+        await API.put("/payroll-runs/" + r.id, data);
+        toast("Run updated. Calculate it again before approval.", "success");
+        navigate();
+        return;
+      }
       data.status = "draft";
       data.prepared_by = Store.user.id;
       const res = await API.post("/payroll-runs", data);
@@ -1344,9 +1377,10 @@ function openPayrollRunForm() {
   });
 }
 
-function openComponentForm() {
+function openComponentForm(component) {
+  const c = component || {};
   formModal({
-    title: "Add salary component",
+    title: c.id ? "Edit salary component" : "Add salary component",
     fields: [
       { name: "name", label: "Name", required: true },
       { name: "code", label: "Code", required: true },
@@ -1354,8 +1388,12 @@ function openComponentForm() {
       { name: "is_taxable", label: "Taxable", type: "checkbox", value: true },
       { name: "is_statutory", label: "Statutory", type: "checkbox" },
       { name: "calculation", label: "Calculation", type: "select", options: ["fixed", "percent", "band"], value: "fixed" },
-    ],
-    onSubmit: async (data) => { await API.post("/salary-components", data); navigate(); },
+    ].map(f => ({ ...f, value: c[f.name] ?? f.value })),
+    onSubmit: async (data) => {
+      if (c.id) await API.put("/salary-components/" + c.id, data);
+      else await API.post("/salary-components", data);
+      navigate();
+    },
   });
 }
 

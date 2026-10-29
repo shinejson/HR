@@ -1831,6 +1831,78 @@ def admin_conflict(model, fields, obj=None):
     return None
 
 
+def finance_fields(model, fields, obj=None):
+    """Validate financial CRUD and keep workflow/computed fields server-owned."""
+    allowed = {
+        ExpenseClaim: {"employee_id", "category_id", "title", "amount", "claim_date", "description"},
+        ExpenseCategory: {"name", "limit_amount", "requires_receipt"},
+        PayrollRun: {"period_year", "period_month", "notes"},
+        SalaryComponent: {"name", "code", "kind", "is_taxable", "is_statutory", "calculation"},
+    }
+    if model not in allowed:
+        return
+    if obj and model is ExpenseClaim and obj.status != "pending":
+        raise ValueError("Only pending claims can be edited or deleted")
+    if obj and model is PayrollRun and obj.status not in ("draft", "calculated"):
+        raise ValueError("Only draft or calculated payroll runs can be edited or deleted")
+    for key in list(fields):
+        if key not in allowed[model]:
+            del fields[key]
+    if obj and model is ExpenseClaim:
+        fields.pop("employee_id", None)
+    values = {key: fields.get(key, getattr(obj, key, None)) for key in allowed[model]}
+    if model is ExpenseClaim:
+        eid = values["employee_id"] or request.user.employee_id
+        if not eid or not db.session.get(Employee, eid):
+            raise ValueError("Select a valid employee")
+        fields["employee_id"] = eid
+        if not str(values["title"] or "").strip():
+            raise ValueError("Claim title is required")
+        if values["amount"] is None or not values["amount"].is_finite() or values["amount"] <= 0:
+            raise ValueError("Claim amount must be greater than zero")
+        if not values["category_id"] or not db.session.get(ExpenseCategory, values["category_id"]):
+            raise ValueError("Select a valid expense category")
+        if not values["claim_date"]:
+            raise ValueError("Expense date is required")
+    if model is ExpenseCategory:
+        if not str(values["name"] or "").strip():
+            raise ValueError("Category name is required")
+        limit = values["limit_amount"]
+        if limit is not None and (not limit.is_finite() or limit < 0):
+            raise ValueError("Category limit cannot be negative")
+    if model is SalaryComponent:
+        for key in ("name", "code"):
+            if not str(values[key] or "").strip():
+                raise ValueError(f"Component {key} is required")
+            if key in fields:
+                fields[key] = str(fields[key]).strip()
+        for key, options, default in (("kind", {"earning", "deduction"}, "earning"),
+                                      ("calculation", {"fixed", "percent", "band"}, "fixed")):
+            if values[key] is not None and values[key] not in options:
+                raise ValueError(f"Invalid component {key}")
+            if not obj and key not in fields:
+                fields[key] = default
+        duplicate = SalaryComponent.query.filter_by(code=fields.get("code", values["code"]))
+        if obj:
+            duplicate = duplicate.filter(SalaryComponent.id != obj.id)
+        if duplicate.first():
+            raise ValueError("A salary component with this code already exists")
+    if model is PayrollRun:
+        if not values["period_month"] or not 1 <= values["period_month"] <= 12 or not values["period_year"] or not 2000 <= values["period_year"] <= 2100:
+            raise ValueError("Enter a valid payroll month and year (2000–2100)")
+        duplicate = PayrollRun.query.filter_by(period_month=values["period_month"], period_year=values["period_year"])
+        if obj:
+            duplicate = duplicate.filter(PayrollRun.id != obj.id)
+        if duplicate.first():
+            raise ValueError("A payroll run already exists for this period")
+
+
+def clear_run_payslips(run):
+    ids = db.session.query(Payslip.id).filter_by(run_id=run.id)
+    PayslipItem.query.filter(PayslipItem.payslip_id.in_(ids)).delete(synchronize_session=False)
+    Payslip.query.filter_by(run_id=run.id).delete(synchronize_session=False)
+
+
 def _create(resource, model):
     if role_of(request.user) in READ_ONLY:
         return error("Auditor accounts are read-only", 403)
@@ -1839,6 +1911,7 @@ def _create(resource, model):
     data = request.get_json(silent=True) or {}
     try:
         fields = writable_fields(model, data)
+        finance_fields(model, fields)
     except ValueError as e:
         return error(str(e), 422)
     conflict = admin_conflict(model, fields)
@@ -1865,6 +1938,8 @@ def _create(resource, model):
     if hasattr(model, "created_by"):
         fields["created_by"] = request.user.id
     obj = model(**fields)
+    if model is PayrollRun:
+        obj.prepared_by = request.user.id
     self_only = not can_write(request.user, resource) and can_self_write(request.user, resource)
     if self_only and hasattr(obj, "employee_id"):
         obj.employee_id = request.user.employee_id
@@ -2036,6 +2111,7 @@ def update_resource(resource, rid):
     old = {}
     try:
         fields = writable_fields(model, data)
+        finance_fields(model, fields, obj)
     except ValueError as e:
         return error(str(e), 422)
     conflict = admin_conflict(model, fields, obj)
@@ -2051,6 +2127,10 @@ def update_resource(resource, rid):
             return error("System role slugs cannot be changed", 409)
         if obj.slug == "super_admin" and "permissions" in fields and fields["permissions"] != "*":
             return error("The Super Admin role must keep all permissions", 409)
+    if model is PayrollRun:
+        clear_run_payslips(obj)
+        obj.status = "draft"
+        obj.employee_count = obj.total_gross = obj.total_tax = obj.total_net = 0
     for k, v in fields.items():
         old[k] = conv(getattr(obj, k))
         setattr(obj, k, v)
@@ -2095,6 +2175,19 @@ def delete_resource(resource, rid):
     if can_self_write(request.user, resource) and not can_write(request.user, resource):
         if getattr(obj, "employee_id", None) != request.user.employee_id:
             return error("You can only delete your own records", 403)
+    if model in (ExpenseClaim, PayrollRun):
+        try:
+            finance_fields(model, {}, obj)
+        except ValueError as exc:
+            return error(str(exc), 409)
+    if model is PayrollRun:
+        clear_run_payslips(obj)
+    if model is ExpenseClaim:
+        Approval.query.filter_by(request_type="expense", request_id=obj.id).delete()
+    if model is SalaryComponent and SalaryStructure.query.filter_by(component_id=obj.id).first():
+        return error("This component is assigned to salary structures and cannot be deleted", 409)
+    if model is ExpenseCategory and ExpenseClaim.query.filter_by(category_id=obj.id).first():
+        return error("This category is used by claims and cannot be deleted", 409)
     if model is User:
         if obj.id == request.user.id:
             return error("You cannot delete your own account", 409)
@@ -3954,9 +4047,9 @@ def calculate_payroll(rid):
     run = db.session.get(PayrollRun, rid)
     if not run:
         return error("Not found", 404)
-    if run.status in ("locked", "paid"):
-        return error("Locked payroll runs cannot be recalculated", 409)
-    Payslip.query.filter_by(run_id=run.id).delete()
+    if run.status not in ("draft", "calculated"):
+        return error("Only draft or calculated payroll runs can be recalculated", 409)
+    clear_run_payslips(run)
     employees = Employee.query.filter(Employee.deleted_at.is_(None), Employee.status == "active").all()
     tg = tt = tn = Decimal("0")
     for emp in employees:
