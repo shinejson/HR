@@ -62,6 +62,7 @@ const NAV = [
         id: "ops-service-group", label: "Service & Work Orders", icon: "lifebuoy", requiresOps: true,
         children: [
           { id: "operations", label: "Work Orders Queue", subTab: "workorders" },
+          { id: "operations", label: "Maintenance schedule", subTab: "maintenance" },
           { id: "helpdesk", label: "Helpdesk tickets" },
         ],
       },

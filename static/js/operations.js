@@ -31,6 +31,10 @@ const opsState = {
   inventorySearch: "",
   workOrderFilter: "all",
   workOrderWing: "all",
+  maintenanceSearch: "",
+  maintenanceStatus: "",
+  maintenanceFrom: "",
+  maintenanceTo: "",
 };
 
 Views.operations = async function (root, params) {
@@ -56,19 +60,22 @@ Views.operations = async function (root, params) {
   }
 
   const sub = params && params[0];
-  const validTabs = ["dashboard", "inventory", "workorders", "storerooms", "readiness", "assets", "safety", "settings"];
+  const validTabs = ["dashboard", "inventory", "workorders", "maintenance", "storerooms", "readiness", "assets", "safety", "settings"];
   opsState.tab = (sub && validTabs.includes(sub)) ? sub : "dashboard";
 
   root.innerHTML = pageHead("Hotel Operations", "Loading operations workspace…", "", "Department") + spinners(4);
 
   try {
     // Fetch data in parallel
-    const [dashRes, invRes, woRes, storeRes, assetRes] = await Promise.all([
+    const [dashRes, invRes, woRes, storeRes, assetRes, maintenanceRes] = await Promise.all([
       API.get("/operations/dashboard", { period: opsState.period }),
       API.get("/operations/inventory"),
       API.get("/operations/work-orders"),
       API.get("/operations/storerooms"),
       API.get("/assets", { per_page: 200 }),
+      opsState.tab === "maintenance"
+        ? API.get("/operations/maintenance", maintenanceApiFilters())
+        : Promise.resolve({ data: [] }),
     ]);
 
     const dash = (dashRes && dashRes.data) || {};
@@ -76,11 +83,13 @@ Views.operations = async function (root, params) {
     const workOrders = (woRes && woRes.data) || [];
     const storerooms = (storeRes && storeRes.data) || [];
     const assets = (assetRes && assetRes.data) || [];
+    const maintenanceWorks = (maintenanceRes && maintenanceRes.data) || [];
 
     const tabs = [
       ["dashboard", "Overview"],
       ["inventory", "Supplies & Inventory"],
       ["workorders", "Work Orders"],
+      ["maintenance", "Maintenance"],
       ["storerooms", "Storerooms & Hubs"],
       ["readiness", "Wings & Readiness"],
       ["assets", "Assets Register"],
@@ -478,6 +487,34 @@ Views.operations = async function (root, params) {
             rows: orders, emptyTitle: "No work orders in queue",
           });
 
+    // ============================================================ TAB: MAINTENANCE
+    } else if (opsState.tab === "maintenance") {
+      const scheduledCount = maintenanceWorks.filter(w => w.status === "scheduled").length;
+      const inProgressCount = maintenanceWorks.filter(w => w.status === "in_progress").length;
+      const completedCount = maintenanceWorks.filter(w => w.status === "completed").length;
+      const totalCharges = maintenanceWorks.reduce((sum, work) => sum + Number(work.amount || 0), 0);
+
+      body = '<div class="grid grid-4" style="margin-bottom:18px">'
+        + kpiCard({ label: "Scheduled", value: scheduledCount, icon: "calendar", tone: "blue", foot: "Planned maintenance jobs" })
+        + kpiCard({ label: "In Progress", value: inProgressCount, icon: "clock", tone: "amber", foot: "Work underway" })
+        + kpiCard({ label: "Completed", value: completedCount, icon: "checkCircle", tone: "teal", foot: "Completed in this view" })
+        + kpiCard({ label: "Total Charges", value: money(totalCharges, "GHS"), icon: "wallet", tone: "purple", foot: "Based on current filters" })
+        + '</div>'
+        + '<div class="card card-pad" style="margin-bottom:16px">'
+        + '<div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">'
+        + '<div class="field" style="flex:1;min-width:220px;margin:0"><label for="ops-maint-search">Search maintenance</label><input class="input" id="ops-maint-search" value="' + esc(opsState.maintenanceSearch) + '" placeholder="Work, worker, location or remarks…"></div>'
+        + '<div class="field" style="min-width:155px;margin:0"><label for="ops-maint-status">Status</label><select class="select" id="ops-maint-status"><option value="">All statuses</option>'
+        + [["scheduled", "Scheduled"], ["in_progress", "In progress"], ["completed", "Completed"], ["cancelled", "Cancelled"]].map(o => '<option value="' + o[0] + '"' + (opsState.maintenanceStatus === o[0] ? " selected" : "") + '>' + o[1] + '</option>').join("")
+        + '</select></div>'
+        + '<div class="field" style="min-width:145px;margin:0"><label for="ops-maint-from">From date</label><input class="input" id="ops-maint-from" type="date" value="' + esc(opsState.maintenanceFrom) + '"></div>'
+        + '<div class="field" style="min-width:145px;margin:0"><label for="ops-maint-to">To date</label><input class="input" id="ops-maint-to" type="date" value="' + esc(opsState.maintenanceTo) + '"></div>'
+        + '<button class="btn btn-ghost" id="ops-maint-apply">Apply filters</button>'
+        + '<button class="btn btn-soft" id="ops-maint-clear">Clear</button>'
+        + '</div>'
+        + '<div class="tiny muted" style="margin-top:10px">The selected dates, status and search are used for both the printed and emailed report.</div>'
+        + '</div>'
+        + renderMaintenanceTable(maintenanceWorks);
+
     // ============================================================ TAB: STOREROOMS
     } else if (opsState.tab === "storerooms") {
       body = '<div class="grid grid-3">'
@@ -601,11 +638,19 @@ Views.operations = async function (root, params) {
     }
 
     // Render outer shell
+    const isMaintenanceTab = opsState.tab === "maintenance";
+    const pageActions = isMaintenanceTab
+      ? '<button class="btn btn-ghost" id="ops-maint-print">' + icon("printer", 15) + ' Print report</button>'
+        + '<button class="btn btn-ghost" id="ops-maint-send">' + icon("send", 15) + ' Send report to MD</button>'
+        + '<button class="btn btn-accent" id="ops-maint-new">' + icon("plus", 15) + ' Schedule maintenance</button>'
+      : '<button class="btn btn-ghost" id="ops-top-restock">' + icon("zap", 15) + ' Restock Supplies</button>'
+        + '<button class="btn btn-accent" id="ops-top-wo">' + icon("plus", 15) + ' New Work Order</button>';
     root.innerHTML = pageHead(
       "Hotel Operations",
-      "Executive command centre for storerooms, linen inventory, guest work orders, room turnaround, and property readiness.",
-      '<button class="btn btn-ghost" id="ops-top-restock">' + icon("zap", 15) + ' Restock Supplies</button>'
-      + '<button class="btn btn-accent" id="ops-top-wo">' + icon("plus", 15) + ' New Work Order</button>',
+      isMaintenanceTab
+        ? "Schedule repairs and inspections, assign employees or contractors, track GHS charges, and report to the Managing Director."
+        : "Executive command centre for storerooms, linen inventory, guest work orders, room turnaround, and property readiness.",
+      pageActions,
       "Department"
     )
     + '<div class="tabs" style="margin-bottom:20px">'
@@ -630,6 +675,65 @@ Views.operations = async function (root, params) {
 
     const btnWO = root.querySelector("#ops-top-wo") || root.querySelector("#ops-btn-quick-wo") || root.querySelector("#ops-btn-new-wo-tab");
     if (btnWO) btnWO.onclick = () => openNewWorkOrderModal();
+
+    const btnNewMaintenance = root.querySelector("#ops-maint-new");
+    if (btnNewMaintenance) btnNewMaintenance.onclick = () => openMaintenanceForm();
+    const btnPrintMaintenance = root.querySelector("#ops-maint-print");
+    if (btnPrintMaintenance) btnPrintMaintenance.onclick = () => printMaintenanceReport(maintenanceWorks, maintenanceApiFilters());
+    const btnSendMaintenance = root.querySelector("#ops-maint-send");
+    if (btnSendMaintenance) btnSendMaintenance.onclick = () => sendMaintenanceReport(maintenanceWorks.length);
+
+    const applyMaintenanceFilters = () => {
+      const search = (root.querySelector("#ops-maint-search")?.value || "").trim();
+      const status = root.querySelector("#ops-maint-status")?.value || "";
+      const from = root.querySelector("#ops-maint-from")?.value || "";
+      const to = root.querySelector("#ops-maint-to")?.value || "";
+      if (from && to && from > to) {
+        toast("The end date must be on or after the start date", "error");
+        return;
+      }
+      opsState.maintenanceSearch = search;
+      opsState.maintenanceStatus = status;
+      opsState.maintenanceFrom = from;
+      opsState.maintenanceTo = to;
+      Views.operations(root, ["maintenance"]);
+    };
+    const applyMaintenanceButton = root.querySelector("#ops-maint-apply");
+    if (applyMaintenanceButton) applyMaintenanceButton.onclick = applyMaintenanceFilters;
+    const clearMaintenanceButton = root.querySelector("#ops-maint-clear");
+    if (clearMaintenanceButton) clearMaintenanceButton.onclick = () => {
+      opsState.maintenanceSearch = "";
+      opsState.maintenanceStatus = "";
+      opsState.maintenanceFrom = "";
+      opsState.maintenanceTo = "";
+      Views.operations(root, ["maintenance"]);
+    };
+    const maintenanceSearchInput = root.querySelector("#ops-maint-search");
+    if (maintenanceSearchInput) maintenanceSearchInput.onkeydown = event => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        applyMaintenanceFilters();
+      }
+    };
+    root.querySelectorAll("[data-maint-edit]").forEach(button => {
+      button.onclick = () => {
+        const record = maintenanceWorks.find(work => work.id === Number(button.dataset.maintEdit));
+        if (record) openMaintenanceForm(record);
+      };
+    });
+    root.querySelectorAll(".ops-maint-status-select").forEach(select => {
+      select.onchange = async () => {
+        select.disabled = true;
+        try {
+          await API.put("/operations/maintenance/" + select.dataset.maintId, { status: select.value });
+          toast("Maintenance status updated", "success");
+          Views.operations(root, ["maintenance"]);
+        } catch (e) {
+          toast("Could not update maintenance status: " + e.message, "error");
+          select.disabled = false;
+        }
+      };
+    });
 
     const btnNewItem = root.querySelector("#ops-btn-new-item");
     if (btnNewItem) btnNewItem.onclick = () => openNewInventoryItemModal();
@@ -679,6 +783,192 @@ Views.operations = async function (root, params) {
       + emptyState("Unable to load Hotel Operations", e.message, "alert");
   }
 };
+
+
+// ============================================================ MAINTENANCE SCHEDULE & REPORTS
+function maintenanceApiFilters() {
+  return {
+    q: opsState.maintenanceSearch,
+    status: opsState.maintenanceStatus,
+    from_date: opsState.maintenanceFrom,
+    to_date: opsState.maintenanceTo,
+  };
+}
+
+function maintenanceReportPeriod(filters) {
+  filters = filters || {};
+  const start = filters.from_date;
+  const end = filters.to_date;
+  let period = start && end ? fmtDate(start) + " – " + fmtDate(end)
+    : (start ? "From " + fmtDate(start) : (end ? "Through " + fmtDate(end) : "All scheduled dates"));
+  if (filters.status) period += " · " + filters.status.replace(/_/g, " ");
+  if (filters.q) period += " · Search: " + filters.q;
+  return period;
+}
+
+function renderMaintenanceTable(records) {
+  const rows = records || [];
+  const head = '<tr><th>Reference</th><th>Scheduled</th><th>Work & location</th><th>Worker</th>'
+    + '<th>Charge</th><th>Status</th><th>Remarks</th><th></th></tr>';
+  const body = rows.length ? rows.map(work => {
+    const details = work.description
+      ? '<div class="tiny muted" style="max-width:260px">' + esc(work.description) + '</div>' : '';
+    const remarks = work.remarks || "—";
+    const statusOptions = ["scheduled", "in_progress", "completed", "cancelled"].map(status =>
+      '<option value="' + status + '"' + (work.status === status ? " selected" : "") + '>'
+      + status.replace(/_/g, " ") + '</option>'
+    ).join("");
+    return '<tr>'
+      + '<td><b class="mono">' + esc(work.reference_no) + '</b><div class="tiny muted">' + esc(work.category) + '</div></td>'
+      + '<td><b>' + esc(fmtDate(work.scheduled_at)) + '</b><div class="tiny muted">' + esc(fmtTime(work.scheduled_at)) + '</div></td>'
+      + '<td><b>' + esc(work.title) + '</b><div class="tiny muted">' + esc(work.location) + '</div>' + details + '</td>'
+      + '<td>' + esc(work.worker_name || "—") + '</td>'
+      + '<td><b>' + esc(money(work.amount || 0, "GHS")) + '</b></td>'
+      + '<td><select class="select ops-maint-status-select" data-maint-id="' + work.id + '" aria-label="Update status for ' + esc(work.reference_no) + '" style="min-width:125px;height:32px">' + statusOptions + '</select></td>'
+      + '<td><span class="tiny" title="' + esc(remarks) + '" style="display:block;max-width:190px;white-space:normal">' + esc(remarks.length > 96 ? remarks.slice(0, 93) + "…" : remarks) + '</span></td>'
+      + '<td><button type="button" class="btn btn-sm btn-ghost" data-maint-edit="' + work.id + '">' + icon("edit", 12) + ' Edit</button></td>'
+      + '</tr>';
+  }).join("") : '<tr><td colspan="8">' + emptyState("No maintenance work found", "Schedule a repair, inspection or preventive maintenance job to get started.", "calendar") + '</td></tr>';
+
+  return '<div class="card"><div class="card-head"><div><h3>Maintenance schedule & charge register</h3>'
+    + '<div class="sub">' + rows.length + ' record(s) · Filter the schedule, then print or email this report to the MD.</div></div></div>'
+    + '<div class="table-wrap"><table><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div></div>';
+}
+
+function defaultMaintenanceDateTime() {
+  const value = new Date();
+  value.setHours(value.getHours() + 1, 0, 0, 0);
+  const pad = number => String(number).padStart(2, "0");
+  return value.getFullYear() + "-" + pad(value.getMonth() + 1) + "-" + pad(value.getDate())
+    + "T" + pad(value.getHours()) + ":" + pad(value.getMinutes());
+}
+
+async function openMaintenanceForm(record) {
+  try {
+    const response = await API.get("/employees", { per_page: 500 });
+    const employees = (response.data || []).filter(employee => ["active", "probation"].includes(employee.status));
+    const employeeOptions = employees.map(employee => ({
+      value: employee.id,
+      label: (employee.full_name || employee.employee_name || [employee.first_name, employee.last_name].filter(Boolean).join(" "))
+        + (employee.department_name ? " · " + employee.department_name : ""),
+    }));
+    const fields = [
+      { name: "title", label: "Maintenance work", placeholder: "e.g. Service the main generator", required: true },
+      {
+        name: "category", label: "Work type", type: "select", required: true,
+        options: ["Preventive", "Repair", "Inspection", "Electrical", "Plumbing", "HVAC", "Other"],
+        value: record ? record.category : "Repair",
+      },
+      { name: "location", label: "Location / asset", placeholder: "e.g. Staff quarters, Room 204, generator house", required: true },
+      {
+        name: "scheduled_at", label: "Scheduled date & time", type: "datetime-local", required: true,
+        value: record && record.scheduled_at ? String(record.scheduled_at).slice(0, 16) : defaultMaintenanceDateTime(),
+      },
+      {
+        name: "worker_id", label: "Assigned worker", type: "select", required: true,
+        placeholder: "Select an employee or contractor",
+        options: [{ value: "external", label: "External contractor" }].concat(employeeOptions),
+        value: record ? (record.worker_id || "external") : "",
+      },
+      {
+        name: "worker_name", label: "Contractor name", placeholder: "Enter the contractor's name",
+        value: record && !record.worker_id ? record.worker_name : "",
+        hint: "Only needed when External contractor is selected.",
+      },
+      { name: "amount", label: "Charge (GHS)", type: "number", min: 0, step: "0.01", default: 0, required: true, value: record ? record.amount : 0 },
+      ...(record ? [{
+        name: "status", label: "Status", type: "select", value: record.status,
+        options: ["scheduled", "in_progress", "completed", "cancelled"],
+      }] : []),
+      { name: "description", label: "Work details", type: "textarea", rows: 3, full: true, placeholder: "Describe the work to be done, materials or checks required…", value: record ? record.description : "" },
+      { name: "remarks", label: "Remarks", type: "textarea", rows: 3, full: true, placeholder: "Add an update, completion note or other remarks…", value: record ? record.remarks : "" },
+    ];
+
+    openFormModal({
+      title: record ? "Edit maintenance work" : "Schedule maintenance work",
+      subtitle: "Assign an employee or contractor, record the GHS charge, and add work notes.",
+      wide: true,
+      fields,
+      submitLabel: record ? "Save changes" : "Schedule work",
+      successMessage: record ? "Maintenance work updated" : "Maintenance work scheduled",
+      async onSubmit(values) {
+        const externalWorker = String(values.worker_id) === "external";
+        const payload = {
+          title: values.title,
+          category: values.category,
+          location: values.location,
+          scheduled_at: values.scheduled_at,
+          worker_id: externalWorker ? null : Number(values.worker_id),
+          worker_name: externalWorker ? values.worker_name : null,
+          amount: Number(values.amount),
+          description: values.description,
+          remarks: values.remarks,
+        };
+        if (record) payload.status = values.status;
+        if (record) await API.put("/operations/maintenance/" + record.id, payload);
+        else await API.post("/operations/maintenance", payload);
+        const view = document.getElementById("view");
+        if (view) await Views.operations(view, ["maintenance"]);
+      },
+    });
+  } catch (error) {
+    toast("Could not load workers: " + error.message, "error");
+  }
+}
+
+function printMaintenanceReport(records, filters) {
+  const rows = records || [];
+  const period = maintenanceReportPeriod(filters);
+  const total = rows.reduce((sum, work) => sum + Number(work.amount || 0), 0);
+  const company = (Store.meta && Store.meta.company && Store.meta.company.name) || "Company";
+  const tableRows = rows.map(work => '<tr>'
+    + '<td>' + esc(work.reference_no) + '</td>'
+    + '<td>' + esc(fmtDateTime(work.scheduled_at)) + '</td>'
+    + '<td><b>' + esc(work.title) + '</b>' + (work.description ? '<div class="detail">' + esc(work.description) + '</div>' : '') + '</td>'
+    + '<td>' + esc(work.location) + '</td>'
+    + '<td>' + esc(work.worker_name || "—") + '</td>'
+    + '<td class="amount">' + esc(money(work.amount || 0, "GHS")) + '</td>'
+    + '<td>' + esc((work.status || "").replace(/_/g, " ")) + '</td>'
+    + '<td>' + esc(work.remarks || "—") + '</td>'
+    + '</tr>').join("");
+  const win = window.open("", "_blank", "width=1100,height=760");
+  if (!win) {
+    toast("Allow pop-ups to print the maintenance report", "error");
+    return;
+  }
+  win.document.write('<!doctype html><html><head><meta charset="utf-8"><title>Maintenance Work Report</title>'
+    + '<style>body{font-family:Inter,Arial,sans-serif;padding:30px;color:#172624}header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #c2703d;padding-bottom:16px;margin-bottom:18px}h1{font-family:Georgia,serif;font-size:27px;margin:0 0 5px}.muted,.detail{color:#69756f;font-size:11px;line-height:1.5}.summary{display:flex;gap:18px;margin:18px 0}.summary div{padding:11px 14px;background:#f6f4ef;border-radius:8px}.summary b{display:block;font-size:17px;margin-top:3px}table{border-collapse:collapse;width:100%;font-size:11px}th{text-align:left;background:#f2f0e9;padding:9px 8px;border-bottom:2px solid #d7d2c8;text-transform:uppercase;font-size:9px;letter-spacing:.04em}td{padding:8px;border-bottom:1px solid #e8e5dc;vertical-align:top}.amount{text-align:right;white-space:nowrap}.empty{text-align:center;padding:25px;color:#69756f}.foot{margin-top:24px;font-size:10px;color:#69756f}@media print{body{padding:10px}header{break-inside:avoid}tr{break-inside:avoid}}</style>'
+    + '</head><body><header><div><h1>Maintenance Work Report</h1><div class="muted">' + esc(company) + ' · ' + esc(period) + '</div></div><div class="muted">Prepared ' + esc(fmtDateTime(new Date().toISOString())) + '</div></header>'
+    + '<div class="summary"><div>Work items<b>' + rows.length + '</b></div><div>Total maintenance charges<b>' + esc(money(total, "GHS")) + '</b></div></div>'
+    + '<table><thead><tr><th>Ref</th><th>Scheduled</th><th>Work</th><th>Location</th><th>Worker</th><th>Charge</th><th>Status</th><th>Remarks</th></tr></thead><tbody>'
+    + (tableRows || '<tr><td class="empty" colspan="8">No maintenance work matches these filters.</td></tr>')
+    + '</tbody></table><div class="foot">Generated from the Hotel Operations maintenance schedule.</div>'
+    + '<script>window.onload=function(){window.print();}<\/script></body></html>');
+  win.document.close();
+}
+
+function sendMaintenanceReport(recordCount) {
+  const count = Number(recordCount || 0);
+  confirmDialog(
+    "Send maintenance report to the MD?",
+    "This will share " + count + " maintenance record(s) and their GHS charges, worker names, schedule, and remarks with the Managing Director. The report uses your current filters.",
+    async () => {
+      const response = await API.post("/operations/maintenance/report/send", maintenanceApiFilters());
+      const result = (response && response.data) || {};
+      const recipient = result.recipient_name || "the Managing Director";
+      if (result.email_status === "sent") {
+        toast("Maintenance report emailed to " + recipient + " (" + result.recipient_email + ")", "success");
+      } else if (result.email_status === "simulated") {
+        toast("Report prepared for " + recipient + "; email is in sandbox mode and was not delivered externally.", "success");
+      } else if (result.in_app_notified) {
+        toast("MD notified in the app; email could not be delivered: " + (result.email_error || result.email_status), "error");
+      } else {
+        toast("Report email could not be delivered: " + (result.email_error || result.email_status), "error");
+      }
+    },
+    { confirmLabel: "Send report" }
+  );
+}
 
 
 // ============================================================ CUSTOM STOCK MOVEMENT SVG DUAL-BAR CHART
