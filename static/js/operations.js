@@ -31,16 +31,13 @@ const opsState = {
   inventorySearch: "",
   workOrderFilter: "all",
   workOrderWing: "all",
-<<<<<<< HEAD
   storeroomFilter: "all",
   storeroomSearch: "",
   selectedHubId: null,
-=======
   maintenanceSearch: "",
   maintenanceStatus: "",
   maintenanceFrom: "",
   maintenanceTo: "",
->>>>>>> bd6b7fbf0df3c674ac1949cf8396ebe28b0b102e
 };
 
 Views.operations = async function (root, params) {
@@ -499,9 +496,6 @@ Views.operations = async function (root, params) {
             rows: orders, emptyTitle: "No work orders in queue",
           });
 
-<<<<<<< HEAD
-    // ============================================================ TAB: STOREROOMS & ROOMS HUBS
-=======
     // ============================================================ TAB: MAINTENANCE
     } else if (opsState.tab === "maintenance") {
       const scheduledCount = maintenanceWorks.filter(w => w.status === "scheduled").length;
@@ -530,8 +524,6 @@ Views.operations = async function (root, params) {
         + '</div>'
         + renderMaintenanceTable(maintenanceWorks);
 
-    // ============================================================ TAB: STOREROOMS
->>>>>>> bd6b7fbf0df3c674ac1949cf8396ebe28b0b102e
     } else if (opsState.tab === "storerooms") {
       const allStorerooms = storerooms || [];
       const totalSections = allStorerooms.reduce((acc, s) => acc + (s.sections_count || (s.sections ? s.sections.length : 0)), 0);

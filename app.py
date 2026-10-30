@@ -30,12 +30,8 @@ from models import (
     Ticket, TicketComment, Announcement, CompanyEvent, EventRsvp, Notification,
     NotificationPreference, NotificationDelivery, Approval, AuditLog, Setting,
     LoginHistory,
-<<<<<<< HEAD
     HotelInventoryItem, HotelStockMovement, HotelWorkOrder,
-    HotelStoreroom, HotelStoreroomSection,
-=======
-    HotelInventoryItem, HotelStockMovement, HotelWorkOrder, MaintenanceWork,
->>>>>>> bd6b7fbf0df3c674ac1949cf8396ebe28b0b102e
+    HotelStoreroom, HotelStoreroomSection, MaintenanceWork,
 )
 import models
 import messaging
@@ -2561,8 +2557,6 @@ def update_operations_work_order_status(wo_id):
     return jsonify({"message": f"Work order #{wo.order_no} status changed to {new_status}"})
 
 
-<<<<<<< HEAD
-
 def _serialize_equipment(asset):
     return {
         "id": asset.id,
@@ -2653,7 +2647,8 @@ def _serialize_storeroom(s, include_sections=True):
     if include_sections:
         data["sections"] = [_serialize_section(sec) for sec in sections]
     return data
-=======
+
+
 MAINTENANCE_CATEGORIES = ("Preventive", "Repair", "Inspection", "Electrical", "Plumbing", "HVAC", "Other")
 MAINTENANCE_STATUSES = ("scheduled", "in_progress", "completed", "cancelled")
 
@@ -3061,7 +3056,6 @@ def send_operations_maintenance_report():
             "total_amount": float(total_amount),
         },
     })
->>>>>>> bd6b7fbf0df3c674ac1949cf8396ebe28b0b102e
 
 
 @app.get("/api/v1/operations/storerooms")
