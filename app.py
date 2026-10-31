@@ -31,11 +31,12 @@ from models import (
     TrainingEnrolment, ExpenseCategory, ExpenseClaim, Asset, AssetAssignment,
     Ticket, TicketComment, Announcement, CompanyEvent, EventRsvp, Notification,
     NotificationPreference, NotificationDelivery, Approval, AuditLog, Setting,
-    LoginHistory, DatabaseBackup,
+    LoginHistory, MfaTrustedDevice, DatabaseBackup,
     HotelInventoryItem, HotelStockMovement, HotelWorkOrder,
     HotelStoreroom, HotelStoreroomSection, MaintenanceWork,
 )
 import models
+import mfa
 import messaging
 import letters
 import hotel_ops
@@ -54,6 +55,35 @@ app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024
 os.makedirs(os.path.join(BASE_DIR, "instance"), exist_ok=True)
 os.makedirs(BRANDING_UPLOAD_DIR, exist_ok=True)
 
+
+def _load_secret_key():
+    """Stable signing key for short-lived 2FA challenges (env or instance file)."""
+    env_key = (os.environ.get("HRMS_SECRET_KEY") or "").strip()
+    if env_key:
+        return env_key
+    path = os.path.join(BASE_DIR, "instance", "secret_key.txt")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            stored = fh.read().strip()
+        if stored:
+            return stored
+    except OSError:
+        pass
+    fresh = secrets.token_hex(32)
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(fresh)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    except OSError:
+        pass
+    return fresh
+
+
+app.secret_key = _load_secret_key()
+
 db.init_app(app)
 CORS(app)
 
@@ -66,6 +96,13 @@ def ensure_schema():
         "users": [
             ("username", "VARCHAR(80)"),
             ("last_activity_at", "DATETIME"),
+            ("mfa_secret", "VARCHAR(64)"),
+            ("mfa_recovery_codes", "TEXT"),
+            ("mfa_confirmed_at", "DATETIME"),
+            ("mfa_prompt_snoozed_at", "DATETIME"),
+        ],
+        "login_history": [
+            ("mfa_used", "BOOLEAN DEFAULT 0"),
         ],
         "employees": [
             ("bio", "TEXT"),
@@ -1544,6 +1581,52 @@ def login():
             db.session.commit()
             return error(f"Your employment status is '{emp.status.replace('_', ' ').capitalize()}'. Portal login access is inactive.", 403)
     now = datetime.utcnow()
+    # ---- Second factor -------------------------------------------------
+    # Accounts with a confirmed authenticator app cannot receive a session
+    # token until a valid code (or a trusted device) is presented.
+    if mfa_is_active(user):
+        device = mfa.trusted_device(user, data.get("trusted_device") or request.headers.get("X-Trusted-Device"))
+        if device:
+            device.last_used_at = now
+            db.session.commit()
+        else:
+            user.failed_attempts = 0
+            user.locked_until = None
+            db.session.commit()
+            return jsonify({"data": {
+                "mfa_required": True,
+                "challenge": mfa.issue_challenge(app, user),
+                "method": "totp",
+                "expires_in": mfa.CHALLENGE_MAX_AGE,
+                "account": mask_account(user.email),
+                "trust_days": mfa.TRUST_DAYS,
+            }})
+    return issue_session(user, mfa_used=mfa_is_active(user))
+
+
+def mask_account(email):
+    """ama.mensah@meridian.gh -> a••••••••h@meridian.gh"""
+    email = email or ""
+    if "@" not in email:
+        return email
+    local, domain = email.split("@", 1)
+    if len(local) <= 2:
+        return local[:1] + "•@" + domain
+    return local[0] + "•" * (len(local) - 2) + local[-1] + "@" + domain
+
+
+MFA_MAX_ATTEMPTS = 5
+MFA_LOCKOUT_MINUTES = 15
+
+
+def mfa_is_active(user):
+    """True only for a *confirmed* authenticator enrolment."""
+    return bool(getattr(user, "mfa_enabled", False) and getattr(user, "mfa_secret", None))
+
+
+def issue_session(user, mfa_used=False):
+    """Create (or rotate) the bearer session token and return the login payload."""
+    now = datetime.utcnow()
     user.token = secrets.token_hex(32)
     user.token_expires_at = now + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
     user.last_login_at = now
@@ -1552,9 +1635,68 @@ def login():
     user.failed_attempts = 0
     user.locked_until = None
     db.session.add(LoginHistory(user_id=user.id, ip=request.remote_addr,
-                                user_agent=request.user_agent.string[:255], success=True))
+                                user_agent=request.user_agent.string[:255],
+                                success=True, mfa_used=bool(mfa_used)))
     db.session.commit()
     return jsonify({"data": {"token": user.token, "user": public_user(user)}})
+
+
+@app.post("/api/v1/auth/mfa/verify")
+def verify_mfa_login():
+    """Exchange a login challenge + TOTP (or recovery) code for a session."""
+    data = request.get_json(silent=True) or {}
+    uid = mfa.read_challenge(app, data.get("challenge"))
+    if not uid:
+        return error("Your verification window expired. Please sign in again.", 401)
+    user = db.session.get(User, uid)
+    if not user or user.deleted_at is not None:
+        return error("Your verification window expired. Please sign in again.", 401)
+    if not mfa.challenge_matches(user, data.get("challenge"), app):
+        return error("Your verification window expired. Please sign in again.", 401)
+    if not mfa_is_active(user):
+        return error("Two-factor authentication is not active on this account.", 409)
+    # Throttle code guessing: at most MFA_MAX_ATTEMPTS wrong codes per 15 min.
+    window_start = datetime.utcnow() - timedelta(minutes=MFA_LOCKOUT_MINUTES)
+    recent_failures = (LoginHistory.query
+                       .filter(LoginHistory.user_id == user.id,
+                               LoginHistory.success.is_(False),
+                               LoginHistory.mfa_used.is_(True),
+                               LoginHistory.created_at >= window_start)
+                       .count())
+    if recent_failures >= MFA_MAX_ATTEMPTS:
+        return error("Too many incorrect verification codes. Try again in 15 minutes.", 423)
+
+    code = (data.get("code") or "").strip()
+    used_recovery = False
+    valid = mfa.verify_totp(user.mfa_secret, code)
+    if not valid and mfa.consume_recovery_code(user, code):
+        valid, used_recovery = True, True
+    if not valid:
+        db.session.add(LoginHistory(user_id=user.id, ip=request.remote_addr,
+                                    user_agent=request.user_agent.string[:255],
+                                    success=False, mfa_used=True))
+        db.session.commit()
+        remaining = max(0, MFA_MAX_ATTEMPTS - recent_failures - 1)
+        hint = f" {remaining} attempt{'s' if remaining != 1 else ''} left." if remaining else " Try again in 15 minutes."
+        return error("Incorrect verification code. Check your authenticator app and try again." + hint, 422)
+
+    response = issue_session(user, mfa_used=True)
+    payload = response.get_json()["data"]
+    remember = bool(data.get("remember_device") or data.get("trust_device"))
+    payload["trusted_device"] = None
+    payload["trust_days"] = mfa.TRUST_DAYS
+    if remember:
+        row, token = mfa.trust_device(user, ip=request.remote_addr,
+                                      user_agent=request.user_agent.string)
+        db.session.commit()
+        payload["trusted_device"] = token
+        payload["trusted_device_expires_at"] = conv(row.expires_at)
+    payload["used_recovery_code"] = used_recovery
+    payload["recovery_codes_remaining"] = mfa.recovery_codes_remaining(user.mfa_recovery_codes)
+    audit(user, "mfa_login_verified", "users", user.id,
+          new={"recovery_code": used_recovery, "trusted_device": remember})
+    db.session.commit()
+    return jsonify({"data": payload})
 
 
 @app.post("/api/v1/auth/logout")
@@ -1645,7 +1787,11 @@ def public_user(user):
         "username": user.username or (user.email.split("@")[0] if user.email else None),
         "email": user.email,
         "status": user.status,
-        "mfa_enabled": bool(user.mfa_enabled),
+        "mfa_enabled": bool(user.mfa_enabled and user.mfa_secret),
+        "mfa_pending_setup": bool(getattr(user, "mfa_secret", None) and not user.mfa_enabled),
+        "mfa_confirmed_at": conv(getattr(user, "mfa_confirmed_at", None)),
+        "mfa_prompt_due": mfa_prompt_due(user),
+        "mfa_trust_days": mfa.TRUST_DAYS,
         "must_change_password": bool(user.must_change_password),
         "role": user.role.name if user.role else None,
         "role_slug": user.role.slug if user.role else None,
@@ -1674,21 +1820,190 @@ def login_history():
             .order_by(LoginHistory.id.desc()).limit(20).all())
     return jsonify({"data": [
         {"id": r.id, "ip": r.ip, "user_agent": r.user_agent,
-         "success": bool(r.success), "created_at": conv(r.created_at)}
+         "success": bool(r.success), "mfa_used": bool(r.mfa_used),
+         "created_at": conv(r.created_at)}
         for r in rows
     ]})
+
+
+# ------------------------------------------------------------ two-factor auth
+def mfa_status_payload(user):
+    devices = (MfaTrustedDevice.query.filter_by(user_id=user.id)
+               .order_by(MfaTrustedDevice.id.desc()).all())
+    now = datetime.utcnow()
+    return {
+        "enabled": mfa_is_active(user),
+        "pending_setup": bool(getattr(user, "mfa_secret", None) and not user.mfa_enabled),
+        "confirmed_at": conv(getattr(user, "mfa_confirmed_at", None)),
+        "recovery_codes_remaining": mfa.recovery_codes_remaining(getattr(user, "mfa_recovery_codes", None)),
+        "trust_days": mfa.TRUST_DAYS,
+        "trusted_devices": [
+            {
+                "id": d.id,
+                "label": d.label or mfa.describe_client(d.user_agent),
+                "ip": d.ip,
+                "created_at": conv(d.created_at),
+                "last_used_at": conv(d.last_used_at),
+                "expires_at": conv(d.expires_at),
+                "expired": bool(d.expires_at and d.expires_at < now),
+            }
+            for d in devices
+        ],
+    }
+
+
+@app.get("/api/v1/auth/mfa/status")
+@login_required
+def mfa_status():
+    return jsonify({"data": mfa_status_payload(request.user)})
+
+
+@app.post("/api/v1/auth/mfa/setup")
+@login_required
+def mfa_setup():
+    """Start enrolment: create a secret, QR payload and one-time recovery codes."""
+    user = request.user
+    if mfa_is_active(user):
+        return error("Two-factor authentication is already enabled on this account.", 409)
+    user.mfa_secret = mfa.generate_secret()
+    plain_codes, stored = mfa.generate_recovery_codes()
+    user.mfa_recovery_codes = stored
+    user.mfa_enabled = False
+    user.mfa_confirmed_at = None
+    audit(user, "mfa_setup_started", "users", user.id)
+    db.session.commit()
+    return jsonify({"data": {
+        "secret": user.mfa_secret,
+        "otpauth_uri": mfa.provisioning_uri(user.mfa_secret, user.email),
+        "account": user.email,
+        "issuer": mfa.ISSUER,
+        "digits": mfa.DIGITS,
+        "period": mfa.STEP_SECONDS,
+        "recovery_codes": plain_codes,
+    }})
+
+
+@app.post("/api/v1/auth/mfa/confirm")
+@login_required
+def mfa_confirm():
+    """Finish enrolment once the user can produce a valid authenticator code."""
+    data = request.get_json(silent=True) or {}
+    user = request.user
+    if mfa_is_active(user):
+        return error("Two-factor authentication is already enabled.", 409)
+    if not getattr(user, "mfa_secret", None):
+        return error("Start the setup first, then confirm with the code from your app.", 422)
+    if not mfa.verify_totp(user.mfa_secret, data.get("code")):
+        return error("That code did not match. Make sure your phone's clock is correct and try the current code.", 422)
+    user.mfa_enabled = True
+    user.mfa_confirmed_at = datetime.utcnow()
+    user.mfa_prompt_snoozed_at = None
+    audit(user, "mfa_enabled", "users", user.id)
+    db.session.commit()
+    return jsonify({"data": mfa_status_payload(user)})
+
+
+@app.post("/api/v1/auth/mfa/disable")
+@login_required
+def mfa_disable():
+    """Turn 2FA off — requires the account password, plus a current code."""
+    data = request.get_json(silent=True) or {}
+    user = request.user
+    if not check_password_hash(user.password_hash, data.get("password") or ""):
+        return error("Your account password is incorrect.", 422)
+    if mfa_is_active(user):
+        code = (data.get("code") or "").strip()
+        valid = mfa.verify_totp(user.mfa_secret, code) or mfa.consume_recovery_code(user, code)
+        if not valid:
+            return error("Enter a current authenticator code (or a recovery code) to switch 2FA off.", 422)
+    user.mfa_enabled = False
+    user.mfa_secret = None
+    user.mfa_recovery_codes = None
+    user.mfa_confirmed_at = None
+    user.mfa_prompt_snoozed_at = None
+    mfa.clear_devices(user)
+    audit(user, "mfa_disabled", "users", user.id)
+    db.session.commit()
+    return jsonify({"data": mfa_status_payload(user), "message": "Two-factor authentication disabled"})
+
+
+@app.post("/api/v1/auth/mfa/recovery-codes")
+@login_required
+def mfa_regenerate_recovery_codes():
+    data = request.get_json(silent=True) or {}
+    user = request.user
+    if not mfa_is_active(user):
+        return error("Enable two-factor authentication first.", 409)
+    if not check_password_hash(user.password_hash, data.get("password") or ""):
+        return error("Your account password is incorrect.", 422)
+    plain_codes, stored = mfa.generate_recovery_codes()
+    user.mfa_recovery_codes = stored
+    audit(user, "mfa_recovery_codes_regenerated", "users", user.id)
+    db.session.commit()
+    return jsonify({"data": {"recovery_codes": plain_codes,
+                             "recovery_codes_remaining": len(plain_codes)}})
+
+
+@app.get("/api/v1/auth/mfa/devices")
+@login_required
+def mfa_devices():
+    return jsonify({"data": mfa_status_payload(request.user)["trusted_devices"]})
+
+
+@app.delete("/api/v1/auth/mfa/devices/<int:device_id>")
+@login_required
+def mfa_revoke_device(device_id):
+    row = MfaTrustedDevice.query.filter_by(id=device_id, user_id=request.user.id).first()
+    if not row:
+        return error("That device is no longer on your account.", 404)
+    db.session.delete(row)
+    audit(request.user, "mfa_trusted_device_revoked", "users", request.user.id,
+          new={"device_id": device_id, "label": row.label})
+    db.session.commit()
+    return jsonify({"data": mfa_status_payload(request.user)["trusted_devices"]})
+
+
+MFA_PROMPT_SNOOZE_DAYS = 7
+
+
+def mfa_prompt_due(user):
+    """Should we nudge this user to switch on 2FA at next sign-in?"""
+    if mfa_is_active(user):
+        return False
+    snoozed = getattr(user, "mfa_prompt_snoozed_at", None)
+    if not snoozed:
+        return True
+    return snoozed < datetime.utcnow() - timedelta(days=MFA_PROMPT_SNOOZE_DAYS)
+
+
+@app.post("/api/v1/auth/mfa/prompt-dismiss")
+@login_required
+def mfa_prompt_dismiss():
+    """Skip the setup reminder for a while (it comes back after 7 days)."""
+    request.user.mfa_prompt_snoozed_at = datetime.utcnow()
+    audit(request.user, "mfa_setup_prompt_dismissed", "users", request.user.id,
+          new={"snooze_days": MFA_PROMPT_SNOOZE_DAYS})
+    db.session.commit()
+    return jsonify({"data": {"snoozed_days": MFA_PROMPT_SNOOZE_DAYS,
+                             "prompt_due": False}})
 
 
 @app.put("/api/v1/auth/mfa")
 @login_required
 def toggle_mfa():
+    """Legacy endpoint — a bare flag flip is no longer enough to enable 2FA."""
     data = request.get_json(silent=True) or {}
     raw = data.get("enabled") if "enabled" in data else data.get("mfa_enabled")
-    enabled = bool(raw)
-    request.user.mfa_enabled = enabled
-    audit(request.user, "mfa_" + ("enabled" if enabled else "disabled"), "users", request.user.id)
+    if raw:
+        return error("Use the setup flow to enable two-factor authentication — it must be verified with your authenticator app.", 422)
+    request.user.mfa_enabled = False
+    request.user.mfa_secret = None
+    request.user.mfa_recovery_codes = None
+    request.user.mfa_confirmed_at = None
+    mfa.clear_devices(request.user)
+    audit(request.user, "mfa_disabled", "users", request.user.id)
     db.session.commit()
-    return jsonify({"data": {"mfa_enabled": enabled}})
+    return jsonify({"data": {"mfa_enabled": False}})
 
 
 def enrich_announcement(item_dict):
