@@ -22,44 +22,8 @@ function profBarsHTML(prof) {
 }
 
 function printProfileSummary(e) {
-  const win = window.open("", "_blank", "width=860,height=920");
-  if (!win) return toast("Allow pop-ups to print the employee summary", "info");
-  const mgrName = (e.manager_card && e.manager_card.name) || e.manager_name || "—";
-  const html = '<!DOCTYPE html><html><head><title>Employee Summary — ' + esc(e.full_name) + '</title>'
-    + '<style>body{font-family:Inter,system-ui,sans-serif;color:#142321;padding:36px;max-width:780px;margin:auto;line-height:1.5}'
-    + 'h1{font-family:Georgia,serif;margin:0 0 4px;font-size:28px}h2{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#5f6b66;border-bottom:1px solid #ddd;padding-bottom:6px;margin-top:24px}'
-    + '.meta{color:#5f6b66;font-size:13px;margin-bottom:18px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;font-size:13px}'
-    + '.row{display:flex;justify-content:space-between;border-bottom:1px dotted #e5e1d8;padding:5px 0}.row b{color:#5f6b66;font-weight:500}'
-    + '.foot{margin-top:36px;padding-top:12px;border-top:1px solid #ccc;font-size:11px;color:#777;display:flex;justify-content:space-between}</style></head><body>'
-    + '<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:#c2703d;font-weight:600">Meridian Ghana Ltd · Official Record</div>'
-    + '<h1>' + esc(e.full_name) + '</h1>'
-    + '<div class="meta">' + esc(e.designation_title || "—") + ' · ' + esc(e.department_name || "—") + ' · ' + esc(e.employee_no) + '</div></div>'
-    + '<div style="text-align:right;font-size:12px"><b>Status:</b> ' + esc((e.status || "").toUpperCase()) + '<br><b>Joined:</b> ' + fmtDate(e.hire_date) + '<br><b>Tenure:</b> ' + esc(e.tenure_label || "—") + '</div></div>'
-    + (e.bio ? '<p style="font-size:13px;background:#f8f6f1;padding:12px 14px;border-radius:8px">' + esc(e.bio) + '</p>' : '')
-    + '<h2>Personal & Contact Information</h2><div class="grid">'
-    + '<div class="row"><b>Work Email</b><span>' + esc(e.email || "—") + '</span></div>'
-    + '<div class="row"><b>Phone</b><span>' + esc(e.phone || "—") + '</span></div>'
-    + '<div class="row"><b>Date of Birth</b><span>' + fmtDate(e.dob) + '</span></div>'
-    + '<div class="row"><b>Nationality</b><span>' + esc(e.nationality || "—") + '</span></div>'
-    + '<div class="row"><b>Work Location</b><span>' + esc(e.work_location || "Office") + '</span></div>'
-    + '<div class="row"><b>Address</b><span>' + esc([e.address, e.city].filter(Boolean).join(", ") || "—") + '</span></div>'
-    + '</div>'
-    + '<h2>Employment & Reporting</h2><div class="grid">'
-    + '<div class="row"><b>Employee No.</b><span>' + esc(e.employee_no) + '</span></div>'
-    + '<div class="row"><b>Contract Type</b><span style="text-transform:capitalize">' + esc((e.contract_type || "").replace(/_/g, " ")) + '</span></div>'
-    + '<div class="row"><b>Department</b><span>' + esc(e.department_name || "—") + '</span></div>'
-    + '<div class="row"><b>Branch</b><span>' + esc(e.branch_name || "—") + '</span></div>'
-    + '<div class="row"><b>Pay Grade</b><span>' + esc(e.grade_name || "—") + '</span></div>'
-    + '<div class="row"><b>Line Manager</b><span>' + esc(mgrName) + '</span></div>'
-    + '</div>'
-    + (e.skills && e.skills.length ? '<h2>Skills & Competencies</h2><p style="font-size:13px">' + e.skills.map(s => esc(s.name) + " (" + esc(s.proficiency || "intermediate") + ")").join(" · ") + '</p>' : '')
-    + (e.education && e.education.length ? '<h2>Education & Qualifications</h2>' + e.education.map(ed => '<div style="font-size:13px;margin-bottom:6px"><b>' + esc(ed.qualification) + '</b>' + (ed.field_of_study ? ' in ' + esc(ed.field_of_study) : '') + ' — ' + esc(ed.institution) + ' (' + esc(ed.end_year || "—") + ')</div>').join("") : '')
-    + '<div class="foot"><span>Generated from Meridian HR on ' + new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) + '</span><span>Confidential HR Record</span></div>'
-    + '</body></html>';
-  win.document.write(html);
-  win.document.close();
-  win.focus();
-  setTimeout(() => win.print(), 250);
+  // Use the company-branded report instead of an unbranded browser printout.
+  go(ReportCentre.pathFor("profile", { employee_id: e.id }));
 }
 
 function openUploadPhotoModal(e, onSaved) {

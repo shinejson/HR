@@ -849,8 +849,8 @@ function openDocumentForm(employeeId) {
 /* ============================================================ REPORTS */
 const repState = { tab: "dept" };
 
-Views.reports = async function (root) {
-  root.innerHTML = pageHead("Reports", "Crunching workforce data…") + spinners(4);
+Views.reportAnalytics = async function (root) {
+  root.innerHTML = pageHead("Workforce analytics", "Crunching workforce data…") + spinners(4);
   try {
     const [res, empRes, balRes] = await Promise.all([
       API.get("/reports/overview"),
@@ -950,8 +950,8 @@ Views.reports = async function (root) {
       });
     }
 
-    root.innerHTML = pageHead("Reports", "Workforce analytics for data-driven people decisions.",
-      '<a class="btn btn-ghost" href="/api/v1/employees/export.csv?token=' + API.token + '">' + icon("download", 15) + ' Export employees</a><button class="btn btn-accent" onclick="window.print()">' + icon("file", 15) + ' Print report</button>', "Insight")
+    root.innerHTML = pageHead("Workforce analytics", "Workforce analytics for data-driven people decisions.",
+      '<a class="btn btn-ghost" href="#/reports">' + icon("arrowLeft", 15) + ' Report centre</a><a class="btn btn-accent" href="#/' + ReportCentre.pathFor('staff') + '">' + icon("printer", 15) + ' Printable staff report</a>', "Insight")
       + '<div class="grid grid-4" style="margin-bottom:18px">'
       + kpiCard({ label: "Headcount", value: r.headcount, icon: "users", tone: "teal", foot: "Active employees" })
       + kpiCard({ label: "Annual turnover", value: r.turnover_rate + "%", icon: "chart", tone: "accent", foot: r.turnover + " leavers this year" })
@@ -984,9 +984,9 @@ Views.reports = async function (root) {
         '<div class="list-row" style="cursor:pointer" onclick="go(\'' + x[1] + '\')"><div class="kpi-icon">' + icon(x[3], 16) + '</div><div class="body"><b>' + x[0] + '</b><span>' + x[2] + '</span></div>' + icon("arrowRight", 14) + '</div>').join("")
       + '</div></div></div>';
 
-    root.querySelectorAll("[data-reptab]").forEach(b => b.onclick = () => { repState.tab = b.dataset.reptab; Views.reports(root); });
+    root.querySelectorAll("[data-reptab]").forEach(b => b.onclick = () => { repState.tab = b.dataset.reptab; Views.reportAnalytics(root); });
   } catch (e) {
-    root.innerHTML = pageHead("Reports", "Unavailable") + emptyState("Could not load reports", e.message, "alert");
+    root.innerHTML = pageHead("Workforce analytics", "Unavailable") + emptyState("Could not load reports", e.message, "alert");
   }
 };
 

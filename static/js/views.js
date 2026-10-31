@@ -518,6 +518,7 @@ async function drawEmployees(root) {
         {
           label: "", class: "right", sortable: false,
           render: r => '<div class="row" style="justify-content:flex-end;gap:4px">'
+            + '<button class="btn btn-sm btn-ghost" title="View employee reports" data-emp-reports="' + r.id + '">' + icon("chart", 12) + ' Reports</button>'
             + '<button class="btn btn-sm btn-soft" title="View & print category employment letter" data-emp-letter="' + r.id + '">' + icon("printer", 12) + ' Letter</button>'
             + (canManage ? '<button class="btn btn-sm btn-ghost" title="Change employment status" data-emp-status="' + r.id + '">' + icon("refresh", 12) + ' Status</button>' : '')
             + (canManage ? '<button class="btn btn-sm btn-ghost" title="Send or reset portal username & password" data-emp-creds="' + r.id + '">' + icon("key", 12) + '</button>' : '')
@@ -584,6 +585,10 @@ async function drawEmployees(root) {
   onDelegate(root, "click", "[data-open-emp]", (el, ev) => {
     ev.stopPropagation();
     go("employees/" + el.dataset.openEmp);
+  });
+  onDelegate(root, "click", "[data-emp-reports]", (el, ev) => {
+    ev.stopPropagation();
+    go("reports/employee/" + el.dataset.empReports);
   });
   onDelegate(root, "click", "[data-emp-letter]", (el, ev) => {
     ev.stopPropagation();
@@ -852,17 +857,16 @@ Views.organisation = async function (root, params) {
           { label: "Headcount", sortValue: r => countByDept[r.id] || 0, render: r => '<b>' + (countByDept[r.id] || 0) + '</b>' },
           {
             label: "", class: "right", sortable: false,
-            render: r => canEdit
-              ? '<div class="row" style="gap:4px;justify-content:flex-end">'
-                + '<button class="icon-btn" style="width:28px;height:28px" data-edit-dept="' + r.id + '" title="Edit department">' + icon("edit", 13) + '</button>'
-                + '<button class="icon-btn" style="width:28px;height:28px;color:var(--red)" data-del-dept="' + r.id + '" title="Delete department">' + icon("trash", 13) + '</button>'
+            render: r => '<div class="row" style="gap:4px;justify-content:flex-end">'
+                + '<button class="btn btn-sm btn-soft" data-dept-reports="' + r.id + '">' + icon("chart", 13) + ' Reports</button>'
+                + (canEdit ? '<button class="icon-btn" style="width:28px;height:28px" data-edit-dept="' + r.id + '" title="Edit department">' + icon("edit", 13) + '</button>'
+                + '<button class="icon-btn" style="width:28px;height:28px;color:var(--red)" data-del-dept="' + r.id + '" title="Delete department">' + icon("trash", 13) + '</button>' : '')
                 + '</div>'
-              : ""
           },
         ],
         rows: depts, emptyTitle: "No departments",
       }) + '<div class="grid grid-3" style="margin-top:18px">' + depts.map(d =>
-        '<div class="card card-pad"><div class="row-between"><div class="row">' + '<div class="kpi-icon teal" style="width:34px;height:34px">' + icon("building", 16) + '</div><div><b>' + esc(d.name) + '</b><div class="tiny muted">Head: ' + esc(Store.employeeName(d.head_id)) + '</div>' + (d.assistant_head_id ? '<div class="tiny muted">Assistant: ' + esc(Store.employeeName(d.assistant_head_id)) + '</div>' : '') + '</div></div><span class="chip chip-teal chip-plain">' + (countByDept[d.id] || 0) + ' people</span></div></div>').join("") + '</div>';
+        '<div class="card card-pad"><div class="row-between"><div class="row">' + '<div class="kpi-icon teal" style="width:34px;height:34px">' + icon("building", 16) + '</div><div><b>' + esc(d.name) + '</b><div class="tiny muted">Head: ' + esc(Store.employeeName(d.head_id)) + '</div>' + (d.assistant_head_id ? '<div class="tiny muted">Assistant: ' + esc(Store.employeeName(d.assistant_head_id)) + '</div>' : '') + '</div></div><span class="chip chip-teal chip-plain">' + (countByDept[d.id] || 0) + ' people</span></div><div style="margin-top:14px"><button class="btn btn-sm btn-soft" data-dept-reports="' + d.id + '">' + icon("chart", 14) + ' Department reports</button></div></div>').join("") + '</div>';
     } else if (orgTab.tab === "heads") {
       const totalHeads = deptHeads.filter(h => h.role_type === "head").length;
       const totalAssts = deptHeads.filter(h => h.role_type === "assistant").length;
@@ -1059,6 +1063,7 @@ Views.organisation = async function (root, params) {
         else openBranchForm();
       };
     }
+    onDelegate(root, "click", "[data-dept-reports]", b => go("reports/department/" + b.dataset.deptReports));
     onDelegate(root, "click", "[data-edit-dept]", (b) => {
       const deptId = Number(b.dataset.editDept);
       openDeptForm(depts.find(d => d.id === deptId), countByDept[deptId] || 0);

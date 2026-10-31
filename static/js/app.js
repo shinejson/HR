@@ -99,7 +99,7 @@ const PAGES = {
   onboarding: "Onboarding", documents: "Documents", attendance: "Attendance", leave: "Leave",
   payroll: "Payroll", expenses: "Expenses", performance: "Performance", training: "Training",
   assets: "Assets", helpdesk: "Helpdesk", announcements: "Announcements & Events", operations: "Operations",
-  reports: "Reports", admin: "Administration", profile: "My Profile", settings: "Settings", notifications: "Notifications",
+  reports: "Report centre", admin: "Administration", profile: "My Profile", settings: "Settings", notifications: "Notifications",
   backups: "Backups & Recovery",
 };
 
