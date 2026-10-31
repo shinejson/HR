@@ -412,6 +412,25 @@ function openHrEmployeeEditModal(e, onSaved) {
     sub: e.employee_no + " · Changes are written to the audit trail",
     wide: true,
     submitLabel: "Save HR record",
+    extraFooter: Store.canManage() && !e.is_self ? '<button type="button" class="btn btn-ghost" id="form-delete-btn" style="margin-right:auto;color:var(--red)">' + icon("trash", 13) + ' Delete employee</button>' : '',
+    onDelete: Store.canManage() && !e.is_self ? () => {
+      closeModal();
+      if (typeof deleteEmployee === "function") {
+        deleteEmployee(e, () => go("employees"));
+      } else {
+        confirmDialog(
+          "Delete employee",
+          'Are you sure you want to delete ' + (e.full_name || e.employee_no) + '?',
+          async () => {
+            await API.delete("/employees/" + e.id);
+            toast("Employee deleted successfully", "success");
+            await Store.loadMeta();
+            go("employees");
+          },
+          { danger: true, confirmLabel: "Delete employee" }
+        );
+      }
+    } : null,
     values: e,
     fields: [
       { name: "first_name", label: "First name", required: true },
@@ -435,7 +454,20 @@ function openHrEmployeeEditModal(e, onSaved) {
       { name: "contract_type", label: "Employment Category", type: "select", options: window.EMPLOYMENT_CATEGORY_OPTIONS || ["permanent", "probation", "fixed_term", "part_time", "casual", "intern", "national_service", "consultant"] },
       { name: "staff_category", label: "Staff Category / Cadre", type: "select", options: window.STAFF_CATEGORY_OPTIONS || ["General / Junior Staff"] },
       { name: "work_location", label: "Work mode", type: "select", options: ["Office", "Hybrid", "Remote"] },
-      { name: "status", label: "Employment status", type: "select", options: ["active", "probation", "suspended", "resigned", "terminated"] },
+      {
+        name: "status",
+        label: "Employment status",
+        type: "select",
+        options: [
+          { value: "active", label: "Active (Login access enabled)" },
+          { value: "probation", label: "Probation (Login access enabled)" },
+          { value: "inactive", label: "Inactive (No login access)" },
+          { value: "suspended", label: "Suspended (No login access)" },
+          { value: "resigned", label: "Resigned (No login access)" },
+          { value: "terminated", label: "Terminated (No login access)" },
+        ],
+        hint: "Inactive, suspended, resigned, and terminated employees cannot log in.",
+      },
       { name: "department_id", label: "Department", type: "select", options: [{ value: "", label: "—" }, ...deptOptions()] },
       { name: "designation_id", label: "Designation", type: "select", options: [{ value: "", label: "—" }, ...desigOptions()] },
       { name: "grade_id", label: "Pay grade", type: "select", options: [{ value: "", label: "—" }, ...gradeOptions()] },
@@ -1037,6 +1069,7 @@ async function viewEmployeeDetail(root, id, initialTab) {
         + (canSelfOrHr ? '<button class="btn btn-ghost" id="btn-self-edit">' + icon("user", 14) + ' Edit personal</button>' : '')
         + (canManage ? '<button class="btn btn-accent" id="btn-hr-edit">' + icon("edit", 14) + ' Edit HR record</button>' : '')
         + (canManage && !e.is_self ? '<button class="btn btn-ghost" id="btn-status-change">' + icon("refresh", 14) + ' Status</button>' : '')
+        + (canManage && !e.is_self ? '<button class="btn btn-danger" id="btn-emp-delete">' + icon("trash", 14) + ' Delete</button>' : '')
         + '</div>';
 
       root.innerHTML = '<div class="page-enter">'
@@ -1144,7 +1177,24 @@ async function viewEmployeeDetail(root, id, initialTab) {
       if (careerHrBtn) careerHrBtn.onclick = () => openHrEmployeeEditModal(e, loadAndRender);
 
       const statusBtn = root.querySelector("#btn-status-change");
-      if (statusBtn && typeof openStatusForm === "function") statusBtn.onclick = () => openStatusForm(e);
+      if (statusBtn && typeof openStatusForm === "function") statusBtn.onclick = () => openStatusForm(e, loadAndRender);
+
+      const delEmpBtn = root.querySelector("#btn-emp-delete");
+      if (delEmpBtn) {
+        delEmpBtn.onclick = () => {
+          confirmDialog(
+            "Delete employee record",
+            'Are you sure you want to permanently delete ' + (e.full_name || e.employee_no) + '? Their portal account and active login sessions will be immediately deactivated. This action is recorded in the audit trail.',
+            async () => {
+              await API.delete("/employees/" + e.id);
+              toast("Employee deleted successfully", "success");
+              await Store.loadMeta();
+              go("employees");
+            },
+            { danger: true, confirmLabel: "Delete employee" }
+          );
+        };
+      }
 
       const sensBtn = root.querySelector("#toggle-sensitive");
       if (sensBtn) sensBtn.onclick = () => { showSensitive = !showSensitive; loadAndRender(); };

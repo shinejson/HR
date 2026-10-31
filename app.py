@@ -463,8 +463,8 @@ READ_PERMS = {
     "corrections": {"super_admin", "hr_admin", "hr_officer", "manager", "employee"},
     "documents": {"super_admin", "hr_admin", "hr_officer", "manager", "employee"},
     "policies": {"super_admin", "hr_admin", "hr_officer", "manager", "employee", "auditor"},
-    "assets": {"super_admin", "hr_admin", "hr_officer", "manager", "employee", "auditor"},
-    "asset-assignments": {"super_admin", "hr_admin", "hr_officer", "manager", "employee", "auditor"},
+    "assets": {"super_admin", "hr_admin", "hr_officer", "operations_manager", "operations_officer", "hotel_manager", "manager", "employee", "auditor"},
+    "asset-assignments": {"super_admin", "hr_admin", "hr_officer", "operations_manager", "operations_officer", "hotel_manager", "manager", "employee", "auditor"},
     "tickets": {"super_admin", "hr_admin", "hr_officer", "manager", "employee"},
     "approvals": {"super_admin", "hr_admin", "hr_officer", "payroll", "manager", "employee"},
     "bank-accounts": {"super_admin", "hr_admin", "payroll", "employee", "auditor"},
@@ -520,8 +520,8 @@ WRITE_PERMS = {
     "enrolments": {"super_admin", "hr_admin", "hr_officer", "manager"},
     "expense-categories": {"super_admin", "hr_admin", "payroll"},
     "claims": {"super_admin", "hr_admin", "payroll"},
-    "assets": {"super_admin", "hr_admin", "hr_officer"},
-    "asset-assignments": {"super_admin", "hr_admin", "hr_officer"},
+    "assets": {"super_admin", "hr_admin", "hr_officer", "operations_manager", "operations_officer", "hotel_manager"},
+    "asset-assignments": {"super_admin", "hr_admin", "hr_officer", "operations_manager", "operations_officer", "hotel_manager"},
     "tickets": {"super_admin", "hr_admin", "hr_officer"},
     "announcements": {"super_admin", "hr_admin", "hr_officer"},
     "events": {"super_admin", "hr_admin", "hr_officer"},
@@ -629,6 +629,17 @@ def auth_user():
     user = User.query.filter_by(token=token, status="active").first()
     if not user or user.deleted_at is not None:
         return None
+    if user.employee_id:
+        emp = db.session.get(Employee, user.employee_id)
+        if not emp or emp.deleted_at is not None or emp.status not in ("active", "probation"):
+            user.token = None
+            user.token_expires_at = None
+            user.status = "inactive"
+            try:
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+            return None
     now = datetime.utcnow()
     if user.token_expires_at and user.token_expires_at < now:
         user.token = None
@@ -1317,7 +1328,8 @@ RESOURCES = {
     "claims": dict(model=ExpenseClaim, order="id", search=["title", "status"],
                    labels={"employee_name": "employee.full_name", "category_name": "category.name",
                            "department_name": "employee.department.name"}),
-    "assets": dict(model=Asset, order="id", search=["tag", "name", "serial_no"]),
+    "assets": dict(model=Asset, order="id", search=["tag", "name", "serial_no", "room_number", "category"],
+                   labels={"storeroom_name": "storeroom.name", "section_name": "section.name"}),
     "asset-assignments": dict(model=AssetAssignment, order="id", search=["condition_out"],
                               labels={"asset_name": "asset.name", "asset_tag": "asset.tag",
                                       "employee_name": "employee.full_name"}),
@@ -1435,6 +1447,7 @@ def login():
             ident_clean = ident_low.replace("-", "").replace(" ", "").replace("_", "")
             emp_match = Employee.query.filter(
                 Employee.deleted_at.is_(None),
+                Employee.status.in_(["active", "probation"]),
                 or_(
                     func.lower(Employee.employee_no) == ident_low,
                     func.lower(func.replace(func.replace(Employee.employee_no, "-", ""), " ", "")) == ident_clean,
@@ -1518,6 +1531,18 @@ def login():
     user.failed_attempts = 0
     if user.status != "active":
         return error("This account is inactive", 403)
+    if user.employee_id:
+        emp = db.session.get(Employee, user.employee_id)
+        if not emp or emp.deleted_at is not None:
+            user.status = "inactive"
+            user.token = None
+            db.session.commit()
+            return error("This employee account has been deleted or archived", 403)
+        if emp.status not in ("active", "probation"):
+            user.status = "inactive"
+            user.token = None
+            db.session.commit()
+            return error(f"Your employment status is '{emp.status.replace('_', ' ').capitalize()}'. Portal login access is inactive.", 403)
     now = datetime.utcnow()
     user.token = secrets.token_hex(32)
     user.token_expires_at = now + timedelta(minutes=SESSION_TIMEOUT_MINUTES)
@@ -1833,6 +1858,14 @@ def admin_conflict(model, fields, obj=None):
                 q = q.filter(Setting.id != obj.id)
             if q.first():
                 return "A setting with that key already exists"
+    if model is Asset:
+        tag = fields.get("tag")
+        if tag:
+            q = Asset.query.filter(func.lower(Asset.tag) == str(tag).strip().lower())
+            if obj:
+                q = q.filter(Asset.id != obj.id)
+            if q.first():
+                return f"An equipment asset with tag '{tag}' already exists. Please choose a unique tag."
     return None
 
 
@@ -2156,9 +2189,19 @@ def update_resource(resource, rid):
         if c_row and "end_date" in fields:
             c_row.end_date = obj.end_date
         lu = User.query.filter_by(employee_id=obj.id).first()
-        if lu and obj.email and lu.email.lower() != obj.email.lower():
-            if not User.query.filter(func.lower(User.email) == obj.email.lower(), User.id != lu.id).first():
-                lu.email = obj.email.strip().lower()
+        if lu:
+            if "status" in fields:
+                st = str(fields["status"]).lower().strip()
+                if st in ("active", "probation"):
+                    lu.status = "active"
+                    lu.deleted_at = None
+                else:
+                    lu.status = "inactive"
+                    lu.token = None
+                    lu.token_expires_at = None
+            if obj.email and lu.email.lower() != obj.email.lower():
+                if not User.query.filter(func.lower(User.email) == obj.email.lower(), User.id != lu.id).first():
+                    lu.email = obj.email.strip().lower()
     if hasattr(obj, "updated_by"):
         obj.updated_by = request.user.id
     audit(request.user, "update", resource, obj.id, old=old, new=fields)
@@ -2213,6 +2256,23 @@ def delete_resource(resource, rid):
             return error("System roles cannot be deleted", 409)
         if User.query.filter(User.role_id == obj.id, User.deleted_at.is_(None)).first():
             return error("This role is still assigned to users. Reassign them first.", 409)
+    if model is Asset:
+        active_assign = AssetAssignment.query.filter_by(asset_id=obj.id, returned_at=None).first()
+        if active_assign:
+            return error(f"Cannot delete asset '{obj.name}' because it is currently assigned to an employee. Return it first.", 409)
+        AssetAssignment.query.filter_by(asset_id=obj.id).delete()
+    if model is Employee:
+        if request.user.employee_id == obj.id:
+            return error("You cannot delete your own employee record", 409)
+        Department.query.filter_by(head_id=obj.id).update({Department.head_id: None})
+        Employee.query.filter_by(manager_id=obj.id).update({Employee.manager_id: None})
+        lu = User.query.filter_by(employee_id=obj.id).first()
+        if lu:
+            lu.status = "inactive"
+            lu.token = None
+            lu.token_expires_at = None
+            lu.deleted_at = datetime.utcnow()
+        obj.status = "inactive"
     if model is Department:
         emp_count = Employee.query.filter(Employee.department_id == obj.id, Employee.deleted_at.is_(None)).count()
         if emp_count > 0:
@@ -5490,8 +5550,31 @@ def bulk_action():
             if action == "set_work_location" and value in ("office", "hybrid", "remote"):
                 emp.work_location = value
                 processed += 1
-            elif action == "set_status" and value in ("active", "probation", "on_leave", "suspended"):
+            elif action == "set_status" and value in ("active", "probation", "on_leave", "suspended", "inactive", "terminated", "resigned"):
                 emp.status = value
+                lu = User.query.filter_by(employee_id=emp.id).first()
+                if lu:
+                    if value in ("active", "probation"):
+                        lu.status = "active"
+                        lu.deleted_at = None
+                    else:
+                        lu.status = "inactive"
+                        lu.token = None
+                        lu.token_expires_at = None
+                processed += 1
+            elif action == "delete":
+                if request.user.employee_id == emp.id:
+                    continue
+                Department.query.filter_by(head_id=emp.id).update({Department.head_id: None})
+                Employee.query.filter_by(manager_id=emp.id).update({Employee.manager_id: None})
+                lu = User.query.filter_by(employee_id=emp.id).first()
+                if lu:
+                    lu.status = "inactive"
+                    lu.token = None
+                    lu.token_expires_at = None
+                    lu.deleted_at = datetime.utcnow()
+                emp.status = "inactive"
+                emp.deleted_at = datetime.utcnow()
                 processed += 1
         audit(request.user, f"bulk_employees_{action}", "employees", None)
         db.session.commit()

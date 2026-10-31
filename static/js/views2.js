@@ -91,11 +91,49 @@ Views.recruitment = async function (root) {
       + '<div class="page-enter">' + body + '</div>';
 
     root.insertAdjacentHTML("beforeend", renderTable({
-      id: "recruitment-applications", title: "Applications", columns: [
-        { label: "Candidate", key: "candidate_name" }, { label: "Job", key: "job_title" },
-        { label: "Stage", key: "stage" }, Records.column("applications"),
-      ], rows: allApps, emptyTitle: "No applications",
+      id: "recruitment-applications",
+      title: "Applications",
+      columns: [
+        {
+          label: "Candidate",
+          key: "candidate_name",
+          render: r => '<b>' + esc(r.candidate_name) + '</b>' + (r.candidate_email ? '<div class="tiny muted">' + esc(r.candidate_email) + '</div>' : ''),
+        },
+        { label: "Job", key: "job_title", render: r => '<b>' + esc(r.job_title) + '</b>' },
+        {
+          label: "Stage",
+          key: "stage",
+          sortValue: r => r.stage,
+          render: r => canRecruit
+            ? '<select class="select" style="height:30px;min-width:130px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:6px;cursor:pointer" data-app-stage-select="' + r.id + '" data-job-id="' + (r.job_posting_id || "") + '" title="Update candidate stage">'
+              + stages.map(st => '<option value="' + st + '"' + (r.stage === st ? " selected" : "") + '>' + st.charAt(0).toUpperCase() + st.slice(1) + '</option>').join("")
+              + '</select>'
+            : chip(r.stage),
+        },
+        Records.column("applications"),
+      ],
+      rows: allApps,
+      emptyTitle: "No applications",
     }));
+    onDelegate(root, "change", "[data-app-stage-select]", async (sel, ev) => {
+      ev.stopPropagation();
+      const aid = sel.dataset.appStageSelect;
+      const newStage = sel.value;
+      const jobId = sel.dataset.jobId;
+      sel.disabled = true;
+      try {
+        await API.patch("/applications/" + aid + "/stage", { stage: newStage });
+        const stageLabel = newStage.charAt(0).toUpperCase() + newStage.slice(1);
+        toast("Application moved to " + stageLabel + " — board updated", "success");
+        if (jobId) {
+          recState.posting = String(jobId);
+        }
+        Views.recruitment(root);
+      } catch (err) {
+        handleErr(err);
+        sel.disabled = false;
+      }
+    });
     Records.mount(root, ["job-postings", "candidates", "applications", "interviews"]);
     root.querySelectorAll("[data-rtab]").forEach(b => b.onclick = () => { recState.tab = b.dataset.rtab; Views.recruitment(root); });
     const ps = root.querySelector("#posting-select");

@@ -87,6 +87,7 @@ Views.operations = async function (root, params) {
     const storerooms = (storeRes && storeRes.data) || [];
     const assets = (assetRes && assetRes.data) || [];
     const maintenanceWorks = (maintenanceRes && maintenanceRes.data) || [];
+    const canManageAssets = Store.canOperations ? (Store.canOperations() || Store.canManage()) : Store.canManage();
 
     const tabs = [
       ["dashboard", "Overview"],
@@ -797,17 +798,34 @@ Views.operations = async function (root, params) {
             id: "ops-assets-table",
             title: "Hotel Equipment & Machinery Assets",
             sub: "Laundry extractors, HVAC chillers, POS terminals, golf carts, and keycard encoders",
+            actions: canManageAssets ? '<button class="btn btn-sm btn-accent" id="ops-asset-add-tbl">' + icon("plus", 13) + ' Register Asset</button>' : '',
             filters: [
               { key: "category", label: "Category" },
               { key: "status", label: "Status" },
+              { key: "condition", label: "Condition" },
             ],
             columns: [
-              { label: "Asset", render: r => '<div class="row"><div class="kpi-icon teal" style="width:32px;height:32px">' + icon("laptop", 15) + '</div><div><b>' + esc(r.name) + '</b><div class="tiny muted mono">' + esc(r.tag) + '</div></div></div>' },
-              { label: "Category", render: r => '<span class="pill-tag">' + esc(r.category || "other") + '</span>' },
+              {
+                label: "Asset",
+                render: r => '<div class="row"><div class="kpi-icon teal" style="width:32px;height:32px">' + icon("laptop", 15) + '</div><div><a href="javascript:void(0)" class="link-subtle" data-view-asset="' + r.id + '"><b>' + esc(r.name) + '</b></a><div class="tiny muted mono">' + esc(r.tag) + (r.room_number ? ' · <span class="pill-tag tiny">' + esc(r.room_number) + '</span>' : '') + '</div></div></div>'
+              },
+              { label: "Category", render: r => '<span class="pill-tag" style="text-transform:capitalize">' + esc((r.category || "other").replace(/_/g, " ")) + '</span>' },
               { label: "Serial #", render: r => '<span class="mono tiny">' + esc(r.serial_no || "—") + '</span>' },
+              { label: "Location", render: r => esc(r.room_number || r.storeroom_name || "—") },
               { label: "Purchased", render: r => fmtDate(r.purchase_date) },
               { label: "Value", sortValue: r => Number(r.value || 0), render: r => money(r.value || 0) },
+              { label: "Condition", render: r => '<span class="pill-tag tiny" style="text-transform:capitalize">' + esc((r.condition || "operational").replace(/_/g, " ")) + '</span>' },
               { label: "Status", render: r => chip(r.status) },
+              {
+                label: "Actions", class: "right", sortable: false,
+                render: r => '<div class="row" style="gap:4px;justify-content:flex-end">'
+                  + '<button class="icon-btn" style="width:28px;height:28px" data-view-asset="' + r.id + '" title="View asset details">' + icon("eye", 13) + '</button>'
+                  + (canManageAssets
+                    ? '<button class="icon-btn" style="width:28px;height:28px" data-edit-asset="' + r.id + '" title="Edit asset">' + icon("edit", 13) + '</button>'
+                      + '<button class="icon-btn" style="width:28px;height:28px;color:var(--red)" data-del-asset="' + r.id + '" title="Delete asset">' + icon("trash", 13) + '</button>'
+                    : '')
+                  + '</div>'
+              },
             ],
             rows: assets, emptyTitle: "No equipment registered",
           });
@@ -860,16 +878,21 @@ Views.operations = async function (root, params) {
 
     // Render outer shell
     const isMaintenanceTab = opsState.tab === "maintenance";
+    const isAssetsTab = opsState.tab === "assets";
     const pageActions = isMaintenanceTab
       ? '<button class="btn btn-ghost" id="ops-maint-print">' + icon("printer", 15) + ' Print report</button>'
         + '<button class="btn btn-ghost" id="ops-maint-send">' + icon("send", 15) + ' Send report to MD</button>'
         + '<button class="btn btn-accent" id="ops-maint-new">' + icon("plus", 15) + ' Schedule maintenance</button>'
+      : isAssetsTab
+      ? (canManageAssets ? '<button class="btn btn-accent" id="ops-asset-add">' + icon("plus", 15) + ' Register Asset</button>' : '')
       : '<button class="btn btn-ghost" id="ops-top-restock">' + icon("zap", 15) + ' Restock Supplies</button>'
         + '<button class="btn btn-accent" id="ops-top-wo">' + icon("plus", 15) + ' New Work Order</button>';
     root.innerHTML = pageHead(
       "Hotel Operations",
       isMaintenanceTab
         ? "Schedule repairs and inspections, assign employees or contractors, track GHS charges, and report to the Managing Director."
+        : isAssetsTab
+        ? "Hotel equipment register, HVAC machinery, laundry extractors, POS terminals, asset tracking, and depreciation."
         : "Executive command centre for storerooms, linen inventory, guest work orders, room turnaround, and property readiness.",
       pageActions,
       "Department"
@@ -896,6 +919,33 @@ Views.operations = async function (root, params) {
 
     const btnWO = root.querySelector("#ops-top-wo") || root.querySelector("#ops-btn-quick-wo") || root.querySelector("#ops-btn-new-wo-tab");
     if (btnWO) btnWO.onclick = () => openNewWorkOrderModal();
+
+    const btnAssetAdd = root.querySelector("#ops-asset-add");
+    if (btnAssetAdd) btnAssetAdd.onclick = () => openHotelAssetModal(null, () => Views.operations(root, ["assets"]));
+    const btnAssetAddTbl = root.querySelector("#ops-asset-add-tbl");
+    if (btnAssetAddTbl) btnAssetAddTbl.onclick = () => openHotelAssetModal(null, () => Views.operations(root, ["assets"]));
+
+    onDelegate(root, "click", "#ops-asset-add, #ops-asset-add-tbl", () => {
+      openHotelAssetModal(null, () => Views.operations(root, ["assets"]));
+    });
+
+    onDelegate(root, "click", "[data-view-asset]", (btn) => {
+      const aid = Number(btn.dataset.viewAsset);
+      const asset = assets.find(a => a.id === aid);
+      if (asset) openViewAssetModal(asset, () => Views.operations(root, ["assets"]));
+    });
+
+    onDelegate(root, "click", "[data-edit-asset]", (btn) => {
+      const aid = Number(btn.dataset.editAsset);
+      const asset = assets.find(a => a.id === aid);
+      if (asset) openHotelAssetModal(asset, () => Views.operations(root, ["assets"]));
+    });
+
+    onDelegate(root, "click", "[data-del-asset]", (btn) => {
+      const aid = Number(btn.dataset.delAsset);
+      const asset = assets.find(a => a.id === aid);
+      if (asset) deleteHotelAsset(asset, () => Views.operations(root, ["assets"]));
+    });
 
     const btnNewMaintenance = root.querySelector("#ops-maint-new");
     if (btnNewMaintenance) btnNewMaintenance.onclick = () => openMaintenanceForm();
@@ -1899,4 +1949,171 @@ async function openAssignStockModal(prefillSectionId) {
   } catch (err) {
     toast("Error loading spaces: " + err.message, "error");
   }
+}
+
+
+/* ============================================================ ASSETS CRUD HELPERS */
+function openViewAssetModal(asset, onUpdated) {
+  const a = asset || {};
+  const canManageAssets = Store.canOperations ? (Store.canOperations() || Store.canManage()) : Store.canManage();
+  openModal({
+    title: a.name || "Equipment Asset Details",
+    sub: "Tag: " + (a.tag || "N/A") + " · Category: " + ((a.category || "other").replace(/_/g, " ")),
+    wide: true,
+    body: '<div class="grid grid-2" style="gap:16px;margin-bottom:16px">'
+      + '<div class="card card-pad" style="background:var(--card-bg, #fff)">'
+      + '<div class="tiny muted uppercase bold" style="margin-bottom:10px">Equipment Identification</div>'
+      + '<dl class="kv">'
+      + '<dt>Name</dt><dd><b>' + esc(a.name || "—") + '</b></dd>'
+      + '<dt>Asset Tag</dt><dd><span class="mono bold">' + esc(a.tag || "—") + '</span></dd>'
+      + '<dt>Category</dt><dd><span class="pill-tag" style="text-transform:capitalize">' + esc((a.category || "other").replace(/_/g, " ")) + '</span></dd>'
+      + '<dt>Serial Number</dt><dd><span class="mono">' + esc(a.serial_no || "—") + '</span></dd>'
+      + '</dl>'
+      + '</div>'
+      + '<div class="card card-pad" style="background:var(--card-bg, #fff)">'
+      + '<div class="tiny muted uppercase bold" style="margin-bottom:10px">Status & Valuation</div>'
+      + '<dl class="kv">'
+      + '<dt>Operational Status</dt><dd>' + chip(a.status) + '</dd>'
+      + '<dt>Physical Condition</dt><dd><span class="pill-tag tiny" style="text-transform:capitalize">' + esc((a.condition || "operational").replace(/_/g, " ")) + '</span></dd>'
+      + '<dt>Purchase Date</dt><dd>' + fmtDate(a.purchase_date) + '</dd>'
+      + '<dt>Book Value</dt><dd><b>' + money(a.value || 0) + '</b></dd>'
+      + '</dl>'
+      + '</div>'
+      + '</div>'
+      + '<div class="card card-pad">'
+      + '<div class="tiny muted uppercase bold" style="margin-bottom:10px">Placement & Warranty</div>'
+      + '<dl class="kv">'
+      + '<dt>Location / Room</dt><dd><b>' + esc(a.room_number || a.storeroom_name || "Unassigned / General Operations") + '</b></dd>'
+      + '<dt>Warranty & Notes</dt><dd style="white-space:pre-wrap">' + esc(a.notes || "No notes recorded.") + '</dd>'
+      + '</dl>'
+      + '</div>',
+    footer: (canManageAssets
+      ? '<button class="btn btn-ghost" id="view-asset-del-btn" style="color:var(--red);margin-right:auto">' + icon("trash", 13) + ' Delete</button>'
+        + '<button class="btn btn-soft" id="view-asset-edit-btn">' + icon("edit", 13) + ' Edit Asset</button>'
+      : '') + '<button class="btn btn-accent" data-close-modal>Close</button>',
+    onMount(card) {
+      const editBtn = card.querySelector("#view-asset-edit-btn");
+      if (editBtn) {
+        editBtn.onclick = () => {
+          closeModal();
+          openHotelAssetModal(a, onUpdated);
+        };
+      }
+      const delBtn = card.querySelector("#view-asset-del-btn");
+      if (delBtn) {
+        delBtn.onclick = () => {
+          closeModal();
+          deleteHotelAsset(a, onUpdated);
+        };
+      }
+    }
+  });
+}
+
+function openHotelAssetModal(existing, onSuccess) {
+  const a = existing || {};
+  const canManageAssets = Store.canOperations ? (Store.canOperations() || Store.canManage()) : Store.canManage();
+  const defaultTag = a.tag || ("AST-" + (a.category ? a.category.slice(0, 3).toUpperCase() : "EQP") + "-" + Math.floor(100 + Math.random() * 900));
+  formModal({
+    title: existing ? "Edit Equipment Asset" : "Register Hotel Equipment Asset",
+    sub: existing ? (esc(a.name) + " (" + esc(a.tag || "") + ")") : "Add machinery, appliances, HVAC chillers, POS terminals, or vehicles to hotel register",
+    wide: true,
+    submitLabel: existing ? "Save Changes" : "Register Asset",
+    successMessage: existing ? "Asset updated successfully" : "Asset registered successfully",
+    extraFooter: existing && canManageAssets
+      ? '<button type="button" class="btn btn-ghost" id="form-delete-btn" style="margin-right:auto;color:var(--red)">' + icon("trash", 13) + ' Delete asset</button>'
+      : '',
+    onDelete: existing ? () => {
+      closeModal();
+      deleteHotelAsset(existing, onSuccess);
+    } : null,
+    fields: [
+      { name: "name", label: "Equipment / Asset Name", required: true, value: a.name, placeholder: "e.g. Commercial Washing Extractor 50kg" },
+      { name: "tag", label: "Asset Tag / Code", required: false, value: existing ? a.tag : defaultTag, placeholder: "e.g. AST-LAU-001 (auto-generated if blank)" },
+      {
+        name: "category",
+        label: "Category",
+        type: "select",
+        options: [
+          { value: "kitchen", label: "Kitchen & Culinary" },
+          { value: "laundry", label: "Laundry & Housekeeping" },
+          { value: "hvac", label: "HVAC & Mechanical" },
+          { value: "pos", label: "POS & Keycard Systems" },
+          { value: "it", label: "IT & Electronics" },
+          { value: "maintenance", label: "Engineering & Maintenance" },
+          { value: "vehicle", label: "Vehicles & Golf Carts" },
+          { value: "fitness", label: "Gym & Pool Equipment" },
+          { value: "furniture", label: "Furniture & Fixtures" },
+          { value: "other", label: "Other Equipment" },
+        ],
+        value: a.category || "other",
+        required: true,
+      },
+      { name: "serial_no", label: "Serial Number", value: a.serial_no, placeholder: "e.g. SN-88329-XYZ" },
+      { name: "purchase_date", label: "Purchase Date", type: "date", value: a.purchase_date || todayISO() },
+      { name: "value", label: "Purchase / Book Value (GHS)", type: "number", step: "0.01", min: 0, value: a.value || 0 },
+      {
+        name: "status",
+        label: "Operational Status",
+        type: "select",
+        options: [
+          { value: "available", label: "Available / Standby" },
+          { value: "assigned", label: "In Active Service" },
+          { value: "maintenance", label: "Under Maintenance" },
+          { value: "damaged", label: "Damaged / Faulty" },
+          { value: "retired", label: "Retired / Decommissioned" },
+        ],
+        value: a.status || "available",
+        required: true,
+      },
+      {
+        name: "condition",
+        label: "Physical Condition",
+        type: "select",
+        options: [
+          { value: "operational", label: "Operational / Good" },
+          { value: "needs_service", label: "Needs Service / Inspection" },
+          { value: "critical", label: "Critical Fault" },
+          { value: "decommissioned", label: "Decommissioned" },
+        ],
+        value: a.condition || "operational",
+      },
+      { name: "room_number", label: "Location / Room / Area", value: a.room_number, placeholder: "e.g. Laundry Bay 1, Kitchen Cold Room, Room 302, Roof Chiller #2" },
+      { name: "notes", label: "Warranty / Maintenance Notes", type: "textarea", value: a.notes, full: true, placeholder: "e.g. 5-year compressor warranty expiring 2029; serviced biannually" },
+    ],
+    onSubmit: async (data) => {
+      data.value = data.value !== null && data.value !== undefined && data.value !== "" ? Number(data.value) : 0;
+      if (!data.tag || !data.tag.trim()) {
+        const catPrefix = (data.category || "AST").slice(0, 3).toUpperCase();
+        data.tag = "AST-" + catPrefix + "-" + Math.floor(100 + Math.random() * 900);
+      } else {
+        data.tag = data.tag.trim();
+      }
+      if (existing) {
+        await API.put("/assets/" + existing.id, data);
+      } else {
+        await API.post("/assets", data);
+      }
+      if (typeof onSuccess === "function") onSuccess();
+      else navigate();
+    },
+  });
+}
+
+function deleteHotelAsset(asset, onSuccess) {
+  confirmDialog(
+    "Delete Equipment Asset",
+    'Are you sure you want to permanently delete "' + (asset.name || asset.tag) + '" (' + (asset.tag || "") + ')? This action cannot be undone.',
+    async () => {
+      try {
+        await API.del("/assets/" + asset.id);
+        toast("Asset deleted successfully", "success");
+        if (typeof onSuccess === "function") onSuccess();
+        else navigate();
+      } catch (err) {
+        toast("Failed to delete asset: " + (err.message || err), "error");
+      }
+    },
+    { danger: true, confirmLabel: "Delete asset" }
+  );
 }
