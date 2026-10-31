@@ -14,6 +14,7 @@ function load(role = 'super_admin', overrides = {}) {
       isRole: (...roles) => roles.includes(role),
     },
     esc: value => String(value),
+    icon: () => '',
     ...overrides,
   });
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../static/js/records.js'), 'utf8') + '\nglobalThis.records = Records;', context);

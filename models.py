@@ -913,6 +913,22 @@ class Setting(db.Model, TimestampMixin):
     group_name = db.Column(db.String(40), default="general")
 
 
+class DatabaseBackup(db.Model):
+    """Register of database snapshots stored in the server-side backups folder."""
+    __tablename__ = "database_backups"
+    id = db.Column(db.Integer, primary_key=True)
+    filename = db.Column(db.String(200), nullable=False)
+    label = db.Column(db.String(180))
+    trigger = db.Column(db.String(30), default="manual", nullable=False)  # manual | scheduled | pre_restore
+    status = db.Column(db.String(20), default="completed", nullable=False)
+    size_bytes = db.Column(db.Integer, default=0)
+    checksum_sha256 = db.Column(db.String(64))
+    duration_ms = db.Column(db.Integer)
+    notes = db.Column(db.String(500))
+    created_by = db.Column(db.Integer)
+    created_at = db.Column(db.DateTime, default=now, nullable=False)
+
+
 class LoginHistory(db.Model):
     __tablename__ = "login_history"
     id = db.Column(db.Integer, primary_key=True)
