@@ -87,6 +87,7 @@ const NAV = [
     items: [
       { id: "settings", label: "Settings", icon: "sliders" },
       { id: "admin", label: "Administration", icon: "settings", roles: ["super_admin"] },
+      { id: "backups", label: "Backups & recovery", icon: "copy", roles: ["super_admin"] },
     ],
   },
 ];
@@ -98,6 +99,7 @@ const PAGES = {
   payroll: "Payroll", expenses: "Expenses", performance: "Performance", training: "Training",
   assets: "Assets", helpdesk: "Helpdesk", announcements: "Announcements & Events", operations: "Operations",
   reports: "Reports", admin: "Administration", profile: "My Profile", settings: "Settings", notifications: "Notifications",
+  backups: "Backups & Recovery",
 };
 
 function currentRole() { return Store.role(); }

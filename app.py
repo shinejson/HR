@@ -6,6 +6,8 @@ import secrets
 import csv
 import io
 import base64
+import hashlib
+import sqlite3
 from html import escape as html_escape
 from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -29,7 +31,7 @@ from models import (
     TrainingEnrolment, ExpenseCategory, ExpenseClaim, Asset, AssetAssignment,
     Ticket, TicketComment, Announcement, CompanyEvent, EventRsvp, Notification,
     NotificationPreference, NotificationDelivery, Approval, AuditLog, Setting,
-    LoginHistory,
+    LoginHistory, DatabaseBackup,
     HotelInventoryItem, HotelStockMovement, HotelWorkOrder,
     HotelStoreroom, HotelStoreroomSection, MaintenanceWork,
 )
@@ -6351,6 +6353,410 @@ def meta():
         "employment_categories": letters.category_options(),
         "staff_categories": letters.STAFF_CATEGORIES,
     }})
+
+
+# ---------------------------------------------------------------- database backups & recovery
+
+BACKUP_DIR = os.path.join(BASE_DIR, "backups")
+BACKUP_CONFIG_DEFAULTS = {"retention_count": 15, "auto_enabled": False, "interval_hours": 24}
+BACKUP_TRIGGERS = {"manual": "Manual", "scheduled": "Scheduled", "pre_restore": "Pre-restore"}
+_auto_backup_last_check = None
+
+
+def super_admin_required(fn):
+    @wraps(fn)
+    @login_required
+    def wrapper(*args, **kwargs):
+        if role_of(request.user) != "super_admin":
+            return error("Only Super Admin accounts can manage database backups", 403)
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+def _backup_dir():
+    path = app.config.get("HRMS_BACKUP_DIR") or BACKUP_DIR
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _backup_path(filename):
+    # basename() keeps every snapshot inside the backups folder, whatever the input.
+    return os.path.join(_backup_dir(), os.path.basename(str(filename)))
+
+
+def _live_db_path():
+    uri = app.config.get("SQLALCHEMY_DATABASE_URI") or ""
+    if uri.startswith("sqlite:///"):
+        return uri[len("sqlite:///"):]
+    return None
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sqlite_integrity_ok(path):
+    conn = sqlite3.connect(path)
+    try:
+        row = conn.execute("PRAGMA integrity_check").fetchone()
+        return bool(row) and row[0] == "ok"
+    finally:
+        conn.close()
+
+
+def _backup_setting(key):
+    row = Setting.query.filter_by(key="backup." + key).first()
+    if row is None:
+        return BACKUP_CONFIG_DEFAULTS[key]
+    default = BACKUP_CONFIG_DEFAULTS[key]
+    if isinstance(default, bool):
+        return str(row.value).lower() in ("1", "true", "yes", "on")
+    try:
+        return int(row.value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _backup_config():
+    return {key: _backup_setting(key) for key in BACKUP_CONFIG_DEFAULTS}
+
+
+def _backup_creator_name(user_id):
+    creator = db.session.get(User, user_id) if user_id else None
+    if creator is None:
+        return "System"
+    emp = getattr(creator, "employee", None)
+    return (emp.full_name if emp else None) or creator.email or "Unknown user"
+
+
+def _backup_dict(row):
+    return {
+        "id": row.id,
+        "filename": row.filename,
+        "label": row.label,
+        "trigger": row.trigger,
+        "trigger_label": BACKUP_TRIGGERS.get(row.trigger, row.trigger),
+        "status": row.status,
+        "size_bytes": row.size_bytes or 0,
+        "checksum_sha256": row.checksum_sha256,
+        "duration_ms": row.duration_ms,
+        "notes": row.notes,
+        "created_at": conv(row.created_at),
+        "created_by": row.created_by,
+        "created_by_name": _backup_creator_name(row.created_by),
+    }
+
+
+def _create_db_backup(trigger="manual", label=None, user=None, notes=None):
+    """Take a transaction-safe snapshot of the live SQLite database file.
+
+    Uses the sqlite3 online backup API so the copy is consistent even while
+    other threads keep serving requests.
+    """
+    live = _live_db_path()
+    if not live or not os.path.exists(live):
+        raise RuntimeError("Database backups require a file-based SQLite database")
+    started = datetime.utcnow()
+    filename = "hrms_" + started.strftime("%Y%m%d_%H%M%S") + "_" + secrets.token_hex(3) + ".db"
+    target = _backup_path(filename)
+    src = sqlite3.connect(live)
+    try:
+        dst = sqlite3.connect(target)
+        try:
+            with dst:
+                src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    row = DatabaseBackup(
+        filename=filename,
+        label=(str(label).strip()[:180] if label else None),
+        trigger=trigger,
+        status="completed",
+        size_bytes=os.path.getsize(target),
+        checksum_sha256=_sha256_file(target),
+        duration_ms=max(0, int((datetime.utcnow() - started).total_seconds() * 1000)),
+        notes=(str(notes).strip()[:500] if notes else None),
+    )
+    row.created_by = user.id if user else None
+    db.session.add(row)
+    return row
+
+
+def _prune_backups(keep=None):
+    """Delete the oldest snapshots beyond the retention window; newest is always kept."""
+    if keep is None:
+        keep = _backup_setting("retention_count")
+    try:
+        keep = max(1, int(keep))
+    except (TypeError, ValueError):
+        keep = BACKUP_CONFIG_DEFAULTS["retention_count"]
+    rows = DatabaseBackup.query.order_by(DatabaseBackup.created_at.desc(), DatabaseBackup.id.desc()).all()
+    pruned = 0
+    for row in rows[keep:]:
+        try:
+            path = _backup_path(row.filename)
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
+        db.session.delete(row)
+        pruned += 1
+    return pruned
+
+
+@app.get("/api/v1/backups")
+@super_admin_required
+def list_backups():
+    rows = DatabaseBackup.query.order_by(DatabaseBackup.created_at.desc(), DatabaseBackup.id.desc()).all()
+    live = _live_db_path()
+    live_size = os.path.getsize(live) if live and os.path.exists(live) else None
+    last = rows[0] if rows else None
+    return jsonify({
+        "data": [_backup_dict(r) for r in rows],
+        "summary": {
+            "count": len(rows),
+            "total_bytes": sum(r.size_bytes or 0 for r in rows),
+            "live_db_bytes": live_size,
+            "last_backup_at": conv(last.created_at) if last else None,
+            "file_based": bool(live),
+            "backup_dir": _backup_dir(),
+        },
+        "config": _backup_config(),
+    })
+
+
+@app.post("/api/v1/backups")
+@super_admin_required
+def create_backup():
+    body = request.get_json(silent=True) or {}
+    label = body.get("label")
+    if label is not None and len(str(label)) > 180:
+        return error("Backup label must be 180 characters or fewer", 422)
+    try:
+        row = _create_db_backup("manual", label=label, user=request.user)
+    except RuntimeError as exc:
+        return error(str(exc), 422)
+    except sqlite3.Error as exc:
+        return error(f"Backup failed: {exc}", 500)
+    db.session.flush()  # assigns row.id so the audit entry can reference it
+    audit(request.user, "backup_created", "database-backup", row.id,
+          new={"filename": row.filename, "size_bytes": row.size_bytes})
+    pruned = _prune_backups()
+    db.session.commit()
+    return jsonify({"data": _backup_dict(row), "pruned": pruned}), 201
+
+
+@app.get("/api/v1/backups/<int:bid>/download")
+@super_admin_required
+def download_backup(bid):
+    row = db.session.get(DatabaseBackup, bid)
+    if not row:
+        return error("Backup not found", 404)
+    path = _backup_path(row.filename)
+    if not os.path.exists(path):
+        return error("Backup file is missing from the server", 404)
+    resp = send_file(path, mimetype="application/x-sqlite3", as_attachment=True,
+                     download_name=row.filename)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    return resp
+
+
+@app.post("/api/v1/backups/<int:bid>/verify")
+@super_admin_required
+def verify_backup(bid):
+    row = db.session.get(DatabaseBackup, bid)
+    if not row:
+        return error("Backup not found", 404)
+    path = _backup_path(row.filename)
+    if not os.path.exists(path):
+        return error("Backup file is missing from the server", 404)
+    checksum = _sha256_file(path)
+    try:
+        integrity_ok = _sqlite_integrity_ok(path)
+    except sqlite3.Error:
+        integrity_ok = False
+    return jsonify({"data": {
+        "id": row.id,
+        "filename": row.filename,
+        "checksum_sha256": checksum,
+        "checksum_match": checksum == row.checksum_sha256,
+        "integrity_ok": integrity_ok,
+        "valid": integrity_ok and checksum == row.checksum_sha256,
+        "verified_at": datetime.utcnow().isoformat(timespec="seconds"),
+    }})
+
+
+@app.delete("/api/v1/backups/<int:bid>")
+@super_admin_required
+def delete_backup(bid):
+    row = db.session.get(DatabaseBackup, bid)
+    if not row:
+        return error("Backup not found", 404)
+    path = _backup_path(row.filename)
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except OSError as exc:
+        return error(f"Could not delete the backup file: {exc}", 500)
+    audit(request.user, "backup_deleted", "database-backup", bid, old={"filename": row.filename})
+    db.session.delete(row)
+    db.session.commit()
+    return jsonify({"data": {"id": bid, "deleted": True}})
+
+
+@app.put("/api/v1/backups/config")
+@super_admin_required
+def update_backup_config():
+    body = request.get_json(silent=True) or {}
+    updates = {}
+    if "retention_count" in body:
+        try:
+            keep = int(body.get("retention_count"))
+        except (TypeError, ValueError):
+            return error("Retention count must be a number of snapshots", 422)
+        if not 1 <= keep <= 100:
+            return error("Retention count must be between 1 and 100 snapshots", 422)
+        updates["retention_count"] = keep
+    if "interval_hours" in body:
+        try:
+            hours = int(body.get("interval_hours"))
+        except (TypeError, ValueError):
+            return error("Automatic backup interval must be a number of hours", 422)
+        if not 1 <= hours <= 168:
+            return error("Automatic backup interval must be between 1 and 168 hours", 422)
+        updates["interval_hours"] = hours
+    if "auto_enabled" in body:
+        updates["auto_enabled"] = "1" if body.get("auto_enabled") in (True, "1", "true", "on", "yes") else "0"
+    if not updates:
+        return error("No valid backup settings were provided", 422)
+    for key, value in updates.items():
+        setting = Setting.query.filter_by(key="backup." + key).first()
+        if setting:
+            setting.value = str(value)
+        else:
+            db.session.add(Setting(key="backup." + key, value=str(value), group_name="backup"))
+    audit(request.user, "backup_config_updated", "database-backup", None, new=updates)
+    pruned = _prune_backups() if "retention_count" in updates else 0
+    db.session.commit()
+    return jsonify({"data": _backup_config(), "pruned": pruned})
+
+
+@app.post("/api/v1/backups/<int:bid>/restore")
+@super_admin_required
+def restore_backup(bid):
+    row = db.session.get(DatabaseBackup, bid)
+    if not row:
+        return error("Backup not found", 404)
+    source = _backup_path(row.filename)
+    if not os.path.exists(source):
+        return error("Backup file is missing from the server", 404)
+    live = _live_db_path()
+    if not live:
+        return error("Restore requires a file-based SQLite database", 422)
+
+    try:
+        if not _sqlite_integrity_ok(source):
+            return error("This backup failed its integrity check and cannot be restored", 422)
+        if _sha256_file(source) != row.checksum_sha256:
+            return error("Backup checksum does not match the register — the file may have been altered", 422)
+    except sqlite3.Error:
+        return error("Backup file could not be read as a SQLite database", 422)
+
+    # Safety net: snapshot the current state before anything is overwritten.
+    actor_id = request.user.id
+    source_name = row.filename
+    try:
+        pre = _create_db_backup("pre_restore", label="Pre-restore snapshot", user=request.user,
+                                notes=f"Automatic snapshot taken before restoring {source_name}")
+        db.session.commit()
+    except (RuntimeError, sqlite3.Error) as exc:
+        db.session.rollback()
+        return error(f"Could not create the pre-restore safety snapshot: {exc}", 500)
+    pre_payload = {"id": pre.id, "filename": pre.filename, "size_bytes": pre.size_bytes,
+                   "checksum_sha256": pre.checksum_sha256, "created_at": conv(pre.created_at)}
+
+    src = sqlite3.connect(source)
+    try:
+        dst = sqlite3.connect(live)
+        try:
+            with dst:
+                src.backup(dst)
+        finally:
+            dst.close()
+    except sqlite3.Error as exc:
+        return error(f"Restore failed while writing the database: {exc}", 500)
+    finally:
+        src.close()
+
+    # Stale journal sidecars belong to the previous database generation.
+    for suffix in ("-wal", "-shm", "-journal"):
+        try:
+            sidecar = live + suffix
+            if os.path.exists(sidecar):
+                os.remove(sidecar)
+        except OSError:
+            pass
+
+    # Drop pooled connections so every later request reads the restored file.
+    # Skipped for in-memory engines (tests) — disposing would discard the database.
+    engine_url = db.engine.url
+    if engine_url.drivername == "sqlite" and engine_url.database:
+        db.session.remove()
+        db.engine.dispose()
+
+    # The restored file may pre-date the snapshot register: keep it in sync with
+    # what is on disk so the safety snapshot stays visible in the UI.
+    if not DatabaseBackup.query.filter_by(filename=pre_payload["filename"]).first():
+        re_register = DatabaseBackup(
+            filename=pre_payload["filename"], label="Pre-restore snapshot", trigger="pre_restore",
+            status="completed", size_bytes=pre_payload["size_bytes"],
+            checksum_sha256=pre_payload["checksum_sha256"],
+            notes=f"Automatic snapshot taken before restoring {source_name}",
+        )
+        re_register.created_by = actor_id
+        db.session.add(re_register)
+    db.session.add(AuditLog(
+        user_id=actor_id, event="backup_restored", entity="database-backup", entity_id=bid,
+        old_values=str({"filename": source_name})[:2000],
+        new_values=str({"pre_restore_snapshot": pre_payload["filename"]})[:2000],
+        ip=request.remote_addr,
+    ))
+    db.session.commit()
+    return jsonify({"data": {"restored": source_name, "pre_restore_snapshot": pre_payload}})
+
+
+@app.before_request
+def _maybe_auto_backup():
+    """Create a scheduled snapshot when automatic backups are due (throttled check)."""
+    global _auto_backup_last_check
+    now_ts = datetime.utcnow()
+    if _auto_backup_last_check and (now_ts - _auto_backup_last_check).total_seconds() < 600:
+        return None
+    _auto_backup_last_check = now_ts
+    try:
+        if not app.config.get("HRMS_BACKUPS_AUTOCHECK", True):
+            return None
+        if not _live_db_path():
+            return None
+        if not _backup_setting("auto_enabled"):
+            return None
+        interval_hours = max(1, _backup_setting("interval_hours"))
+        last = DatabaseBackup.query.order_by(DatabaseBackup.created_at.desc(), DatabaseBackup.id.desc()).first()
+        if last and last.created_at and (now_ts - last.created_at).total_seconds() < interval_hours * 3600:
+            return None
+        row = _create_db_backup("scheduled", label="Automatic scheduled backup")
+        _prune_backups()
+        db.session.commit()
+        app.logger.info("Scheduled database backup created: %s", row.filename)
+    except Exception:
+        db.session.rollback()
+    return None
 
 
 # ---------------------------------------------------------------- pages & uploads
