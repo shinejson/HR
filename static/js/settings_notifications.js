@@ -488,8 +488,8 @@ Views.settings = async function (root, params) {
           + '<dt>Last Sign-in</dt><dd>' + fmtDateTime(u.last_login_at) + '</dd>'
           + '</dl>'
           + (u.mfa_enabled
-              ? '<div class="mfa-intro success" style="margin-top:14px">' + icon("shield", 16) + '<div><b>Two-factor authentication is on.</b> Sign-in on a new device asks for a code from your authenticator app.</div></div>'
-              : '<div class="mfa-intro" style="margin-top:14px">' + icon("shield", 16) + '<div><b>Your account is password-only.</b> Add an authenticator app so a stolen password alone cannot sign in.</div></div>')
+              ? '<div class="mfa-intro success" style="margin-top:14px">' + icon("shield", 16) + '<div><b>Two-factor authentication is active.</b> Sign-in requires a verification code via ' + esc((u.mfa_method || "app").toUpperCase()) + '.</div></div>'
+              : '<div class="mfa-intro" style="margin-top:14px">' + icon("shield", 16) + '<div><b>Your account is password-only.</b> Add WhatsApp, Email, or an Authenticator App to protect your account.</div></div>')
           + '</div></div>'
 
           + '<div class="card"><div class="card-head"><div><h3>Change Password</h3><div class="sub">Minimum 8 characters · Immediately active</div></div></div>'
@@ -502,8 +502,17 @@ Views.settings = async function (root, params) {
           + '<div><button class="btn btn-accent" type="submit">' + icon("lock", 14) + ' Update password</button></div>'
           + '</form></div></div>'
 
-          + '<div class="card" style="grid-column:1/-1"><div class="card-head"><div><h3>Two-Factor Authentication</h3><div class="sub">Authenticator app &middot; recovery codes &middot; trusted devices</div></div>'
-          + (u.mfa_enabled ? '<div class="right"><span class="chip green">' + icon("shield", 11) + ' Enabled</span></div>' : '<div class="right"><span class="chip chip-grey">Not enabled</span></div>')
+          + ((u.role_slug === "super_admin" || u.role === "Super Admin")
+              ? '<div class="card" style="grid-column:1/-1;border-left:4px solid var(--accent, #0f766e)"><div class="card-head"><div><h3>Organization 2FA Security Policy</h3><div class="sub">Require all users across Meridian HR to configure Two-Factor Authentication</div></div>'
+                + '<div class="right"><label class="switch">'
+                + '<input type="checkbox" id="mfa-org-enforce-toggle" ' + (u.mfa_enforced ? 'checked' : '') + '>'
+                + '<span class="switch-track"></span>'
+                + '</label></div></div>'
+                + '<div class="card-body"><div class="tiny muted">When enabled, all users across the organization who have not configured 2FA will be prompted with a mandatory setup wizard upon sign-in. Users can choose between <b>WhatsApp</b>, <b>Email</b>, or an <b>Authenticator App</b>.</div></div></div>'
+              : '')
+
+          + '<div class="card" style="grid-column:1/-1"><div class="card-head"><div><h3>Two-Factor Authentication</h3><div class="sub">WhatsApp &middot; Email &middot; Authenticator app (TOTP) &middot; Recovery codes</div></div>'
+          + (u.mfa_enabled ? '<div class="right"><span class="chip green">' + icon("shield", 11) + ' Enabled</span> ' + (u.mfa_method ? '<span class="chip teal">' + esc(u.mfa_method.toUpperCase()) + '</span>' : '') + '</div>' : '<div class="right"><span class="chip chip-grey">Not enabled</span></div>')
           + '</div>'
           + '<div class="card-body" id="mfa-settings-panel"><div class="tiny muted">Loading 2FA status…</div></div></div>'
 
@@ -520,6 +529,23 @@ Views.settings = async function (root, params) {
               emptyTitle: "No recent sign-in logs",
             });
 
+        const orgToggle = stage.querySelector("#mfa-org-enforce-toggle");
+        if (orgToggle) {
+          orgToggle.onchange = async () => {
+            const enforced = orgToggle.checked;
+            try {
+              await API.post("/auth/mfa/policy", { enforced });
+              if (Store.user) Store.user.mfa_enforced = enforced;
+              if (Store.meta) Store.meta.mfa_enforced = enforced;
+              toast(enforced ? "Organization 2FA requirement enabled" : "Organization 2FA requirement disabled", "success");
+              renderShell();
+            } catch (err) {
+              orgToggle.checked = !enforced;
+              handleErr(err);
+            }
+          };
+        }
+
         const mfaPanel = stage.querySelector("#mfa-settings-panel");
         if (mfaPanel && typeof MfaUI !== "undefined") {
           MfaUI.mount(mfaPanel, {
@@ -529,6 +555,9 @@ Views.settings = async function (root, params) {
                 const fresh = await MfaUI.status();
                 if (Store.user) {
                   Store.user.mfa_enabled = fresh.enabled;
+                  Store.user.mfa_method = fresh.method;
+                  Store.user.mfa_phone = fresh.phone;
+                  Store.user.mfa_enforced = fresh.mfa_enforced;
                   Store.user.mfa_pending_setup = fresh.pending_setup;
                 }
               } catch (e) { /* keep the previous state */ }

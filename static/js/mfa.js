@@ -1,5 +1,5 @@
 /* ============================================================================
-   Two-factor authentication UI (authenticator app / TOTP)
+   Two-factor authentication UI (WhatsApp, Email, Authenticator App / TOTP)
 
    Shared by the Settings › Account & Security tab, the first-sign-in reminder
    for users who have not enrolled yet, and the sign-in verification step.
@@ -52,7 +52,7 @@ const MfaUI = (() => {
       "Account: " + ((Store.user && Store.user.email) || ""),
       "Generated: " + new Date().toLocaleString(),
       "",
-      "Each code can be used once if you lose access to your authenticator app.",
+      "Each code can be used once if you lose access to your phone or email.",
       "",
       codes.join("\n"),
       "",
@@ -92,13 +92,13 @@ const MfaUI = (() => {
   function codesBlock(codes) {
     return '<div class="mfa-recovery">'
       + '<div class="row-between" style="margin-bottom:6px">'
-      + '<b style="font-size:12.5px">Recovery codes</b>'
+      + '<b style="font-size:12.5px">One-time recovery codes</b>'
       + '<div class="row" style="gap:6px">'
       + '<button type="button" class="btn btn-sm btn-ghost" data-mfa-copy-codes>' + icon("copy", 12) + ' Copy</button>'
       + '<button type="button" class="btn btn-sm btn-ghost" data-mfa-download-codes>' + icon("download", 12) + ' Download</button>'
       + "</div></div>"
       + codesGrid(codes)
-      + '<div class="tiny muted" style="margin-top:6px">Keep these somewhere safe. Each code works once and they are the only way in if you lose your phone.</div>'
+      + '<div class="tiny muted" style="margin-top:6px">Keep these somewhere safe. Each code works once and they let you sign in if you lose access to your primary device.</div>'
       + "</div>";
   }
 
@@ -124,59 +124,252 @@ const MfaUI = (() => {
   function applyToStore(data) {
     if (!Store.user) return;
     Store.user.mfa_enabled = !!data.enabled;
+    Store.user.mfa_method = data.method || "app";
+    Store.user.mfa_phone = data.phone || null;
+    Store.user.mfa_enforced = !!data.mfa_enforced;
     Store.user.mfa_pending_setup = !!data.pending_setup;
     Store.user.mfa_confirmed_at = data.confirmed_at || null;
     Store.user.mfa_prompt_due = false;
   }
 
-  /* ------------------------------------------------------------- setup flow */
-  async function openSetup(opts) {
+  /* ------------------------------------------------- multi-method setup flow */
+  function openSetup(opts) {
     opts = opts || {};
-    let payload;
-    try {
-      payload = (await API.post("/auth/mfa/setup")).data;
-    } catch (err) {
-      handleErr(err);
-      return;
-    }
-    const codes = payload.recovery_codes || [];
-    const qr = qrSvg(payload.otpauth_uri);
+    const u = Store.user || {};
+    const defaultPhone = u.mfa_phone || u.phone || "";
+    const userEmail = u.email || "";
 
-    const body = '<div class="stack">'
+    // Step 1: Method selection
+    const mandatoryBanner = opts.mandatory
+      ? '<div class="alert alert-warning" style="margin-bottom:12px;background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:12px 14px;border-radius:8px;font-size:13px">'
+        + '<b>' + icon("shield", 14) + ' Organization Security Requirement:</b> Two-Factor Authentication is required for all Meridian accounts. Please choose a verification method to proceed.'
+        + '</div>'
+      : '';
+
+    const step1Body = '<div class="stack">'
+      + mandatoryBanner
       + '<div class="mfa-intro">' + icon("shield", 18)
-      + '<div>You will need an authenticator app — Google Authenticator, Microsoft Authenticator, Authy or 1Password — on your phone.</div></div>'
-      + '<div class="mfa-setup-grid">'
-      + '  <div class="mfa-qr">' + (qr || '<div class="tiny muted">QR unavailable — use the key below.</div>') + '</div>'
-      + '  <div>'
-      + '    <div class="tiny muted" style="margin-bottom:4px">1 · Scan this QR code with your app</div>'
-      + '    <div class="tiny muted" style="margin:10px 0 4px">2 · Or enter this setup key manually</div>'
-      + '    <div class="mfa-secret"><code>' + esc(groupSecret(payload.secret)) + '</code>'
-      + '      <button type="button" class="btn btn-sm btn-ghost" data-mfa-copy-secret>' + icon("copy", 12) + ' Copy</button></div>'
-      + '    <div class="tiny muted" style="margin-top:8px">Account: <b>' + esc(payload.account || "") + '</b> · 6-digit codes, refreshed every 30 seconds</div>'
+      + '<div>Select how you want to receive or generate 6-digit security codes when signing in.</div></div>'
+      + '<div class="stack" style="gap:10px;margin-top:6px">'
+
+      // WhatsApp Option
+      + '<label class="mfa-method-option" data-mfa-choice="whatsapp" style="display:flex;gap:12px;padding:12px 14px;border:2px solid var(--accent, #0f766e);border-radius:10px;cursor:pointer;background:var(--bg-subtle, #f8fafc)">'
+      + '  <input type="radio" name="mfa_method_select" value="whatsapp" checked style="margin-top:3px">'
+      + '  <div style="flex:1">'
+      + '    <div class="row" style="gap:6px;align-items:center">'
+      + '      <b style="font-size:14px">' + icon("message", 14) + ' WhatsApp</b>'
+      + '      <span class="chip teal" style="font-size:11px">Recommended</span>'
+      + '    </div>'
+      + '    <div class="tiny muted" style="margin:2px 0 8px">Receive instant one-time codes on your WhatsApp messages.</div>'
+      + '    <div id="mfa-phone-field" class="field" style="margin:0">'
+      + '      <label style="font-size:11.5px">WhatsApp phone number</label>'
+      + '      <input class="input" id="mfa-input-phone" placeholder="+233 24 123 4567" value="' + esc(defaultPhone) + '">'
+      + '    </div>'
       + '  </div>'
+      + '</label>'
+
+      // Email Option
+      + '<label class="mfa-method-option" data-mfa-choice="email" style="display:flex;gap:12px;padding:12px 14px;border:1px solid var(--border, #cbd5e1);border-radius:10px;cursor:pointer">'
+      + '  <input type="radio" name="mfa_method_select" value="email" style="margin-top:3px">'
+      + '  <div style="flex:1">'
+      + '    <div class="row" style="gap:6px;align-items:center">'
+      + '      <b style="font-size:14px">' + icon("mail", 14) + ' Email</b>'
+      + '    </div>'
+      + '    <div class="tiny muted">Receive 6-digit codes delivered to <b>' + esc(userEmail) + '</b>.</div>'
+      + '  </div>'
+      + '</label>'
+
+      // Authenticator App Option
+      + '<label class="mfa-method-option" data-mfa-choice="app" style="display:flex;gap:12px;padding:12px 14px;border:1px solid var(--border, #cbd5e1);border-radius:10px;cursor:pointer">'
+      + '  <input type="radio" name="mfa_method_select" value="app" style="margin-top:3px">'
+      + '  <div style="flex:1">'
+      + '    <div class="row" style="gap:6px;align-items:center">'
+      + '      <b style="font-size:14px">' + icon("shield", 14) + ' Authenticator App (TOTP)</b>'
+      + '      <span class="chip chip-grey" style="font-size:11px">Works Offline</span>'
+      + '    </div>'
+      + '    <div class="tiny muted">Google Authenticator, Microsoft Authenticator, Authy, or 1Password.</div>'
+      + '  </div>'
+      + '</label>'
       + '</div>'
-      + codesBlock(codes)
-      + '<div class="field" style="margin:0">'
-      + '  <label for="mfa-verify-code">3 · Enter the 6-digit code shown in your app</label>'
-      + '  <input class="input mfa-code-input" id="mfa-verify-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456">'
-      + '</div>'
-      + '<div id="mfa-verify-error" class="form-error hidden"></div>'
+      + '<div id="mfa-step1-error" class="form-error hidden"></div>'
       + '</div>';
 
     openModal({
-      title: "Set up two-factor authentication",
-      sub: "Add a code from your phone on top of your password",
+      title: "Set up Two-Factor Authentication",
+      sub: "Step 1 of 2 · Choose your verification channel",
       wide: true,
-      body: body,
-      footer: '<button class="btn btn-ghost" data-close-modal>Cancel</button>'
+      body: step1Body,
+      footer: (opts.mandatory ? '' : '<button class="btn btn-ghost" data-close-modal>Cancel</button>')
+        + '<button class="btn btn-accent" id="mfa-step1-next">Continue &rarr;</button>',
+      onMount(card) {
+        if (opts.mandatory) {
+          const closeBtn = card.querySelector(".close");
+          if (closeBtn) closeBtn.remove();
+        }
+
+        const phoneField = card.querySelector("#mfa-phone-field");
+        const radios = card.querySelectorAll('input[name="mfa_method_select"]');
+        const options = card.querySelectorAll(".mfa-method-option");
+        const errBox = card.querySelector("#mfa-step1-error");
+        const nextBtn = card.querySelector("#mfa-step1-next");
+
+        options.forEach(opt => {
+          opt.onclick = () => {
+            const rad = opt.querySelector('input[type="radio"]');
+            if (rad) rad.checked = true;
+            options.forEach(o => o.style.borderColor = "var(--border, #cbd5e1)");
+            opt.style.borderColor = "var(--accent, #0f766e)";
+            if (phoneField) {
+              phoneField.style.display = (rad.value === "whatsapp") ? "block" : "none";
+            }
+          };
+        });
+
+        nextBtn.onclick = async () => {
+          errBox.classList.add("hidden");
+          const selectedRadio = card.querySelector('input[name="mfa_method_select"]:checked');
+          const method = selectedRadio ? selectedRadio.value : "whatsapp";
+          let phone = "";
+          if (method === "whatsapp") {
+            const phoneInput = card.querySelector("#mfa-input-phone");
+            phone = phoneInput ? phoneInput.value.trim() : "";
+            if (!phone) {
+              errBox.textContent = "Please provide your WhatsApp phone number.";
+              errBox.classList.remove("hidden");
+              return;
+            }
+          }
+
+          nextBtn.disabled = true;
+          nextBtn.textContent = "Sending code…";
+          try {
+            const res = await API.post("/auth/mfa/setup", { method, phone });
+            renderStep2(res.data, method, opts);
+          } catch (err) {
+            errBox.textContent = err.message;
+            errBox.classList.remove("hidden");
+            nextBtn.disabled = false;
+            nextBtn.innerHTML = "Continue &rarr;";
+          }
+        };
+      },
+    });
+  }
+
+  /* ------------------------------------------------ Step 2: Code Verification */
+  function renderStep2(data, method, opts) {
+    const codes = data.recovery_codes || [];
+    let methodTitle = "Verify Code";
+    let methodHint = "";
+    let channelSpecificHTML = "";
+
+    if (method === "whatsapp") {
+      methodTitle = "WhatsApp Verification";
+      methodHint = 'We sent a 6-digit code via WhatsApp to <b>' + esc(data.masked_phone || data.phone) + '</b>. Enter it below to activate 2FA:';
+    } else if (method === "email") {
+      methodTitle = "Email Verification";
+      methodHint = 'We sent a 6-digit code to your email <b>' + esc(data.masked_email || data.account) + '</b>. Enter it below to activate 2FA:';
+    } else {
+      methodTitle = "Link Authenticator App";
+      methodHint = 'Scan the QR code in your app (Google Authenticator, Microsoft Authenticator), then enter the 6-digit code:';
+      const qr = qrSvg(data.otpauth_uri);
+      channelSpecificHTML = '<div class="mfa-setup-grid">'
+        + '  <div class="mfa-qr">' + (qr || '<div class="tiny muted">QR unavailable — use the key below.</div>') + '</div>'
+        + '  <div>'
+        + '    <div class="tiny muted" style="margin-bottom:4px">1 · Scan QR with your authenticator app</div>'
+        + '    <div class="tiny muted" style="margin:10px 0 4px">2 · Or enter this setup key manually</div>'
+        + '    <div class="mfa-secret"><code>' + esc(groupSecret(data.secret)) + '</code>'
+        + '      <button type="button" class="btn btn-sm btn-ghost" data-mfa-copy-secret>' + icon("copy", 12) + ' Copy</button></div>'
+        + '    <div class="tiny muted" style="margin-top:8px">Account: <b>' + esc(data.account || "") + '</b></div>'
+        + '  </div>'
+        + '</div>';
+    }
+
+    const resendRow = (method === "whatsapp" || method === "email")
+      ? '<div class="row-between" style="margin-top:6px;font-size:13px">'
+        + '<span class="muted tiny" id="mfa-resend-countdown"></span>'
+        + '<button type="button" class="btn btn-sm btn-ghost" id="mfa-resend-btn" style="padding:2px 8px">Resend code</button>'
+        + '</div>'
+      : '';
+
+    const step2Body = '<div class="stack">'
+      + '<div class="mfa-intro">' + icon("shield", 18) + '<div>' + methodHint + '</div></div>'
+      + channelSpecificHTML
+      + '<div class="field" style="margin:8px 0 0">'
+      + '  <label for="mfa-verify-code">Enter the 6-digit verification code</label>'
+      + '  <input class="input mfa-code-input" id="mfa-verify-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456">'
+      + '</div>'
+      + resendRow
+      + '<div id="mfa-verify-error" class="form-error hidden"></div>'
+      + codesBlock(codes)
+      + '</div>';
+
+    openModal({
+      title: "Confirm Two-Factor Authentication",
+      sub: "Step 2 of 2 · " + methodTitle,
+      wide: true,
+      body: step2Body,
+      footer: '<button class="btn btn-ghost" id="mfa-back-step1">&larr; Change method</button>'
         + '<button class="btn btn-accent" id="mfa-verify-btn">' + icon("check", 14) + ' Verify &amp; enable</button>',
       onMount(card) {
+        if (opts.mandatory) {
+          const closeBtn = card.querySelector(".close");
+          if (closeBtn) closeBtn.remove();
+        }
+
         bindCodesBlock(card, codes);
         const secretBtn = card.querySelector("[data-mfa-copy-secret]");
-        if (secretBtn) secretBtn.onclick = () => copyText(payload.secret, "Setup key copied");
+        if (secretBtn) secretBtn.onclick = () => copyText(data.secret, "Setup key copied");
+
         const input = card.querySelector("#mfa-verify-code");
         const errBox = card.querySelector("#mfa-verify-error");
         const btn = card.querySelector("#mfa-verify-btn");
+        const backBtn = card.querySelector("#mfa-back-step1");
+        const resendBtn = card.querySelector("#mfa-resend-btn");
+        const countdownEl = card.querySelector("#mfa-resend-countdown");
+
+        let timer = null;
+        const startTimer = (seconds) => {
+          if (!countdownEl || !resendBtn) return;
+          resendBtn.disabled = true;
+          let left = seconds;
+          if (timer) clearInterval(timer);
+          countdownEl.textContent = "Resend available in " + left + "s";
+          timer = setInterval(() => {
+            left -= 1;
+            if (left <= 0) {
+              clearInterval(timer);
+              timer = null;
+              resendBtn.disabled = false;
+              countdownEl.textContent = "";
+            } else {
+              countdownEl.textContent = "Resend available in " + left + "s";
+            }
+          }, 1000);
+        };
+
+        if (resendBtn) {
+          startTimer(45);
+          resendBtn.onclick = async () => {
+            try {
+              resendBtn.disabled = true;
+              await API.post("/auth/mfa/resend", { method, phone: data.phone });
+              toast("A new verification code has been dispatched", "success");
+              startTimer(60);
+            } catch (err) {
+              toast(err.message, "error");
+              resendBtn.disabled = false;
+            }
+          };
+        }
+
+        if (backBtn) {
+          backBtn.onclick = () => {
+            if (timer) clearInterval(timer);
+            openSetup(opts);
+          };
+        }
+
         digitsOnly(input, 6);
         input.focus();
 
@@ -184,15 +377,16 @@ const MfaUI = (() => {
           errBox.classList.add("hidden");
           const code = input.value.trim();
           if (code.replace(/\D/g, "").length !== 6) {
-            errBox.textContent = "Enter the 6-digit code from your authenticator app.";
+            errBox.textContent = "Enter the 6-digit verification code.";
             errBox.classList.remove("hidden");
             return;
           }
           btn.disabled = true;
           btn.textContent = "Verifying…";
           try {
-            const data = (await API.post("/auth/mfa/confirm", { code })).data;
-            applyToStore(data);
+            const confirmed = (await API.post("/auth/mfa/confirm", { code })).data;
+            if (timer) clearInterval(timer);
+            applyToStore(confirmed);
             showSuccess(codes, opts);
           } catch (err) {
             errBox.textContent = err.message;
@@ -210,10 +404,10 @@ const MfaUI = (() => {
 
   function showSuccess(codes, opts) {
     openModal({
-      title: "Two-factor authentication is on",
-      sub: "Your account now needs a code from your phone at sign-in",
+      title: "Two-Factor Authentication is Active",
+      sub: "Your Meridian account is now protected with multi-factor security",
       body: '<div class="stack">'
-        + '<div class="mfa-intro success">' + icon("checkCircle", 18) + '<div>Well done — keep the recovery codes below somewhere safe. They are shown once and each one works a single time.</div></div>'
+        + '<div class="mfa-intro success">' + icon("checkCircle", 18) + '<div><b>Success!</b> Save your recovery codes below. They are shown once and can be used to recover account access at any time.</div></div>'
         + codesBlock(codes)
         + '</div>',
       footer: '<button class="btn btn-accent" data-close-modal id="mfa-success-done">Done</button>',
@@ -221,19 +415,23 @@ const MfaUI = (() => {
         bindCodesBlock(card, codes);
       },
     });
-    toast("Two-factor authentication enabled", "success");
+    toast("Two-factor authentication enabled successfully", "success");
     if (opts && typeof opts.onDone === "function") opts.onDone();
   }
 
   /* ----------------------------------------------------------- disable flow */
   function openDisable(opts) {
+    if (Store.user && Store.user.mfa_enforced) {
+      toast("Two-factor authentication is required by organization security policy and cannot be disabled.", "warning");
+      return;
+    }
     openModal({
-      title: "Turn off two-factor authentication",
+      title: "Turn off Two-Factor Authentication",
       sub: "Your account will be protected by a password only",
       narrow: true,
       body: '<form id="mfa-disable-form" class="stack">'
         + '<div class="field"><label>Account password</label><input class="input" type="password" name="password" required autocomplete="current-password"></div>'
-        + '<div class="field"><label>Authenticator or recovery code</label><input class="input mfa-code-input" name="code" maxlength="9" autocomplete="one-time-code" placeholder="123456" required></div>'
+        + '<div class="field"><label>Verification code or recovery code</label><input class="input mfa-code-input" name="code" maxlength="9" autocomplete="one-time-code" placeholder="123456" required></div>'
         + '<div id="mfa-disable-error" class="form-error hidden"></div>'
         + '</form>',
       footer: '<button class="btn btn-ghost" data-close-modal>Cancel</button>'
@@ -272,7 +470,7 @@ const MfaUI = (() => {
   function openRegenerateCodes(opts) {
     openModal({
       title: "New recovery codes",
-      sub: "Your existing recovery codes stop working straight away",
+      sub: "Your existing recovery codes will immediately expire",
       narrow: true,
       body: '<div class="stack">'
         + '<div class="field"><label>Account password</label><input class="input" type="password" id="mfa-rc-password" required autocomplete="current-password"></div>'
@@ -312,7 +510,7 @@ const MfaUI = (() => {
   async function revokeDevice(id, opts) {
     try {
       const data = (await API.del("/auth/mfa/devices/" + encodeURIComponent(id))).data;
-      toast("Device removed — it will need a code next time", "success");
+      toast("Device removed — verification code required on next sign-in", "success");
       if (opts && typeof opts.onChange === "function") opts.onChange(data);
     } catch (err) { handleErr(err); }
   }
@@ -320,6 +518,18 @@ const MfaUI = (() => {
   /* ------------------------------------------------------ settings card body */
   function panelHTML(data) {
     const enabled = !!data.enabled;
+    const method = data.method || "app";
+    const methodLabels = {
+      whatsapp: "WhatsApp (" + (data.masked_phone || data.phone || "mobile") + ")",
+      email: "Email (" + (data.masked_email || data.email || "inbox") + ")",
+      app: "Authenticator App (TOTP)",
+    };
+    const methodIcons = {
+      whatsapp: icon("message", 12),
+      email: icon("mail", 12),
+      app: icon("shield", 12),
+    };
+
     const chipHTML = enabled
       ? '<span class="chip green">' + icon("shield", 11) + ' Enabled</span>'
       : (data.pending_setup
@@ -331,20 +541,24 @@ const MfaUI = (() => {
       const remaining = data.recovery_codes_remaining || 0;
       const devices = data.trusted_devices || [];
       detail = ''
-        + '<div class="tiny muted" style="margin:10px 0 12px">Enabled ' + esc(fmtDateTime(data.confirmed_at) || "just now")
-        + ' · ' + (remaining > 0
+        + '<div class="row wrap" style="gap:8px;align-items:center;margin:10px 0 12px">'
+        + '  <span class="chip teal">' + (methodIcons[method] || "") + ' ' + esc(methodLabels[method] || "2FA") + '</span>'
+        + '  <span class="tiny muted">Confirmed ' + esc(fmtDateTime(data.confirmed_at) || "recently") + '</span>'
+        + '  <span class="tiny muted">· ' + (remaining > 0
           ? remaining + " recovery code" + (remaining === 1 ? "" : "s") + " left"
-          : '<b class="mfa-warn">no recovery codes left</b>')
+          : '<b class="mfa-warn">no recovery codes left</b>') + '</span>'
         + '</div>'
         + '<div class="row wrap" style="gap:8px">'
+        + '  <button class="btn btn-sm btn-ghost" data-mfa-action="switch">' + icon("refresh", 13) + ' Switch channel</button>'
         + '  <button class="btn btn-sm btn-ghost" data-mfa-action="regenerate">' + icon("key", 13) + ' New recovery codes</button>'
-        + (remaining === 0 ? '<button class="btn btn-sm btn-accent" data-mfa-action="regenerate">' + icon("key", 13) + ' Generate recovery codes</button>' : '')
-        + '  <button class="btn btn-sm btn-danger" data-mfa-action="disable">Turn off</button>'
+        + (data.mfa_enforced
+          ? '<span class="tiny muted" style="align-self:center;font-weight:600;color:var(--amber, #d97706)">' + icon("lock", 12) + ' Required by Organization Policy</span>'
+          : '<button class="btn btn-sm btn-danger" data-mfa-action="disable">Turn off 2FA</button>')
         + '</div>'
         + '<div class="divider"></div>'
         + '<div class="row-between" style="align-items:flex-start">'
         + '  <div><b style="font-size:12.5px">Trusted devices</b>'
-        + '  <div class="tiny muted">Browsers that can skip the code for ' + (data.trust_days || 30) + ' days after “Trust this device for 1 month”.</div></div>'
+        + '  <div class="tiny muted">Browsers that can skip the code for ' + (data.trust_days || 30) + ' days after "Trust this device".</div></div>'
         + '  <span class="chip chip-grey">' + devices.length + '</span>'
         + '</div>'
         + (devices.length
@@ -361,15 +575,15 @@ const MfaUI = (() => {
         + '<div class="tiny muted" style="margin:10px 0 12px">'
         + (data.pending_setup
           ? 'Setup was started but not verified. Finish it to switch protection on.'
-          : 'Add a 6-digit code from your phone on top of your password. Strongly recommended — one stolen password is not enough to reach payroll or employee records.')
+          : 'Add a second verification factor on top of your password using <b>WhatsApp</b>, <b>Email</b>, or an <b>Authenticator App</b>.')
         + '</div>'
         + '<button class="btn btn-accent" data-mfa-action="setup">' + icon("shield", 14)
-        + (data.pending_setup ? ' Finish setup' : ' Enable two-factor authentication') + '</button>';
+        + (data.pending_setup ? ' Finish setup' : ' Enable Two-Factor Authentication') + '</button>';
     }
 
     return '<div class="row-between" style="align-items:flex-start">'
-      + '<div><b style="font-size:13px">Authenticator app (TOTP)</b>'
-      + '<div class="tiny muted">Time-based one-time codes · works offline</div></div>'
+      + '<div><b style="font-size:13px">Two-Factor Authentication (2FA)</b>'
+      + '<div class="tiny muted">WhatsApp · Email · Authenticator App (TOTP)</div></div>'
       + chipHTML + '</div>'
       + detail;
   }
@@ -393,6 +607,10 @@ const MfaUI = (() => {
       if (setupBtn) setupBtn.onclick = () => openSetup({
         onDone: () => { refresh(); if (opts.onChange) opts.onChange(); },
       });
+      const switchBtn = el.querySelector('[data-mfa-action="switch"]');
+      if (switchBtn) switchBtn.onclick = () => openSetup({
+        onDone: () => { refresh(); if (opts.onChange) opts.onChange(); },
+      });
       const disableBtn = el.querySelector('[data-mfa-action="disable"]');
       if (disableBtn) disableBtn.onclick = () => openDisable({
         onDone: () => { refresh(); if (opts.onChange) opts.onChange(); },
@@ -413,23 +631,38 @@ const MfaUI = (() => {
     draw();
   }
 
-  /* ------------------------------------------- first sign-in setup reminder */
+  /* ------------------------------------------- sign-in setup reminder / mandatory policy */
   function promptAfterLogin() {
     const u = Store.user;
-    if (!u || u.mfa_enabled || !u.mfa_prompt_due || promptShownThisSession) return;
+    if (!u || u.mfa_enabled || promptShownThisSession) return;
     promptShownThisSession = true;
 
+    const isEnforced = !!(u.mfa_enforced || (Store.meta && Store.meta.mfa_enforced));
+    if (isEnforced) {
+      // Mandatory setup modal: cannot be dismissed
+      openSetup({
+        mandatory: true,
+        onDone: () => {
+          promptShownThisSession = true;
+          toast("Two-factor authentication successfully configured!", "success");
+        }
+      });
+      return;
+    }
+
+    if (!u.mfa_prompt_due) return;
+
     openModal({
-      title: "Protect your account with two-factor authentication",
+      title: "Protect your account with Two-Factor Authentication",
       sub: "About a minute to set up — you can skip for now",
       narrow: true,
       body: '<div class="stack">'
         + '<div class="mfa-intro">' + icon("shield", 18)
-        + '<div>Your account can reach employee records, payroll and approvals. A stolen password alone should not be enough.</div></div>'
+        + '<div>Your account has access to sensitive employee records and payroll. Protect your account with 2FA.</div></div>'
         + '<ul class="mfa-benefits">'
-        + '<li>' + icon("check", 12) + ' A 6-digit code from your phone, on top of your password</li>'
-        + '<li>' + icon("check", 12) + ' Works offline — any authenticator app</li>'
-        + '<li>' + icon("check", 12) + ' Recovery codes so you never get locked out</li>'
+        + '<li>' + icon("check", 12) + ' Choose <b>WhatsApp</b>, <b>Email</b>, or an <b>Authenticator App</b></li>'
+        + '<li>' + icon("check", 12) + ' Fast 6-digit code upon signing in</li>'
+        + '<li>' + icon("check", 12) + ' One-time recovery codes to prevent lockouts</li>'
         + '</ul>'
         + '</div>',
       footer: '<button class="btn btn-ghost" id="mfa-prompt-skip">Skip for now</button>'

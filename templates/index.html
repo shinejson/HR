@@ -65,13 +65,17 @@
       </form>
 
       <div id="mfa-step" class="hidden">
-        <div class="eyebrow">Step 2 of 2 &middot; Verification</div>
-        <h2>Enter your code</h2>
-        <p class="hint">Open your authenticator app and enter the 6-digit code for <b id="mfa-account">your account</b>.</p>
+        <div class="eyebrow" id="mfa-step-eyebrow">Step 2 of 2 &middot; Verification</div>
+        <h2 id="mfa-step-title">Enter your code</h2>
+        <p class="hint" id="mfa-step-hint">Open your authenticator app and enter the 6-digit code for <b id="mfa-account">your account</b>.</p>
         <div id="mfa-error" class="form-error hidden"></div>
         <div class="field" style="margin-bottom:10px">
-          <label for="mfa-code">Authentication code</label>
+          <label for="mfa-code" id="mfa-code-label">Authentication code</label>
           <input class="input mfa-code-input" id="mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="9" placeholder="123456">
+        </div>
+        <div id="mfa-resend-row" class="row-between hidden" style="margin-bottom:12px;font-size:13px">
+          <span class="muted tiny" id="mfa-resend-timer"></span>
+          <button type="button" class="btn btn-sm btn-ghost" id="mfa-resend-btn" style="padding:2px 8px">Resend code</button>
         </div>
         <label class="mfa-login-trust" for="mfa-trust-month">
           <input type="checkbox" id="mfa-trust-month" checked>
@@ -79,7 +83,7 @@
         </label>
         <button class="btn btn-accent" type="button" id="mfa-submit" style="width:100%;height:42px">Verify &amp; sign in</button>
         <button class="btn btn-ghost" type="button" id="mfa-back" style="width:100%;margin-top:8px">Back to sign in</button>
-        <div class="mfa-login-alt">Lost your phone? Type one of your recovery codes in the box above instead.</div>
+        <div class="mfa-login-alt">Lost your device? Type one of your recovery codes in the box above instead.</div>
       </div>
 
       <div class="demo-list">

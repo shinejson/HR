@@ -103,6 +103,10 @@ def ensure_schema():
             ("mfa_recovery_codes", "TEXT"),
             ("mfa_confirmed_at", "DATETIME"),
             ("mfa_prompt_snoozed_at", "DATETIME"),
+            ("mfa_method", "VARCHAR(20) DEFAULT 'app'"),
+            ("mfa_phone", "VARCHAR(40)"),
+            ("mfa_otp_hash", "VARCHAR(128)"),
+            ("mfa_otp_expires_at", "DATETIME"),
         ],
         "login_history": [
             ("mfa_used", "BOOLEAN DEFAULT 0"),
@@ -203,6 +207,13 @@ def ensure_delivery_settings():
         if updated:
             routing_row.value = json.dumps(saved)
     db.session.commit()
+
+
+def ensure_security_settings():
+    row = Setting.query.filter_by(key=mfa.SETTING_KEY_ENFORCED).first()
+    if not row:
+        db.session.add(Setting(key=mfa.SETTING_KEY_ENFORCED, value="false", group_name="security"))
+        db.session.commit()
 
 
 def ensure_demo_enrichment():
@@ -821,6 +832,7 @@ def bootstrap_database():
         if User.query.count() == 0:
             seed(app)
         ensure_delivery_settings()
+        ensure_security_settings()
         ensure_demo_enrichment()
         hotel_ops.seed_hotel_operations(db, models)
         ensure_maintenance_categories()
@@ -1960,12 +1972,22 @@ def login():
             user.failed_attempts = 0
             user.locked_until = None
             db.session.commit()
+            method = getattr(user, "mfa_method", "app") or "app"
+            target_phone = getattr(user, "mfa_phone", None) or mfa.get_user_phone(user)
+            if method in ("email", "whatsapp"):
+                code = mfa.generate_otp()
+                mfa.store_user_otp(user, code)
+                if method == "email":
+                    mfa.send_mfa_code_email(user, code)
+                elif method == "whatsapp":
+                    mfa.send_mfa_code_whatsapp(user, code, target_phone=target_phone)
             return jsonify({"data": {
                 "mfa_required": True,
                 "challenge": mfa.issue_challenge(app, user),
-                "method": "totp",
+                "method": method,
                 "expires_in": mfa.CHALLENGE_MAX_AGE,
-                "account": mask_account(user.email),
+                "account": mfa.mask_email(user.email),
+                "phone": mfa.mask_phone(target_phone) if target_phone else None,
                 "trust_days": mfa.TRUST_DAYS,
             }})
     return issue_session(user, mfa_used=mfa_is_active(user))
@@ -1987,8 +2009,13 @@ MFA_LOCKOUT_MINUTES = 15
 
 
 def mfa_is_active(user):
-    """True only for a *confirmed* authenticator enrolment."""
-    return bool(getattr(user, "mfa_enabled", False) and getattr(user, "mfa_secret", None))
+    """True only for a *confirmed* multi-factor enrolment."""
+    if not user or not getattr(user, "mfa_enabled", False):
+        return False
+    method = getattr(user, "mfa_method", "app") or "app"
+    if method == "app":
+        return bool(getattr(user, "mfa_secret", None))
+    return method in ("whatsapp", "email")
 
 
 def issue_session(user, mfa_used=False):
@@ -2035,7 +2062,12 @@ def verify_mfa_login():
 
     code = (data.get("code") or "").strip()
     used_recovery = False
-    valid = mfa.verify_totp(user.mfa_secret, code)
+    valid = False
+    method = getattr(user, "mfa_method", "app") or "app"
+    if method == "app":
+        valid = mfa.verify_totp(user.mfa_secret, code)
+    elif method in ("email", "whatsapp"):
+        valid = mfa.verify_user_otp(user, code)
     if not valid and mfa.consume_recovery_code(user, code):
         valid, used_recovery = True, True
     if not valid:
@@ -2045,7 +2077,13 @@ def verify_mfa_login():
         db.session.commit()
         remaining = max(0, MFA_MAX_ATTEMPTS - recent_failures - 1)
         hint = f" {remaining} attempt{'s' if remaining != 1 else ''} left." if remaining else " Try again in 15 minutes."
-        return error("Incorrect verification code. Check your authenticator app and try again." + hint, 422)
+        if method == "whatsapp":
+            dest_hint = "Check your WhatsApp messages and try again."
+        elif method == "email":
+            dest_hint = "Check your email inbox and try again."
+        else:
+            dest_hint = "Check your authenticator app and try again."
+        return error(f"Incorrect verification code. {dest_hint}" + hint, 422)
 
     response = issue_session(user, mfa_used=True)
     payload = response.get_json()["data"]
@@ -2061,9 +2099,60 @@ def verify_mfa_login():
     payload["used_recovery_code"] = used_recovery
     payload["recovery_codes_remaining"] = mfa.recovery_codes_remaining(user.mfa_recovery_codes)
     audit(user, "mfa_login_verified", "users", user.id,
-          new={"recovery_code": used_recovery, "trusted_device": remember})
+          new={"recovery_code": used_recovery, "trusted_device": remember, "method": method})
     db.session.commit()
     return jsonify({"data": payload})
+
+
+@app.post("/api/v1/auth/mfa/resend")
+def mfa_resend():
+    """Resend a verification code via Email or WhatsApp for a login challenge or active setup."""
+    data = request.get_json(silent=True) or {}
+    user = None
+    if data.get("challenge"):
+        uid = mfa.read_challenge(app, data.get("challenge"))
+        if uid:
+            user = db.session.get(User, uid)
+            if user and not mfa.challenge_matches(user, data.get("challenge"), app):
+                user = None
+    elif getattr(request, "user", None):
+        user = request.user
+    else:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+            user = User.query.filter_by(token=token).first()
+
+    if not user or getattr(user, "deleted_at", None) is not None:
+        return error("Session or verification challenge expired. Please sign in again.", 401)
+
+    method = data.get("method") or getattr(user, "mfa_method", "app") or "app"
+    if method not in ("email", "whatsapp"):
+        return error("Code resend is only available for WhatsApp and Email.", 422)
+
+    target_phone = data.get("phone") or getattr(user, "mfa_phone", None) or mfa.get_user_phone(user)
+    if method == "whatsapp" and not target_phone:
+        return error("No WhatsApp phone number provided.", 422)
+
+    code = mfa.generate_otp()
+    mfa.store_user_otp(user, code)
+    if method == "email":
+        mfa.send_mfa_code_email(user, code)
+        msg = f"A new 6-digit code was sent to {mfa.mask_email(user.email)}."
+    else:
+        if data.get("phone"):
+            user.mfa_phone = str(data.get("phone")).strip()
+            db.session.commit()
+        mfa.send_mfa_code_whatsapp(user, code, target_phone=target_phone)
+        msg = f"A new 6-digit code was sent via WhatsApp to {mfa.mask_phone(target_phone)}."
+
+    return jsonify({"data": {
+        "ok": True,
+        "method": method,
+        "phone": mfa.mask_phone(target_phone) if target_phone else None,
+        "account": mfa.mask_email(user.email),
+        "message": msg,
+    }})
 
 
 @app.post("/api/v1/auth/logout")
@@ -2154,7 +2243,10 @@ def public_user(user):
         "username": user.username or (user.email.split("@")[0] if user.email else None),
         "email": user.email,
         "status": user.status,
-        "mfa_enabled": bool(user.mfa_enabled and user.mfa_secret),
+        "mfa_enabled": mfa_is_active(user),
+        "mfa_method": getattr(user, "mfa_method", "app") or "app",
+        "mfa_phone": getattr(user, "mfa_phone", None) or (emp.phone if emp else None),
+        "mfa_enforced": mfa.is_mfa_enforced(),
         "mfa_pending_setup": bool(getattr(user, "mfa_secret", None) and not user.mfa_enabled),
         "mfa_confirmed_at": conv(getattr(user, "mfa_confirmed_at", None)),
         "mfa_prompt_due": mfa_prompt_due(user),
@@ -2198,8 +2290,16 @@ def mfa_status_payload(user):
     devices = (MfaTrustedDevice.query.filter_by(user_id=user.id)
                .order_by(MfaTrustedDevice.id.desc()).all())
     now = datetime.utcnow()
+    method = getattr(user, "mfa_method", "app") or "app"
+    phone = getattr(user, "mfa_phone", None) or mfa.get_user_phone(user)
     return {
         "enabled": mfa_is_active(user),
+        "method": method,
+        "phone": phone,
+        "masked_phone": mfa.mask_phone(phone) if phone else None,
+        "email": user.email,
+        "masked_email": mfa.mask_email(user.email),
+        "mfa_enforced": mfa.is_mfa_enforced(),
         "pending_setup": bool(getattr(user, "mfa_secret", None) and not user.mfa_enabled),
         "confirmed_at": conv(getattr(user, "mfa_confirmed_at", None)),
         "recovery_codes_remaining": mfa.recovery_codes_remaining(getattr(user, "mfa_recovery_codes", None)),
@@ -2228,44 +2328,86 @@ def mfa_status():
 @app.post("/api/v1/auth/mfa/setup")
 @login_required
 def mfa_setup():
-    """Start enrolment: create a secret, QR payload and one-time recovery codes."""
+    """Start enrolment: create a secret, QR payload (or send OTP) and one-time recovery codes."""
+    data = request.get_json(silent=True) or {}
     user = request.user
     if mfa_is_active(user):
         return error("Two-factor authentication is already enabled on this account.", 409)
-    user.mfa_secret = mfa.generate_secret()
+
+    method = (data.get("method") or "app").lower().strip()
+    if method not in ("app", "whatsapp", "email"):
+        return error("Invalid 2FA method. Supported methods: app, whatsapp, email.", 422)
+
+    if not user.mfa_secret:
+        user.mfa_secret = mfa.generate_secret()
     plain_codes, stored = mfa.generate_recovery_codes()
     user.mfa_recovery_codes = stored
     user.mfa_enabled = False
     user.mfa_confirmed_at = None
-    audit(user, "mfa_setup_started", "users", user.id)
-    db.session.commit()
-    return jsonify({"data": {
-        "secret": user.mfa_secret,
-        "otpauth_uri": mfa.provisioning_uri(user.mfa_secret, user.email),
+    user.mfa_method = method
+
+    res_data = {
+        "method": method,
         "account": user.email,
-        "issuer": mfa.ISSUER,
-        "digits": mfa.DIGITS,
-        "period": mfa.STEP_SECONDS,
+        "masked_email": mfa.mask_email(user.email),
         "recovery_codes": plain_codes,
-    }})
+        "digits": mfa.DIGITS,
+    }
+
+    if method == "app":
+        res_data.update({
+            "secret": user.mfa_secret,
+            "otpauth_uri": mfa.provisioning_uri(user.mfa_secret, user.email),
+            "issuer": mfa.ISSUER,
+            "period": mfa.STEP_SECONDS,
+        })
+    elif method == "whatsapp":
+        phone = data.get("phone") or getattr(user, "mfa_phone", None) or mfa.get_user_phone(user)
+        if not phone:
+            return error("Please provide a WhatsApp phone number.", 422)
+        user.mfa_phone = str(phone).strip()
+        code = mfa.generate_otp()
+        mfa.store_user_otp(user, code)
+        mfa.send_mfa_code_whatsapp(user, code, target_phone=user.mfa_phone)
+        res_data["phone"] = user.mfa_phone
+        res_data["masked_phone"] = mfa.mask_phone(user.mfa_phone)
+    elif method == "email":
+        code = mfa.generate_otp()
+        mfa.store_user_otp(user, code)
+        mfa.send_mfa_code_email(user, code)
+
+    audit(user, "mfa_setup_started", "users", user.id, new={"method": method})
+    db.session.commit()
+    return jsonify({"data": res_data})
 
 
 @app.post("/api/v1/auth/mfa/confirm")
 @login_required
 def mfa_confirm():
-    """Finish enrolment once the user can produce a valid authenticator code."""
+    """Finish enrolment once the user can produce a valid code."""
     data = request.get_json(silent=True) or {}
     user = request.user
     if mfa_is_active(user):
         return error("Two-factor authentication is already enabled.", 409)
     if not getattr(user, "mfa_secret", None):
-        return error("Start the setup first, then confirm with the code from your app.", 422)
-    if not mfa.verify_totp(user.mfa_secret, data.get("code")):
-        return error("That code did not match. Make sure your phone's clock is correct and try the current code.", 422)
+        return error("Start the setup first, then confirm with the code.", 422)
+
+    code = (data.get("code") or "").strip()
+    method = getattr(user, "mfa_method", "app") or "app"
+    valid = False
+    if method == "app":
+        valid = mfa.verify_totp(user.mfa_secret, code)
+    elif method in ("email", "whatsapp"):
+        valid = mfa.verify_user_otp(user, code)
+
+    if not valid:
+        msg = "That code did not match. Make sure your phone's clock is correct and try the current code." if method == "app" else "That code is invalid or has expired. Please check and try again or click resend."
+        return error(msg, 422)
+
     user.mfa_enabled = True
     user.mfa_confirmed_at = datetime.utcnow()
     user.mfa_prompt_snoozed_at = None
-    audit(user, "mfa_enabled", "users", user.id)
+    audit(user, "mfa_enabled", "users", user.id, new={"method": method})
     db.session.commit()
     return jsonify({"data": mfa_status_payload(user)})
 
@@ -2274,15 +2416,24 @@ def mfa_confirm():
 @login_required
 def mfa_disable():
     """Turn 2FA off — requires the account password, plus a current code."""
+    if mfa.is_mfa_enforced():
+        return error("Two-factor authentication is mandatory for all accounts per organization policy.", 403)
     data = request.get_json(silent=True) or {}
     user = request.user
     if not check_password_hash(user.password_hash, data.get("password") or ""):
         return error("Your account password is incorrect.", 422)
     if mfa_is_active(user):
         code = (data.get("code") or "").strip()
-        valid = mfa.verify_totp(user.mfa_secret, code) or mfa.consume_recovery_code(user, code)
+        method = getattr(user, "mfa_method", "app") or "app"
+        valid = False
+        if method == "app":
+            valid = mfa.verify_totp(user.mfa_secret, code)
+        elif method in ("email", "whatsapp"):
+            valid = mfa.verify_user_otp(user, code)
+        if not valid and mfa.consume_recovery_code(user, code):
+            valid = True
         if not valid:
-            return error("Enter a current authenticator code (or a recovery code) to switch 2FA off.", 422)
+            return error("Enter a current verification code (or a recovery code) to switch 2FA off.", 422)
     user.mfa_enabled = False
     user.mfa_secret = None
     user.mfa_recovery_codes = None
@@ -2337,6 +2488,8 @@ def mfa_prompt_due(user):
     """Should we nudge this user to switch on 2FA at next sign-in?"""
     if mfa_is_active(user):
         return False
+    if mfa.is_mfa_enforced():
+        return True
     snoozed = getattr(user, "mfa_prompt_snoozed_at", None)
     if not snoozed:
         return True
@@ -2347,12 +2500,38 @@ def mfa_prompt_due(user):
 @login_required
 def mfa_prompt_dismiss():
     """Skip the setup reminder for a while (it comes back after 7 days)."""
+    if mfa.is_mfa_enforced():
+        return error("Two-factor authentication is mandatory for all accounts and cannot be dismissed.", 403)
     request.user.mfa_prompt_snoozed_at = datetime.utcnow()
     audit(request.user, "mfa_setup_prompt_dismissed", "users", request.user.id,
           new={"snooze_days": MFA_PROMPT_SNOOZE_DAYS})
     db.session.commit()
     return jsonify({"data": {"snoozed_days": MFA_PROMPT_SNOOZE_DAYS,
                              "prompt_due": False}})
+
+
+@app.route("/api/v1/auth/mfa/policy", methods=["GET", "POST", "PUT"])
+@login_required
+def mfa_policy():
+    """Superadmin setting to view and configure organization-wide 2FA requirement."""
+    if request.method == "GET":
+        return jsonify({"data": {
+            "mfa_enforced": mfa.is_mfa_enforced(),
+            "description": "When enabled, all users across the organization must configure 2FA.",
+        }})
+
+    if role_of(request.user) != "super_admin":
+        return error("Only Super Administrators can modify organization 2FA policy.", 403)
+
+    data = request.get_json(silent=True) or {}
+    enforced = bool(data.get("enforced") if "enforced" in data else data.get("mfa_enforced"))
+    mfa.set_mfa_enforced(enforced)
+    audit(request.user, "mfa_policy_updated", "settings", 0, new={"mfa_enforced": enforced})
+    db.session.commit()
+    return jsonify({
+        "data": {"mfa_enforced": enforced},
+        "message": f"Organization 2FA requirement is now {'enforced' if enforced else 'optional'}.",
+    })
 
 
 @app.put("/api/v1/auth/mfa")
@@ -7579,6 +7758,7 @@ def meta():
         "session_timeout_minutes": SESSION_TIMEOUT_MINUTES,
         "employment_categories": letters.category_options(),
         "staff_categories": letters.STAFF_CATEGORIES,
+        "mfa_enforced": mfa.is_mfa_enforced(),
     }})
 
 

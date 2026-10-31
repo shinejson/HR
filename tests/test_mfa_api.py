@@ -256,6 +256,94 @@ class MfaApiTest(unittest.TestCase):
         history = self.client.get("/api/v1/auth/login-history", headers=self.auth()).get_json()["data"]
         self.assertTrue(any(row["mfa_used"] and row["success"] for row in history))
 
+    def test_whatsapp_mfa_lifecycle(self):
+        # 1. Setup WhatsApp 2FA
+        res = self.client.post("/api/v1/auth/mfa/setup", json={"method": "whatsapp", "phone": "+233241234567"}, headers=self.auth())
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()["data"]
+        self.assertEqual(data["method"], "whatsapp")
+        self.assertIn("masked_phone", data)
+        self.assertTrue(self.user.mfa_otp_hash)
+
+        # 2. Confirm with valid OTP
+        code = "123456"
+        mfa.store_user_otp(self.user, code)
+        confirm = self.client.post("/api/v1/auth/mfa/confirm", json={"code": code}, headers=self.auth())
+        self.assertEqual(confirm.status_code, 200)
+        self.assertTrue(confirm.get_json()["data"]["enabled"])
+        self.assertEqual(confirm.get_json()["data"]["method"], "whatsapp")
+
+        # 3. Login triggers WhatsApp OTP
+        login_res = self.login().get_json()["data"]
+        self.assertTrue(login_res["mfa_required"])
+        self.assertEqual(login_res["method"], "whatsapp")
+        self.assertTrue(login_res.get("phone"))
+
+        # 4. Resend code
+        resend = self.client.post("/api/v1/auth/mfa/resend", json={"challenge": login_res["challenge"]})
+        self.assertEqual(resend.status_code, 200)
+        self.assertEqual(resend.get_json()["data"]["method"], "whatsapp")
+
+        # 5. Verify login with OTP
+        mfa.store_user_otp(self.user, "654321")
+        verify = self.client.post("/api/v1/auth/mfa/verify", json={"challenge": login_res["challenge"], "code": "654321"})
+        self.assertEqual(verify.status_code, 200)
+        self.assertTrue(verify.get_json()["data"]["token"])
+
+    def test_email_mfa_lifecycle(self):
+        # 1. Setup Email 2FA
+        res = self.client.post("/api/v1/auth/mfa/setup", json={"method": "email"}, headers=self.auth())
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()["data"]
+        self.assertEqual(data["method"], "email")
+
+        # 2. Confirm with OTP
+        mfa.store_user_otp(self.user, "789123")
+        confirm = self.client.post("/api/v1/auth/mfa/confirm", json={"code": "789123"}, headers=self.auth())
+        self.assertEqual(confirm.status_code, 200)
+        self.assertEqual(confirm.get_json()["data"]["method"], "email")
+
+        # 3. Login
+        login_res = self.login().get_json()["data"]
+        self.assertEqual(login_res["method"], "email")
+
+    def test_superadmin_mfa_policy_enforcement(self):
+        # Normal employee cannot set organization policy
+        emp_policy = self.client.post("/api/v1/auth/mfa/policy", json={"enforced": True}, headers=self.auth())
+        self.assertEqual(emp_policy.status_code, 403)
+
+        # Super admin can set policy
+        admin = User.query.filter(User.role.has(slug='super_admin')).first()
+        admin.token = "admin-test-token"
+        db.session.commit()
+        admin_auth = {"Authorization": "Bearer admin-test-token"}
+
+        set_policy = self.client.post("/api/v1/auth/mfa/policy", json={"enforced": True}, headers=admin_auth)
+        self.assertEqual(set_policy.status_code, 200)
+        self.assertTrue(set_policy.get_json()["data"]["mfa_enforced"])
+        self.assertTrue(mfa.is_mfa_enforced())
+
+        # When enforced:
+        # Prompt is due even after previously dismissed
+        self.user.mfa_prompt_snoozed_at = datetime.utcnow()
+        db.session.commit()
+        me = self.client.get("/api/v1/auth/me", headers=self.auth()).get_json()["data"]
+        self.assertTrue(me["mfa_prompt_due"])
+
+        # Dismissing returns 403
+        dismiss = self.client.post("/api/v1/auth/mfa/prompt-dismiss", headers=self.auth())
+        self.assertEqual(dismiss.status_code, 403)
+
+        # Disable 2FA returns 403 when enforced
+        dis = self.client.post("/api/v1/auth/mfa/disable", json={"password": "Employee@123"}, headers=self.auth())
+        self.assertEqual(dis.status_code, 403)
+
+        # Super admin can disable enforcement
+        unset_policy = self.client.post("/api/v1/auth/mfa/policy", json={"enforced": False}, headers=admin_auth)
+        self.assertEqual(unset_policy.status_code, 200)
+        self.assertFalse(unset_policy.get_json()["data"]["mfa_enforced"])
+        self.assertFalse(mfa.is_mfa_enforced())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -69,6 +69,13 @@ const API = (() => {
       if (body.data && body.data.token) setToken(body.data.token);
       return body.data;
     },
+    async resendMfa(challenge, method, phone) {
+      const body = await request("/auth/mfa/resend", {
+        method: "POST",
+        body: JSON.stringify({ challenge, method, phone }),
+      });
+      return body.data;
+    },
     logout() {
       return request("/auth/logout", { method: "POST" }).catch(() => {}).finally(() => setToken(null));
     },

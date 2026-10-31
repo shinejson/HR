@@ -776,11 +776,77 @@ function bindLogin() {
   const mfaError = document.getElementById("mfa-error");
   const mfaSubmit = document.getElementById("mfa-submit");
   let challenge = null;
+  let mfaMethod = "app";
+  let mfaPhone = null;
+  let mfaAccount = null;
+  let resendTimer = null;
+
+  function startResendCooldown(seconds) {
+    const btn = document.getElementById("mfa-resend-btn");
+    const timerText = document.getElementById("mfa-resend-timer");
+    if (!btn || !timerText) return;
+    btn.disabled = true;
+    let remaining = seconds;
+    if (resendTimer) clearInterval(resendTimer);
+    timerText.textContent = "Resend available in " + remaining + "s";
+    resendTimer = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(resendTimer);
+        resendTimer = null;
+        btn.disabled = false;
+        timerText.textContent = "";
+      } else {
+        timerText.textContent = "Resend available in " + remaining + "s";
+      }
+    }, 1000);
+  }
 
   function showMfaStep(data) {
     challenge = data.challenge;
-    const account = document.getElementById("mfa-account");
-    if (account) account.textContent = data.account || "your account";
+    mfaMethod = data.method || "app";
+    mfaPhone = data.phone || null;
+    mfaAccount = data.account || "your account";
+
+    const titleEl = document.getElementById("mfa-step-title");
+    const hintEl = document.getElementById("mfa-step-hint");
+    const labelEl = document.getElementById("mfa-code-label");
+    const resendRow = document.getElementById("mfa-resend-row");
+    const resendBtn = document.getElementById("mfa-resend-btn");
+
+    if (mfaMethod === "whatsapp") {
+      if (titleEl) titleEl.textContent = "WhatsApp Verification";
+      if (hintEl) hintEl.innerHTML = 'Enter the 6-digit code sent via WhatsApp to <b>' + esc(mfaPhone || mfaAccount) + '</b>.';
+      if (labelEl) labelEl.textContent = "6-digit WhatsApp code";
+      if (resendRow) resendRow.classList.remove("hidden");
+      startResendCooldown(45);
+    } else if (mfaMethod === "email") {
+      if (titleEl) titleEl.textContent = "Email Verification";
+      if (hintEl) hintEl.innerHTML = 'Enter the 6-digit code sent to your email <b>' + esc(mfaAccount) + '</b>.';
+      if (labelEl) labelEl.textContent = "6-digit Email code";
+      if (resendRow) resendRow.classList.remove("hidden");
+      startResendCooldown(45);
+    } else {
+      if (titleEl) titleEl.textContent = "Enter your code";
+      if (hintEl) hintEl.innerHTML = 'Open your authenticator app and enter the 6-digit code for <b>' + esc(mfaAccount) + '</b>.';
+      if (labelEl) labelEl.textContent = "Authentication code";
+      if (resendRow) resendRow.classList.add("hidden");
+    }
+
+    if (resendBtn) {
+      resendBtn.onclick = async () => {
+        try {
+          resendBtn.disabled = true;
+          const resp = await API.resendMfa(challenge, mfaMethod, mfaPhone);
+          toast(resp && resp.message ? resp.message : "New verification code sent", "success");
+          startResendCooldown(60);
+        } catch (err) {
+          toast(err.message, "error");
+          resendBtn.disabled = false;
+        }
+      };
+    }
+
     if (mfaError) mfaError.classList.add("hidden");
     if (mfaCodeInput) mfaCodeInput.value = "";
     form.classList.add("hidden");
@@ -791,6 +857,7 @@ function bindLogin() {
 
   function backToPassword() {
     challenge = null;
+    if (resendTimer) { clearInterval(resendTimer); resendTimer = null; }
     if (mfaStep) mfaStep.classList.add("hidden");
     form.classList.remove("hidden");
     if (demoList) demoList.classList.remove("hidden");

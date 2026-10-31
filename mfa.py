@@ -225,3 +225,138 @@ def challenge_matches(user, token, app):
         return False
     fingerprint = hashlib.sha256(f"{user.password_hash}".encode("utf-8")).hexdigest()[:16]
     return payload.get("uid") == user.id and payload.get("fp") == fingerprint
+
+
+# ----------------------------------------------------------- OTP (Email & WhatsApp)
+OTP_EXPIRY_MINUTES = 10
+
+
+def generate_otp(digits=DIGITS):
+    """Generate a cryptographically secure numeric OTP string (e.g. '391824')."""
+    return f"{secrets.randbelow(10 ** digits):0{digits}d}"
+
+
+def hash_otp(code, salt):
+    return hashlib.sha256((str(salt or "") + normalize_code(code)).encode("utf-8")).hexdigest()
+
+
+def store_user_otp(user, code, minutes=OTP_EXPIRY_MINUTES):
+    """Store hashed OTP with expiry on user."""
+    if not user.mfa_secret:
+        user.mfa_secret = generate_secret()
+    user.mfa_otp_hash = hash_otp(code, user.mfa_secret)
+    user.mfa_otp_expires_at = datetime.utcnow() + timedelta(minutes=minutes)
+    models.db.session.commit()
+
+
+def verify_user_otp(user, code):
+    """Check if entered OTP matches stored hash and has not expired."""
+    if not getattr(user, "mfa_otp_hash", None) or not getattr(user, "mfa_otp_expires_at", None):
+        return False
+    if user.mfa_otp_expires_at < datetime.utcnow():
+        return False
+    candidate = normalize_code(code)
+    if hmac.compare_digest(hash_otp(candidate, user.mfa_secret or ""), user.mfa_otp_hash):
+        user.mfa_otp_hash = None
+        user.mfa_otp_expires_at = None
+        models.db.session.commit()
+        return True
+    return False
+
+
+def mask_email(email):
+    """ama.mensah@meridian.gh -> a••••••h@meridian.gh"""
+    email = email or ""
+    if "@" not in email:
+        return email
+    local, domain = email.split("@", 1)
+    if len(local) <= 2:
+        return local[:1] + "•@" + domain
+    return local[0] + "•" * max(1, len(local) - 2) + local[-1] + "@" + domain
+
+
+def mask_phone(phone):
+    """+233 24 123 4567 -> +233 ••• ••• 4567"""
+    raw = "".join(ch for ch in str(phone or "") if ch.isdigit() or ch == "+")
+    if len(raw) < 7:
+        return raw or "—"
+    prefix = raw[:4]
+    suffix = raw[-4:]
+    return f"{prefix} ••• ••• {suffix}"
+
+
+def get_user_phone(user):
+    """Retrieve phone number associated with user profile or linked employee."""
+    if getattr(user, "mfa_phone", None):
+        return user.mfa_phone
+    if getattr(user, "employee", None) and user.employee.phone:
+        return user.employee.phone
+    return None
+
+
+def send_mfa_code_email(user, code):
+    """Dispatch verification code via email."""
+    import messaging
+    subject = f"Your Meridian HR 2FA Verification Code: {code}"
+    text_body = (
+        f"Hello {user.username or user.email},\n\n"
+        f"Your Meridian HR two-factor verification code is: {code}\n\n"
+        f"This code will expire in {OTP_EXPIRY_MINUTES} minutes.\n"
+        f"If you did not initiate this sign-in request, please secure your account immediately.\n\n"
+        f"Meridian HR Security Team"
+    )
+    html_body = f"""
+    <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px;border:1px solid #e2e8f0;border-radius:12px;background:#ffffff">
+      <div style="font-size:18px;font-weight:700;color:#0f766e;margin-bottom:12px">Meridian HR — Security Verification</div>
+      <p style="color:#334155;font-size:14px;line-height:1.5">Your two-factor authentication verification code is:</p>
+      <div style="background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:8px;padding:16px;text-align:center;margin:18px 0">
+        <span style="font-size:28px;font-weight:700;letter-spacing:6px;color:#0f172a;font-family:monospace">{code}</span>
+      </div>
+      <p style="color:#64748b;font-size:12px;line-height:1.5">This verification code is valid for <strong>{OTP_EXPIRY_MINUTES} minutes</strong>. Never share this code with anyone.</p>
+    </div>
+    """
+    return messaging.send_email(user.email, subject, text_body, html_body)
+
+
+def send_mfa_code_whatsapp(user, code, target_phone=None):
+    """Dispatch verification code via WhatsApp/SMS gateway."""
+    import messaging
+    phone = target_phone or get_user_phone(user)
+    if not phone:
+        return {"ok": False, "error": "No phone number registered for WhatsApp delivery."}
+    body = (
+        f"*Meridian HR Security*\n"
+        f"Your 2FA verification code is: *{code}*\n"
+        f"Valid for {OTP_EXPIRY_MINUTES} minutes. Do not share this code."
+    )
+    return messaging.send_sms(phone, body)
+
+
+# ----------------------------------------------------------- Policy (Enforced)
+SETTING_KEY_ENFORCED = "security.mfa_enforced"
+
+
+def is_mfa_enforced():
+    """Return True if 2FA is required organization-wide by superadmin setting."""
+    try:
+        row = models.Setting.query.filter_by(key=SETTING_KEY_ENFORCED).first()
+        return bool(row and str(row.value).lower() in ("true", "1", "yes", "on"))
+    except Exception:
+        return False
+
+
+def set_mfa_enforced(enforced):
+    """Set organization-wide 2FA requirement."""
+    row = models.Setting.query.filter_by(key=SETTING_KEY_ENFORCED).first()
+    if not row:
+        row = models.Setting(
+            key=SETTING_KEY_ENFORCED,
+            value="true" if enforced else "false",
+            group_name="security",
+            
+        )
+        models.db.session.add(row)
+    else:
+        row.value = "true" if enforced else "false"
+    models.db.session.commit()
+    return enforced

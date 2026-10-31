@@ -39,9 +39,11 @@ class User(db.Model, TimestampMixin, SoftDeleteMixin):
     role_id = db.Column(db.Integer, db.ForeignKey("roles.id"), nullable=False)
     status = db.Column(db.String(20), default="active")
     mfa_enabled = db.Column(db.Boolean, default=False)
-    # TOTP enrolment. `mfa_secret` exists as soon as setup starts; `mfa_enabled`
-    # only flips once the user proves they can generate a valid code.
+    mfa_method = db.Column(db.String(20), default="app")  # 'app' (Authenticator), 'email', 'whatsapp'
     mfa_secret = db.Column(db.String(64))
+    mfa_phone = db.Column(db.String(40))
+    mfa_otp_hash = db.Column(db.String(128))
+    mfa_otp_expires_at = db.Column(db.DateTime)
     mfa_recovery_codes = db.Column(db.Text)
     mfa_confirmed_at = db.Column(db.DateTime)
     mfa_prompt_snoozed_at = db.Column(db.DateTime)
