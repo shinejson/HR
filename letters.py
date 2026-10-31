@@ -5,14 +5,45 @@ to the employee's exact employment category (Permanent, Probationary, Fixed-Term
 Part-Time, Casual, Internship/Attachment, National Service, or Consultant) and
 staff category/cadre, aligned with the Ghana Labour Act, 2003 (Act 651).
 """
+import io
 import json
+import re
 from datetime import date, timedelta
 from decimal import Decimal
 
+try:
+    import docx
+except ImportError:
+    docx = None
+
+try:
+    import pypdf
+except ImportError:
+    pypdf = None
+
 from models import (
     db, Company, Employee, EmploymentLetter, Contract, SalaryStructure,
-    LeaveBalance, LeaveType, Setting,
+    LeaveBalance, LeaveType, Setting, Department, Designation,
 )
+
+AVAILABLE_PLACEHOLDERS = [
+    {"tag": "{{employee_name}}", "label": "Employee Name", "desc": "Full name of the employee (e.g. Kwame Mensah)"},
+    {"tag": "{{salary}}", "label": "Salary", "desc": "Basic monthly salary formatted with currency (e.g. GHS 4,500.00)"},
+    {"tag": "{{basic_salary}}", "label": "Basic Salary", "desc": "Same as {{salary}}"},
+    {"tag": "{{gross_salary}}", "label": "Gross Salary", "desc": "Total monthly gross package inclusive of allowances"},
+    {"tag": "{{department}}", "label": "Department", "desc": "Department name (e.g. Hotel Operations)"},
+    {"tag": "{{designation}}", "label": "Designation", "desc": "Job title or position (e.g. Executive Sous Chef)"},
+    {"tag": "{{position}}", "label": "Position", "desc": "Same as {{designation}}"},
+    {"tag": "{{staff_category}}", "label": "Staff Category", "desc": "Management, Senior Staff, Junior Staff cadre"},
+    {"tag": "{{hire_date}}", "label": "Effective Start Date", "desc": "Official commencement date (e.g. 01 November 2026)"},
+    {"tag": "{{working_hours}}", "label": "Working Hours", "desc": "Weekly work hours and shift schedule"},
+    {"tag": "{{notice_period}}", "label": "Notice Period", "desc": "Termination notice period (e.g. 1 month)"},
+    {"tag": "{{probation_months}}", "label": "Probation Months", "desc": "Probationary period in months"},
+    {"tag": "{{manager_name}}", "label": "Reporting Manager", "desc": "Supervisor / HOD name and designation"},
+    {"tag": "{{leave_days}}", "label": "Annual Leave", "desc": "Annual paid leave entitlement days"},
+    {"tag": "{{branch}}", "label": "Branch / Location", "desc": "Assigned hotel property or location"},
+    {"tag": "{{company_legal_name}}", "label": "Company Legal Name", "desc": "Registered legal entity name"},
+]
 
 STAFF_CATEGORIES = [
     {"value": "Executive / Leadership", "label": "Executive / Leadership"},
@@ -414,6 +445,293 @@ def save_template_override(category_key, data):
     return get_merged_templates()[category_key]
 
 
+# ============================================================ DEPARTMENT TEMPLATES & DOCUMENT PARSER
+
+def get_department_templates():
+    row = Setting.query.filter_by(key="letters.department_templates").first()
+    if not row or not row.value:
+        return {}
+    try:
+        data = json.loads(row.value)
+        return data if isinstance(data, dict) else {}
+    except ValueError:
+        return {}
+
+
+def get_department_template(department_id):
+    if not department_id:
+        return None
+    dept_templates = get_department_templates()
+    return dept_templates.get(str(department_id)) or dept_templates.get(int(department_id))
+
+
+def save_department_template(department_id, data):
+    dept = db.session.get(Department, int(department_id))
+    if not dept:
+        raise ValueError("Department not found")
+    all_tpls = get_department_templates()
+    key = str(dept.id)
+    cur = dict(all_tpls.get(key) or {})
+    allowed = (
+        "letter_title", "subject_line", "working_hours", "notice_period",
+        "probation_months", "opening", "closing", "extra_clause", "sections",
+        "custom_body", "use_custom_body"
+    )
+    for k in allowed:
+        if k in data:
+            cur[k] = data[k]
+    cur["department_id"] = dept.id
+    cur["department_name"] = dept.name
+    cur["department_code"] = dept.code or ""
+    all_tpls[key] = cur
+
+    row = Setting.query.filter_by(key="letters.department_templates").first()
+    if not row:
+        row = Setting(key="letters.department_templates", group_name="hr")
+        db.session.add(row)
+    row.value = json.dumps(all_tpls)
+    db.session.commit()
+    return cur
+
+
+def delete_department_template(department_id):
+    all_tpls = get_department_templates()
+    key = str(department_id)
+    if key in all_tpls:
+        del all_tpls[key]
+        row = Setting.query.filter_by(key="letters.department_templates").first()
+        if row:
+            row.value = json.dumps(all_tpls)
+            db.session.commit()
+    return True
+
+
+def parse_uploaded_letter_document(file_bytes, filename=""):
+    ext = (filename.rsplit(".", 1)[-1] if "." in filename else "").lower()
+    if ext == "doc" and file_bytes.startswith(b"PK"):
+        ext = "docx"
+    raw_text = ""
+    if ext == "docx":
+        if docx is None:
+            raise ValueError("python-docx library is not available on server.")
+        try:
+            doc = docx.Document(io.BytesIO(file_bytes))
+            paras = []
+            for p in doc.paragraphs:
+                txt = p.text.strip()
+                if txt:
+                    paras.append(txt)
+            for tbl in doc.tables:
+                for row in tbl.rows:
+                    row_txt = " | ".join(c.text.strip() for c in row.cells if c.text.strip())
+                    if row_txt:
+                        paras.append(row_txt)
+            raw_text = "\n\n".join(paras)
+        except Exception as e:
+            raise ValueError(f"Could not read DOCX document: {e}")
+    elif ext == "pdf":
+        if pypdf is None:
+            raise ValueError("pypdf library is not available on server.")
+        try:
+            reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+            pages = []
+            for page in reader.pages:
+                txt = page.extract_text() or ""
+                if txt.strip():
+                    pages.append(txt.strip())
+            raw_text = "\n\n".join(pages)
+        except Exception as e:
+            raise ValueError(f"Could not extract text from PDF: {e}")
+    elif ext == "doc":
+        import string
+        printable = set(string.printable)
+        cleaned = "".join(chr(b) if chr(b) in printable else " " for b in file_bytes)
+        blocks = [b.strip() for b in cleaned.split("   ") if len(b.strip()) >= 15]
+        raw_text = "\n\n".join(blocks)
+        if not raw_text.strip():
+            raise ValueError("Legacy .doc binary format could not be parsed. Please re-save as modern .docx or .pdf.")
+    else:
+        try:
+            raw_text = file_bytes.decode("utf-8", errors="ignore")
+        except Exception:
+            raise ValueError("Unsupported file format. Please upload a .docx or .pdf file.")
+
+    if not raw_text.strip():
+        raise ValueError("The uploaded document contains no readable text.")
+
+    return _structure_letter_text(raw_text, filename)
+
+
+def _structure_letter_text(raw_text, filename=""):
+    text = raw_text
+    bracket_styles = [
+        (r'(?:\[|<<|<|\{)\s*(?:employee\s*name|candidate\s*name|staff\s*name|full\s*name|appointee\s*name)\s*(?:\]|>>|>|\})', '{{employee_name}}'),
+        (r'(?:\[|<<|<|\{)\s*(?:monthly\s*salary|basic\s*salary|starting\s*salary|salary|pay|basic\s*pay|remuneration|wage|stipend)\s*(?:\]|>>|>|\})', '{{basic_salary}}'),
+        (r'(?:\[|<<|<|\{)\s*(?:gross\s*salary|gross\s*package|total\s*package|total\s*gross)\s*(?:\]|>>|>|\})', '{{gross_salary}}'),
+        (r'(?:\[|<<|<|\{)\s*(?:department|dept|unit|division|section)\s*(?:\]|>>|>|\})', '{{department}}'),
+        (r'(?:\[|<<|<|\{)\s*(?:job\s*title|position|designation|role|post)\s*(?:\]|>>|>|\})', '{{designation}}'),
+        (r'(?:\[|<<|<|\{)\s*(?:staff\s*category|cadre|employment\s*category)\s*(?:\]|>>|>|\})', '{{staff_category}}'),
+        (r'(?:\[|<<|<|\{)\s*(?:hire\s*date|start\s*date|commencement\s*date|effective\s*date|resumption\s*date)\s*(?:\]|>>|>|\})', '{{hire_date}}'),
+        (r'(?:\[|<<|<|\{)\s*(?:reporting\s*to|manager|supervisor|head\s*of\s*department|hod|reports\s*to)\s*(?:\]|>>|>|\})', '{{manager_name}}'),
+        (r'(?:\[|<<|<|\{)\s*(?:working\s*hours|hours\s*of\s*work|work\s*schedule|duty\s*hours|shift\s*hours)\s*(?:\]|>>|>|\})', '{{working_hours}}'),
+        (r'(?:\[|<<|<|\{)\s*(?:notice\s*period|termination\s*notice|notice)\s*(?:\]|>>|>|\})', '{{notice_period}}'),
+        (r'(?:\[|<<|<|\{)\s*(?:leave\s*days|annual\s*leave|leave\s*entitlement)\s*(?:\]|>>|>|\})', '{{leave_days}}'),
+        (r'(?:\[|<<|<|\{)\s*(?:company\s*name|company|employer|hotel\s*name)\s*(?:\]|>>|>|\})', '{{company_legal_name}}'),
+        (r'(?:\[|<<|<|\{)\s*(?:date|issue\s*date|offer\s*date|letter\s*date)\s*(?:\]|>>|>|\})', '{{issue_date}}'),
+        (r'(?:\[|<<|<|\{)\s*(?:reference\s*no|ref|reference|ref\s*number)\s*(?:\]|>>|>|\})', '{{reference_no}}'),
+    ]
+    for pattern, rep in bracket_styles:
+        text = re.sub(pattern, rep, text, flags=re.IGNORECASE)
+
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
+    if not lines:
+        return {"raw_text": raw_text}
+
+    title = ""
+    subject = ""
+    working_hours = ""
+    notice_period = ""
+    probation_months = 3
+    opening = ""
+    closing = ""
+    extra_clause = ""
+    sections = []
+
+    consumed = set()
+    for idx, line in enumerate(lines[:6]):
+        u = line.upper()
+        if not title and any(w in u for w in ('OFFER', 'APPOINTMENT', 'EMPLOYMENT', 'CONTRACT', 'ENGAGEMENT')):
+            title = line
+            consumed.add(idx)
+        elif not subject and (u.startswith('SUBJECT') or u.startswith('RE:') or u.startswith('SUBJ:')):
+            subject = line
+            consumed.add(idx)
+
+    remaining = [lines[i] for i in range(len(lines)) if i not in consumed]
+
+    current_sec = None
+    before_secs = []
+    after_secs = []
+    found_any_sec = False
+
+    for line in remaining:
+        m = re.match(r'^(?:(?:(\d+[\.\)]|[A-Z][\.\)]|Clause\s+\d+|Section\s+\d+|Article\s+\d+)\s*[:\-\.]?\s*))([^\n]+)', line, re.IGNORECASE)
+        if m:
+            found_any_sec = True
+            if current_sec:
+                sections.append(current_sec)
+            heading = line
+            body = ""
+            if ":" in line and len(line.split(":", 1)[0]) < 50:
+                p = line.split(":", 1)
+                heading = p[0].strip()
+                body = p[1].strip()
+            elif " - " in line and len(line.split(" - ", 1)[0]) < 50:
+                p = line.split(" - ", 1)
+                heading = p[0].strip()
+                body = p[1].strip()
+            current_sec = [heading, body]
+        elif current_sec:
+            u_line = line.upper()
+            if any(w in u_line for w in ('PLEASE SIGN', 'ACCEPTANCE OF OFFER', 'ACCEPT THIS APPOINTMENT', 'YOURS FAITHFULLY', 'WARMLY WELCOME', 'SINCERELY')):
+                sections.append(current_sec)
+                current_sec = None
+                after_secs.append(line)
+            else:
+                if current_sec[1]:
+                    current_sec[1] += '\n' + line
+                else:
+                    current_sec[1] = line
+        else:
+            if not found_any_sec:
+                before_secs.append(line)
+            else:
+                after_secs.append(line)
+
+    if current_sec:
+        sections.append(current_sec)
+
+    for h, b in sections:
+        comb = (h + " " + b).lower()
+        if not working_hours and any(w in comb for w in ('working hours', 'hours of work', '40 hours', 'shift schedule', 'roster')):
+            working_hours = b.strip()
+        if not notice_period and any(w in comb for w in ('notice period', 'termination', 'giving one month', 'month notice', 'written notice')):
+            notice_period = b.strip()
+        if 'probation' in comb and ('month' in comb):
+            pm = re.search(r'(\d+)\s*month', comb)
+            if pm:
+                try: probation_months = int(pm.group(1))
+                except: pass
+
+    opening = "\n\n".join(before_secs).strip()
+    closing = "\n\n".join(after_secs).strip()
+
+    if not sections and remaining:
+        if len(remaining) > 2:
+            opening = remaining[0]
+            closing = remaining[-1]
+            sections = [[f"{i}. Terms & Conditions", p] for i, p in enumerate(remaining[1:-1], 1)]
+        else:
+            opening = remaining[0] if remaining else ""
+
+    detected_vars = list(set(re.findall(r'\{\{([^}]+)\}\}', text)))
+
+    return {
+        "filename": filename,
+        "letter_title": title or "OFFER OF APPOINTMENT",
+        "subject_line": subject or "OFFER OF APPOINTMENT — {{designation}} ({{department}})",
+        "working_hours": working_hours or "40 hours per week (Monday to Friday, or duty schedule assigned by department)",
+        "notice_period": notice_period or "One (1) calendar month written notice (or salary in lieu thereof)",
+        "probation_months": probation_months,
+        "opening": opening or "Management of {{company_legal_name}} is pleased to offer you an appointment as {{designation}} in the {{department}} Department.",
+        "sections": sections,
+        "extra_clause": extra_clause,
+        "closing": closing or "Please indicate your acceptance of the terms and conditions set out in this Letter of Appointment by signing below.",
+        "raw_text": text,
+        "detected_placeholders": detected_vars,
+    }
+
+
+def render_department_template_preview(dept_id, template_data=None, emp_id=None):
+    from types import SimpleNamespace
+    dept = db.session.get(Department, int(dept_id)) if dept_id else None
+    emp = db.session.get(Employee, int(emp_id)) if emp_id else None
+    if not emp and dept:
+        emp = Employee.query.filter_by(department_id=dept.id, deleted_at=None).first()
+
+    comp = Company.query.first()
+    currency = (comp.currency if comp and comp.currency else "GHS") or "GHS"
+    if not emp:
+        # Realistic fallback sample employee
+        emp = SimpleNamespace(
+            id=0,
+            employee_no=f"EMP-{date.today().year}-0042",
+            first_name="Kwame",
+            last_name="Mensah",
+            full_name="Kwame Mensah",
+            email="kwame.mensah@meridian.gh",
+            phone="+233 24 555 0192",
+            address="Airport Residential Area, Accra",
+            city="Accra",
+            nationality="Ghanaian",
+            hire_date=date.today(),
+            end_date=None,
+            probation_end=date.today() + timedelta(days=90),
+            confirmation_date=None,
+            basic_salary=Decimal("4200.00"),
+            staff_category="Management / Senior Staff",
+            work_location="On-site",
+            department_id=dept.id if dept else 1,
+            department=dept or SimpleNamespace(id=1, name="Hotel Operations"),
+            designation=SimpleNamespace(id=1, title="Executive Sous Chef"),
+            grade=SimpleNamespace(id=1, name="Grade B2"),
+            branch=SimpleNamespace(id=1, name="Grand Meridian Airport Hotel"),
+            manager=SimpleNamespace(id=99, full_name="Sarah Mensah", designation=SimpleNamespace(title="General Manager")),
+        )
+
+    return build_letter_payload(emp, letter=None, standalone=False, template_override=template_data)
+
+
 def _default_signatory():
     hr_head = (
         Employee.query.join(Employee.designation)
@@ -530,9 +848,44 @@ def _esc(s):
 
 
 def _format_rich_text(text, ctx):
-    rendered = str(text or "")
-    for k, v in ctx.items():
-        rendered = rendered.replace("{{" + k + "}}", str(v if v is not None else ""))
+    if not text:
+        return ""
+    rendered = str(text)
+
+    # Replace double braces {{key}} with optional whitespace, case-insensitive
+    def _sub_double(match):
+        raw_key = match.group(1).strip().lower().replace(" ", "_").replace("-", "_")
+        val = ctx.get(raw_key)
+        if val is not None:
+            return str(val)
+        return match.group(0)
+
+    rendered = re.sub(r"\{\{([^}]+)\}\}", _sub_double, rendered)
+
+    # Also replace bracketed [Placeholder]
+    bracket_map = {
+        "employee_name": "employee_name", "employee": "employee_name", "name": "employee_name", "staff_name": "employee_name",
+        "salary": "basic_salary", "basic_salary": "basic_salary", "gross_salary": "gross_salary",
+        "department": "department", "dept": "department",
+        "designation": "designation", "position": "designation", "job_title": "designation", "role": "designation",
+        "staff_category": "staff_category", "category": "category_label",
+        "hire_date": "hire_date", "start_date": "hire_date", "effective_date": "hire_date",
+        "date": "issue_date", "issue_date": "issue_date",
+        "working_hours": "working_hours", "notice_period": "notice_period",
+        "manager": "manager_name", "manager_name": "manager_name", "supervisor": "manager_name",
+        "company": "company_name", "company_name": "company_name", "company_legal_name": "company_legal_name",
+        "branch": "branch", "location": "branch_location",
+        "leave_days": "leave_days", "reference_no": "reference_no", "probation_months": "probation_months",
+    }
+    def _sub_bracket(match):
+        raw_k = match.group(1).strip().lower().replace(" ", "_").replace("-", "_")
+        target_k = bracket_map.get(raw_k)
+        if target_k and target_k in ctx and ctx[target_k] is not None:
+            return str(ctx[target_k])
+        return match.group(0)
+
+    rendered = re.sub(r"\[([A-Za-z\s_\-]+)\]", _sub_bracket, rendered)
+
     escaped = _esc(rendered)
     # Render **bold** markers cleanly
     parts = escaped.split("**")
@@ -544,12 +897,40 @@ def _format_rich_text(text, ctx):
     return escaped.replace("\n", "<br>")
 
 
-def build_letter_payload(emp, letter=None, standalone=False, auto_print=False):
+def build_letter_payload(emp, letter=None, standalone=False, auto_print=False, template_override=None):
     comp = Company.query.first()
     letter = letter or ensure_letter_for_employee(emp)
     templates = get_merged_templates()
     cat_key = letter.category_key if letter.category_key in templates else infer_category_key(emp)
-    tpl = templates[cat_key]
+    base_tpl = templates[cat_key]
+    tpl = dict(base_tpl)
+    tpl["sections"] = list(base_tpl.get("sections") or [])
+
+    # Check for department-specific template override
+    dept_id = getattr(emp, "department_id", None)
+    dept_tpl = template_override or (get_department_template(dept_id) if dept_id else None)
+    if dept_tpl:
+        if dept_tpl.get("letter_title"):
+            tpl["letter_title"] = dept_tpl["letter_title"]
+        if dept_tpl.get("subject_line"):
+            tpl["subject_line"] = dept_tpl["subject_line"]
+        if dept_tpl.get("working_hours"):
+            tpl["working_hours"] = dept_tpl["working_hours"]
+        if dept_tpl.get("notice_period"):
+            tpl["notice_period"] = dept_tpl["notice_period"]
+        if dept_tpl.get("opening"):
+            tpl["opening"] = dept_tpl["opening"]
+        if dept_tpl.get("closing"):
+            tpl["closing"] = dept_tpl["closing"]
+        if dept_tpl.get("sections"):
+            tpl["sections"] = list(dept_tpl["sections"])
+        if dept_tpl.get("extra_clause"):
+            base_extra = tpl.get("extra_clause") or ""
+            dept_extra = dept_tpl.get("extra_clause") or ""
+            tpl["extra_clause"] = (base_extra + "\n\n" + dept_extra).strip() if base_extra else dept_extra
+        if dept_tpl.get("custom_body") and dept_tpl.get("use_custom_body"):
+            tpl["custom_body"] = dept_tpl["custom_body"]
+            tpl["use_custom_body"] = True
 
     currency = (comp.currency if comp and comp.currency else "GHS") or "GHS"
     company_name = (comp.name if comp and comp.name else "Meridian HR").strip()
@@ -627,25 +1008,31 @@ def build_letter_payload(emp, letter=None, standalone=False, auto_print=False):
 
     ctx = {
         "employee_name": emp.full_name,
+        "name": emp.full_name,
         "first_name": emp.first_name,
         "last_name": emp.last_name,
         "employee_no": emp.employee_no,
         "designation": designation,
+        "position": designation,
         "department": department,
         "staff_category": staff_cat,
-        "category_label": tpl["label"],
+        "category_label": tpl.get("label", "Appointment"),
         "grade": grade_name or "Standard",
         "grade_clause": f", Pay Grade {grade_name}" if grade_name else "",
         "branch": branch_name,
         "branch_location": f"{branch_name} ({work_loc})",
         "work_location": work_loc,
         "hire_date": _fmt_date(eff_date),
+        "effective_date": _fmt_date(eff_date),
+        "start_date": _fmt_date(eff_date),
         "issue_date": _fmt_date(issue_date),
+        "date": _fmt_date(issue_date),
         "end_date": _fmt_date(end_dt) if end_dt else "Open-ended",
         "end_date_inline": f" through **{_fmt_date(end_dt)}**" if end_dt else "",
         "probation_months": str(prob_months or 0),
         "probation_end": _fmt_date(prob_end) if prob_end else "—",
         "probation_clause": probation_clause,
+        "salary": _fmt_money(basic_dec, currency),
         "basic_salary": _fmt_money(basic_dec, currency),
         "gross_salary": _fmt_money(gross_dec, currency),
         "gross_clause": gross_clause,
@@ -654,29 +1041,47 @@ def build_letter_payload(emp, letter=None, standalone=False, auto_print=False):
         "company_name": company_name,
         "company_legal_name": company_legal,
         "company_address": company_address,
-        "working_hours": letter.working_hours or tpl["working_hours"],
-        "notice_period": letter.notice_period or tpl["notice_period"],
+        "working_hours": (letter.working_hours if letter else None) or tpl.get("working_hours", ""),
+        "notice_period": (letter.notice_period if letter else None) or tpl.get("notice_period", ""),
         "leave_days": str(leave_days),
-        "reference_no": letter.reference_no,
+        "reference_no": (letter.reference_no if letter else None) or f"REF-{emp.employee_no}",
     }
 
-    title_text = _format_rich_text(letter.letter_title or tpl["letter_title"], ctx)
-    subject_text = _format_rich_text(letter.subject_line or tpl["subject_line"], ctx)
+    title_text = _format_rich_text((letter.letter_title if letter else None) or tpl["letter_title"], ctx)
+    subject_text = _format_rich_text((letter.subject_line if letter else None) or tpl["subject_line"], ctx)
     opening_html = _format_rich_text(tpl["opening"], ctx)
     closing_html = _format_rich_text(tpl["closing"], ctx)
 
     sections_html = []
-    for idx, (heading, body_tpl) in enumerate(tpl["sections"]):
+    if tpl.get("use_custom_body") and tpl.get("custom_body"):
         sections_html.append(
-            f'<div class="el-clause"><h4>{_esc(heading)}</h4><p>{_format_rich_text(body_tpl, ctx)}</p></div>'
+            f'<div class="el-custom-body">{_format_rich_text(tpl["custom_body"], ctx)}</div>'
         )
-    custom_text = (letter.custom_clauses or "").strip()
-    if custom_text:
-        next_num = len(tpl["sections"]) + 1
-        sections_html.append(
-            f'<div class="el-clause"><h4>{next_num}. Special Terms &amp; Conditions</h4>'
-            f'<p>{_format_rich_text(custom_text, ctx)}</p></div>'
-        )
+    else:
+        for idx, sec in enumerate(tpl.get("sections") or []):
+            if isinstance(sec, (list, tuple)) and len(sec) >= 2:
+                heading, body_tpl = sec[0], sec[1]
+            elif isinstance(sec, (list, tuple)) and len(sec) == 1:
+                heading, body_tpl = f"{idx+1}. Clause", sec[0]
+            else:
+                heading, body_tpl = f"{idx+1}. Clause", str(sec)
+            sections_html.append(
+                f'<div class="el-clause"><h4>{_esc(heading)}</h4><p>{_format_rich_text(body_tpl, ctx)}</p></div>'
+            )
+        custom_text = ((letter.custom_clauses if letter else None) or "").strip()
+        if custom_text:
+            next_num = len(tpl.get("sections") or []) + 1
+            sections_html.append(
+                f'<div class="el-clause"><h4>{next_num}. Special Terms &amp; Conditions</h4>'
+                f'<p>{_format_rich_text(custom_text, ctx)}</p></div>'
+            )
+        extra_dept = (tpl.get("extra_clause") or "").strip()
+        if extra_dept:
+            next_num = len(tpl.get("sections") or []) + (2 if custom_text else 1)
+            sections_html.append(
+                f'<div class="el-clause"><h4>{next_num}. Department Terms &amp; Protocols</h4>'
+                f'<p>{_format_rich_text(extra_dept, ctx)}</p></div>'
+            )
 
     comp_rows_html = "".join(
         f'<tr><td>{_esc(name)}</td><td style="text-align:right;font-family:ui-monospace,Menlo,monospace">{_esc(_fmt_money(amt, currency))}</td></tr>'

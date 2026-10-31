@@ -17,6 +17,7 @@ const NAV = [
         id: "organisation-group", label: "Organisation", icon: "org",
         children: [
           { id: "organisation", label: "Departments & structure", subTab: "departments" },
+          { id: "organisation", label: "Department heads", subTab: "heads" },
           { id: "organisation", label: "Designations", subTab: "designations" },
         ],
       },

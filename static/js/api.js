@@ -133,4 +133,16 @@ const Store = {
     const e = this.meta.employees.find(x => x.id === id);
     return e ? e.name : "—";
   },
+  deptHeads() {
+    if (!this.meta || !this.meta.department_heads) return [];
+    return this.meta.department_heads.filter(h => h.status !== "inactive" && (h.role_type === "head" || h.role_type === "md"));
+  },
+  deptAssistants() {
+    if (!this.meta || !this.meta.department_heads) return [];
+    return this.meta.department_heads.filter(h => h.status !== "inactive" && (h.role_type === "assistant" || h.role_type === "head"));
+  },
+  allLeadership() {
+    if (!this.meta || !this.meta.department_heads) return [];
+    return this.meta.department_heads;
+  },
 };
