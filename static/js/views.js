@@ -20,6 +20,45 @@ function roleOptions() {
   return optionsFrom((Store.meta && Store.meta.roles) || [], "name", "id");
 }
 
+function deptHeadOptions(currentHeadId) {
+  const heads = (Store.meta && Store.meta.department_heads) || [];
+  const valid = heads.filter(h => h.status !== "inactive" && (h.role_type === "head" || h.role_type === "md"));
+  const seenEmpIds = new Set();
+  const opts = [];
+  for (const h of valid) {
+    if (!seenEmpIds.has(h.employee_id)) {
+      seenEmpIds.add(h.employee_id);
+      const tag = h.role_type === "md" ? " [MD]" : (h.title ? " [" + h.title + "]" : " [HOD]");
+      opts.push({ value: h.employee_id, label: (h.name || "Employee #" + h.employee_id) + tag });
+    }
+  }
+  if (currentHeadId && !seenEmpIds.has(currentHeadId)) {
+    const empName = Store.employeeName(currentHeadId);
+    opts.unshift({ value: currentHeadId, label: empName + " [Current Head]" });
+  }
+  return opts;
+}
+
+function deptAssistantOptions(currentAssistantId) {
+  const heads = (Store.meta && Store.meta.department_heads) || [];
+  const valid = heads.filter(h => h.status !== "inactive" && (h.role_type === "assistant" || h.role_type === "head"));
+  const seenEmpIds = new Set();
+  const opts = [];
+  for (const h of valid) {
+    if (!seenEmpIds.has(h.employee_id)) {
+      seenEmpIds.add(h.employee_id);
+      const tag = h.role_type === "assistant" ? (h.title ? " [" + h.title + "]" : " [Assistant]") : " [Deputy HOD]";
+      opts.push({ value: h.employee_id, label: (h.name || "Employee #" + h.employee_id) + tag });
+    }
+  }
+  if (currentAssistantId && !seenEmpIds.has(currentAssistantId)) {
+    const empName = Store.employeeName(currentAssistantId);
+    opts.unshift({ value: currentAssistantId, label: empName + " [Current Assistant]" });
+  }
+  return opts;
+}
+
+
 function todayRecord(rows) {
   const t = todayISO();
   return rows.find(r => (r.work_date || "").slice(0, 10) === t);
@@ -766,13 +805,14 @@ Views.organisation = async function (root, params) {
   }
   root.innerHTML = pageHead("Organisation", "Loading structure…") + spinners(3);
   try {
-    const [deptRes, desRes, gradeRes, chartRes, empRes, branchRes] = await Promise.all([
+    const [deptRes, desRes, gradeRes, chartRes, empRes, branchRes, headRes] = await Promise.all([
       API.get("/departments", { per_page: 200 }), API.get("/designations", { per_page: 200 }),
       API.get("/grades", { per_page: 100 }), API.get("/org-chart"),
       API.get("/employees", { per_page: 500 }), API.get("/branches", { per_page: 100 }),
+      API.get("/department-heads", { per_page: 200 }),
     ]);
     const depts = deptRes.data, desigs = desRes.data, grades = gradeRes.data, chartData = chartRes.data;
-    const employees = empRes.data, branches = branchRes.data;
+    const employees = empRes.data, branches = branchRes.data, deptHeads = (headRes && headRes.data) || [];
     const canEdit = Store.canManage();
     const countByDept = {};
     employees.forEach(e => { countByDept[e.department_id] = (countByDept[e.department_id] || 0) + 1; });
@@ -781,7 +821,7 @@ Views.organisation = async function (root, params) {
       return { ...r, department_name: d ? d.name : "—" };
     });
 
-    const tabs = [["departments", "Departments"], ["designations", "Designations"], ["grades", "Grades & bands"], ["branches", "Locations"], ["chart", "Org chart"]];
+    const tabs = [["departments", "Departments"], ["heads", "Department heads"], ["designations", "Designations"], ["grades", "Grades & bands"], ["branches", "Locations"], ["chart", "Org chart"]];
     let body = "";
     if (orgTab.tab === "departments") {
       body = renderTable({
@@ -789,7 +829,24 @@ Views.organisation = async function (root, params) {
         exportName: "departments",
         columns: [
           { label: "Department", key: "name", render: r => '<b>' + esc(r.name) + '</b>' + (r.code ? ' <span class="pill-tag">' + esc(r.code) + '</span>' : "") },
-          { label: "Head", sortValue: r => Store.employeeName(r.head_id), render: r => esc(Store.employeeName(r.head_id)) },
+          {
+          label: "Leadership (HOD & Asst)",
+          render: r => {
+            const headName = Store.employeeName(r.head_id);
+            const asstName = Store.employeeName(r.assistant_head_id);
+            let h = '<div style="display:flex;flex-direction:column;gap:3px">';
+            if (r.head_id) {
+              h += '<div class="row" style="gap:6px"><span class="chip chip-teal chip-plain" style="font-size:10px;padding:1px 6px">HOD</span><b>' + esc(headName) + '</b></div>';
+            } else {
+              h += '<div class="tiny muted">HOD: <i>Unassigned</i></div>';
+            }
+            if (r.assistant_head_id) {
+              h += '<div class="row" style="gap:6px"><span class="chip chip-blue chip-plain" style="font-size:10px;padding:1px 6px">Asst</span><span>' + esc(asstName) + '</span></div>';
+            }
+            h += '</div>';
+            return h;
+          }
+        },
           { label: "Location", key: "branch_name", render: r => esc(r.branch_name || "—") },
           { label: "Cost centre", key: "cost_centre", render: r => '<span class="mono tiny">' + esc(r.cost_centre || "—") + '</span>' },
           { label: "Headcount", sortValue: r => countByDept[r.id] || 0, render: r => '<b>' + (countByDept[r.id] || 0) + '</b>' },
@@ -805,7 +862,97 @@ Views.organisation = async function (root, params) {
         ],
         rows: depts, emptyTitle: "No departments",
       }) + '<div class="grid grid-3" style="margin-top:18px">' + depts.map(d =>
-        '<div class="card card-pad"><div class="row-between"><div class="row">' + '<div class="kpi-icon teal" style="width:34px;height:34px">' + icon("building", 16) + '</div><div><b>' + esc(d.name) + '</b><div class="tiny muted">Head: ' + esc(Store.employeeName(d.head_id)) + '</div></div></div><span class="chip chip-teal chip-plain">' + (countByDept[d.id] || 0) + ' people</span></div></div>').join("") + '</div>';
+        '<div class="card card-pad"><div class="row-between"><div class="row">' + '<div class="kpi-icon teal" style="width:34px;height:34px">' + icon("building", 16) + '</div><div><b>' + esc(d.name) + '</b><div class="tiny muted">Head: ' + esc(Store.employeeName(d.head_id)) + '</div>' + (d.assistant_head_id ? '<div class="tiny muted">Assistant: ' + esc(Store.employeeName(d.assistant_head_id)) + '</div>' : '') + '</div></div><span class="chip chip-teal chip-plain">' + (countByDept[d.id] || 0) + ' people</span></div></div>').join("") + '</div>';
+    } else if (orgTab.tab === "heads") {
+      const totalHeads = deptHeads.filter(h => h.role_type === "head").length;
+      const totalAssts = deptHeads.filter(h => h.role_type === "assistant").length;
+      const totalMds = deptHeads.filter(h => h.role_type === "md").length;
+      const deptsWithHead = depts.filter(d => d.head_id).length;
+      const kpiCards = '<div class="stat-strip" style="margin-bottom:18px">'
+        + '<div class="item"><span>Department heads</span><b>' + totalHeads + '</b></div>'
+        + '<div class="item"><span>Department assistants</span><b>' + totalAssts + '</b></div>'
+        + '<div class="item"><span>Managing Director</span><b>' + totalMds + '</b></div>'
+        + '<div class="item"><span>Departments covered</span><b>' + deptsWithHead + ' / ' + depts.length + '</b></div>'
+        + '</div>';
+      body = kpiCards + renderTable({
+        id: "org-dept-heads",
+        exportName: "department-heads",
+        filters: [
+          { key: "role_type", label: "Role type" },
+          { key: "status", label: "Status" },
+        ],
+        columns: [
+          {
+            label: "Leader",
+            render: r => {
+              const emp = employees.find(e => e.id === r.employee_id);
+              const name = r.employee_name || (emp ? emp.full_name : "") || r.name || "Leader #" + r.id;
+              const sub = (emp ? emp.employee_no : "") || r.employee_no || "";
+              return '<div class="person">' + avatarHTML(name, "avatar-sm", "", emp ? emp.photo_url : null) +
+                '<div><b>' + esc(name) + '</b>' + (sub ? '<span>' + esc(sub) + '</span>' : '') + '</div></div>';
+            }
+          },
+          {
+            label: "Role",
+            key: "role_type",
+            render: r => {
+              if (r.role_type === "md") return '<span class="chip chip-purple">Managing Director</span>';
+              if (r.role_type === "head") return '<span class="chip chip-teal">Department Head</span>';
+              return '<span class="chip chip-blue">Department Assistant</span>';
+            }
+          },
+          {
+            label: "Leadership title",
+            key: "title",
+            render: r => '<b>' + esc(r.title || "—") + '</b>' + (r.notes ? '<div class="tiny muted" style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(r.notes) + '">' + esc(r.notes) + '</div>' : '')
+          },
+          {
+            label: "Primary dept",
+            render: r => {
+              const d = depts.find(x => x.id === r.department_id);
+              return d ? '<span class="pill-tag">' + esc(d.name) + '</span>' : '<span class="tiny muted">Cross-dept / MD</span>';
+            }
+          },
+          {
+            label: "Mapped departments",
+            render: r => {
+              const mapped = [];
+              depts.forEach(d => {
+                if (d.head_id === r.employee_id) mapped.push('<span class="chip chip-teal chip-plain" style="margin:2px;font-size:10.5px">' + esc(d.name) + ' (HOD)</span>');
+                else if (d.assistant_head_id === r.employee_id) mapped.push('<span class="chip chip-blue chip-plain" style="margin:2px;font-size:10.5px">' + esc(d.name) + ' (Asst)</span>');
+              });
+              return mapped.length ? '<div style="display:flex;flex-wrap:wrap;gap:4px">' + mapped.join("") + '</div>' : '<span class="tiny muted">Not mapped yet</span>';
+            }
+          },
+          {
+            label: "Reports to",
+            render: r => {
+              if (!r.reports_to_id) return '<span class="tiny muted">—</span>';
+              const boss = deptHeads.find(h => h.id === r.reports_to_id);
+              return boss ? esc(boss.name || boss.employee_name || boss.title || "Leader #" + boss.id) : "—";
+            }
+          },
+          {
+            label: "Contact",
+            render: r => '<div class="tiny">' + (r.email ? '<div>' + esc(r.email) + '</div>' : '') + (r.phone ? '<div>' + esc(r.phone) + '</div>' : (!r.email ? '<span class="muted">—</span>' : '')) + '</div>'
+          },
+          {
+            label: "Status",
+            key: "status",
+            render: r => '<span class="chip chip-' + (r.status === 'inactive' ? 'amber' : 'teal') + '">' + esc(r.status || 'active') + '</span>'
+          },
+          {
+            label: "", class: "right", sortable: false,
+            render: r => canEdit
+              ? '<div class="row" style="gap:4px;justify-content:flex-end">'
+                + '<button class="icon-btn" style="width:28px;height:28px" data-edit-head="' + r.id + '" title="Edit leadership">' + icon("edit", 13) + '</button>'
+                + '<button class="icon-btn" style="width:28px;height:28px;color:var(--red)" data-del-head="' + r.id + '" title="Remove leadership">' + icon("trash", 13) + '</button>'
+                + '</div>'
+              : ""
+          },
+        ],
+        rows: deptHeads, emptyTitle: "No departmental leaders designated yet",
+      });
     } else if (orgTab.tab === "designations") {
       body = renderTable({
         id: "org-designations",
@@ -841,7 +988,15 @@ Views.organisation = async function (root, params) {
           { label: "Min salary", sortValue: r => Number(r.min_salary || 0), render: r => money(r.min_salary) },
           { label: "Max salary", sortValue: r => Number(r.max_salary || 0), render: r => money(r.max_salary) },
           { label: "Employees", sortValue: r => employees.filter(e => e.grade_id === r.id).length, render: r => '<b>' + employees.filter(e => e.grade_id === r.id).length + '</b>' },
-          { label: "", class: "right", sortable: false, render: r => canEdit ? '<button class="icon-btn" style="width:28px;height:28px" data-edit-grade="' + r.id + '">' + icon("edit", 13) + '</button>' : "" },
+          {
+            label: "", class: "right", sortable: false,
+            render: r => canEdit
+              ? '<div class="row" style="gap:4px;justify-content:flex-end">'
+                + '<button class="icon-btn" style="width:28px;height:28px" data-edit-grade="' + r.id + '" title="Edit grade">' + icon("edit", 13) + '</button>'
+                + '<button class="icon-btn" style="width:28px;height:28px;color:var(--red)" data-del-grade="' + r.id + '" title="Delete grade">' + icon("trash", 13) + '</button>'
+                + '</div>'
+              : ""
+          },
         ],
         rows: grades, emptyTitle: "No grades",
       });
@@ -856,7 +1011,15 @@ Views.organisation = async function (root, params) {
           { label: "Code", key: "code", render: r => '<span class="mono tiny">' + esc(r.code || "—") + '</span>' },
           { label: "Address", key: "address", render: r => esc(r.address || "—") },
           { label: "People", sortValue: r => employees.filter(e => e.branch_id === r.id).length, render: r => '<b>' + employees.filter(e => e.branch_id === r.id).length + '</b>' },
-          { label: "", class: "right", sortable: false, render: r => canEdit ? '<button class="icon-btn" style="width:28px;height:28px" data-edit-branch="' + r.id + '">' + icon("edit", 13) + '</button>' : "" },
+          {
+            label: "", class: "right", sortable: false,
+            render: r => canEdit
+              ? '<div class="row" style="gap:4px;justify-content:flex-end">'
+                + '<button class="icon-btn" style="width:28px;height:28px" data-edit-branch="' + r.id + '" title="Edit location">' + icon("edit", 13) + '</button>'
+                + '<button class="icon-btn" style="width:28px;height:28px;color:var(--red)" data-del-branch="' + r.id + '" title="Delete location">' + icon("trash", 13) + '</button>'
+                + '</div>'
+              : ""
+          },
         ],
         rows: branches, emptyTitle: "No locations",
       });
@@ -879,8 +1042,8 @@ Views.organisation = async function (root, params) {
         + (chartData.length ? chartData.map(buildNode).join('<div style="height:20px"></div>') : '<p class="small muted">No reporting lines defined.</p>') + '</div></div>';
     }
 
-    root.innerHTML = pageHead("Organisation", "Departments, job architecture, locations and reporting lines.", canEdit ? '<button class="btn btn-accent" id="org-add">' + icon("plus", 15) + ' Add ' + orgTab.tab.replace(/s$/, "") + '</button>' : "", "Structure")
-      + '<div class="stat-strip" style="margin-bottom:18px"><div class="item"><span>Departments</span><b>' + depts.length + '</b></div><div class="item"><span>Designations</span><b>' + desigs.length + '</b></div><div class="item"><span>Locations</span><b>' + branches.length + '</b></div><div class="item"><span>Active people</span><b>' + employees.length + '</b></div></div>'
+    root.innerHTML = pageHead("Organisation", "Departments, leadership hierarchy, job architecture and reporting structure.", canEdit ? '<button class="btn btn-accent" id="org-add">' + icon("plus", 15) + ' ' + (orgTab.tab === "heads" ? "Designate leader" : "Add " + orgTab.tab.replace(/s$/, "")) + '</button>' : "", "Structure")
+      + '<div class="stat-strip" style="margin-bottom:18px"><div class="item"><span>Departments</span><b>' + depts.length + '</b></div><div class="item"><span>Leadership</span><b>' + deptHeads.length + '</b></div><div class="item"><span>Designations</span><b>' + desigs.length + '</b></div><div class="item"><span>Locations</span><b>' + branches.length + '</b></div><div class="item"><span>Active people</span><b>' + employees.length + '</b></div></div>'
       + '<div class="tabs" style="margin-bottom:18px">' + tabs.map(t => '<button class="tab ' + (orgTab.tab === t[0] ? "active" : "") + '" data-otab="' + t[0] + '">' + t[1] + '</button>').join("") + '</div>'
       + '<div class="page-enter">' + body + '</div>';
 
@@ -890,6 +1053,7 @@ Views.organisation = async function (root, params) {
       add.style.display = orgTab.tab === "chart" ? "none" : "inline-flex";
       add.onclick = () => {
         if (orgTab.tab === "departments") openDeptForm();
+        else if (orgTab.tab === "heads") openDeptHeadForm();
         else if (orgTab.tab === "designations") openDesigForm();
         else if (orgTab.tab === "grades") openGradeForm();
         else openBranchForm();
@@ -903,6 +1067,16 @@ Views.organisation = async function (root, params) {
       const deptId = Number(b.dataset.delDept);
       const dept = depts.find(d => d.id === deptId);
       if (dept) deleteDepartment(dept, countByDept[deptId] || 0);
+    });
+    onDelegate(root, "click", "[data-edit-head]", (b) => {
+      const headId = Number(b.dataset.editHead);
+      const h = deptHeads.find(d => d.id === headId);
+      if (h) openDeptHeadForm(h);
+    });
+    onDelegate(root, "click", "[data-del-head]", (b) => {
+      const headId = Number(b.dataset.delHead);
+      const h = deptHeads.find(d => d.id === headId);
+      if (h) deleteDeptHead(h);
     });
     onDelegate(root, "click", "[data-edit-desig]", (b) => {
       const desigId = Number(b.dataset.editDesig);
@@ -918,8 +1092,36 @@ Views.organisation = async function (root, params) {
         deleteDesignation(des, sc);
       }
     });
-    onDelegate(root, "click", "[data-edit-grade]", (b) => openGradeForm(grades.find(d => d.id === Number(b.dataset.editGrade))));
-    onDelegate(root, "click", "[data-edit-branch]", (b) => openBranchForm(branches.find(d => d.id === Number(b.dataset.editBranch))));
+    onDelegate(root, "click", "[data-edit-grade]", (b) => {
+      const gId = Number(b.dataset.editGrade);
+      const gr = grades.find(d => d.id === gId);
+      const empCount = employees.filter(e => e.grade_id === gId).length;
+      openGradeForm(gr, empCount);
+    });
+    onDelegate(root, "click", "[data-del-grade]", (b) => {
+      const gId = Number(b.dataset.delGrade);
+      const gr = grades.find(d => d.id === gId);
+      if (gr) {
+        const empCount = employees.filter(e => e.grade_id === gId).length;
+        deleteGrade(gr, empCount);
+      }
+    });
+    onDelegate(root, "click", "[data-edit-branch]", (b) => {
+      const bId = Number(b.dataset.editBranch);
+      const br = branches.find(d => d.id === bId);
+      const empCount = employees.filter(e => e.branch_id === bId).length;
+      const deptCount = depts.filter(d => d.branch_id === bId).length;
+      openBranchForm(br, empCount, deptCount);
+    });
+    onDelegate(root, "click", "[data-del-branch]", (b) => {
+      const bId = Number(b.dataset.delBranch);
+      const br = branches.find(d => d.id === bId);
+      if (br) {
+        const empCount = employees.filter(e => e.branch_id === bId).length;
+        const deptCount = depts.filter(d => d.branch_id === bId).length;
+        deleteBranch(br, empCount, deptCount);
+      }
+    });
     onDelegate(root, "click", "[data-org-emp]", (el) => { if (el.dataset.orgEmpl || el.dataset.orgEmp) go("employees/" + el.dataset.orgEmp); });
     const ocs = root.querySelector("#org-chart-search");
     if (ocs) {
@@ -929,6 +1131,65 @@ Views.organisation = async function (root, params) {
     root.innerHTML = pageHead("Organisation", "Structure unavailable") + emptyState("Could not load organisation", e.message, "alert");
   }
 };
+
+function deleteDeptHead(head) {
+  confirmDialog(
+    "Remove leadership designation",
+    'Are you sure you want to remove "' + (head.employee_name || head.name || "this leader") + '" (' + (head.title || head.role_type) + ') from departmental leadership? Any departments mapped to them as Head or Assistant will be unassigned.',
+    async () => {
+      await API.delete("/department-heads/" + head.id);
+      toast("Leadership designation removed", "success");
+      await Store.loadMeta();
+      navigate();
+    },
+    { danger: true, confirmLabel: "Remove designation" }
+  );
+}
+
+function openDeptHeadForm(existing, onSaved) {
+  const h = existing || {};
+  const currentRole = h.role_type || "head";
+  const leadOpts = [
+    { value: "head", label: "Department Head (HOD)" },
+    { value: "assistant", label: "Department Assistant / Deputy" },
+    { value: "md", label: "Managing Director (MD)" },
+  ];
+  const allHeads = (Store.meta && Store.meta.department_heads) || [];
+  const reportsToOpts = allHeads
+    .filter(x => !existing || x.id !== existing.id)
+    .map(x => ({ value: x.id, label: (x.name || "Leader #" + x.id) + (x.title ? " (" + x.title + ")" : "") }));
+
+  formModal({
+    title: existing ? "Edit departmental leadership" : "Designate Department Head / Assistant",
+    sub: "Select an employee to designate as Department Head, Assistant, or Managing Director.",
+    wide: true,
+    extraFooter: existing && Store.canManage() ? '<button type="button" class="btn btn-ghost" id="form-delete-btn" style="margin-right:auto;color:var(--red)">' + icon("trash", 13) + ' Remove designation</button>' : '',
+    onDelete: existing ? () => {
+      closeModal();
+      deleteDeptHead(existing);
+    } : null,
+    fields: [
+      { name: "employee_id", label: "Employee", type: "select", options: employeeOptions(), value: h.employee_id, required: true, placeholder: "Select employee…" },
+      { name: "role_type", label: "Leadership role type", type: "select", options: leadOpts, value: currentRole, required: true },
+      { name: "title", label: "Leadership title", value: h.title, placeholder: "e.g. Head of Operations / Deputy HOD / Managing Director" },
+      { name: "department_id", label: "Primary Department (optional)", type: "select", options: deptOptions(), value: h.department_id, placeholder: "None (Cross-departmental or MD)" },
+      { name: "reports_to_id", label: "Reports to (Leadership hierarchy)", type: "select", options: reportsToOpts, value: h.reports_to_id, placeholder: "Reports to Managing Director / Board" },
+      { name: "email", label: "Direct executive email", type: "email", value: h.email, placeholder: "leader@company.com" },
+      { name: "phone", label: "Direct phone / extension", value: h.phone, placeholder: "+233 …" },
+      { name: "status", label: "Status", type: "select", options: ["active", "inactive"], value: h.status || "active" },
+      { name: "notes", label: "Mandate / Delegation notes", type: "textarea", value: h.notes, full: true, placeholder: "Areas of supervision, authority limits, or delegation notes…" },
+    ],
+    onSubmit: async (data) => {
+      if (!data.department_id) delete data.department_id;
+      if (!data.reports_to_id) delete data.reports_to_id;
+      if (existing) await API.put("/department-heads/" + existing.id, data);
+      else await API.post("/department-heads", data);
+      await Store.loadMeta();
+      if (onSaved) onSaved();
+      else navigate();
+    },
+  });
+}
 
 function deleteDepartment(dept, headcount) {
   if (headcount > 0) {
@@ -976,23 +1237,89 @@ function deleteDesignation(desig, staffCount) {
   );
 }
 
+function deleteGrade(grade, empCount) {
+  if (empCount > 0) {
+    confirmDialog(
+      "Cannot delete grade",
+      'Pay grade "' + (grade.name || "this grade") + '" is currently assigned to ' + empCount + ' active employee(s). Please reassign their pay grade first before deleting.',
+      () => {},
+      { hideCancel: true, confirmLabel: "Understood" }
+    );
+    return;
+  }
+  confirmDialog(
+    "Delete grade",
+    'Are you sure you want to permanently delete pay grade "' + (grade.name || "") + '"? This action cannot be undone.',
+    async () => {
+      await API.delete("/grades/" + grade.id);
+      toast("Grade deleted successfully", "success");
+      await Store.loadMeta();
+      navigate();
+    },
+    { danger: true, confirmLabel: "Delete grade" }
+  );
+}
+
+function deleteBranch(branch, empCount, deptCount) {
+  if (empCount > 0) {
+    confirmDialog(
+      "Cannot delete location",
+      'Location "' + (branch.name || "this location") + '" currently has ' + empCount + ' active employee(s) assigned. Please reassign their work location first before deleting.',
+      () => {},
+      { hideCancel: true, confirmLabel: "Understood" }
+    );
+    return;
+  }
+  if (deptCount > 0) {
+    confirmDialog(
+      "Cannot delete location",
+      'Location "' + (branch.name || "this location") + '" is currently assigned to ' + deptCount + ' department(s). Please reassign them first before deleting.',
+      () => {},
+      { hideCancel: true, confirmLabel: "Understood" }
+    );
+    return;
+  }
+  confirmDialog(
+    "Delete location",
+    'Are you sure you want to permanently delete location "' + (branch.name || "") + '"? This action cannot be undone.',
+    async () => {
+      await API.delete("/branches/" + branch.id);
+      toast("Location deleted successfully", "success");
+      await Store.loadMeta();
+      navigate();
+    },
+    { danger: true, confirmLabel: "Delete location" }
+  );
+}
+
 function openDeptForm(existing, headcount) {
   const d = existing || {};
   formModal({
     title: existing ? "Edit department / unit" : "Add department or sub-unit",
     sub: existing ? d.name : "Group the organisation into departments, sub-departments and teams",
     wide: true,
-    extraFooter: existing && Store.canManage() ? '<button type="button" class="btn btn-ghost" id="form-delete-btn" style="margin-right:auto;color:var(--red)">' + icon("trash", 13) + ' Delete</button>' : '',
     onDelete: existing ? () => {
       closeModal();
       deleteDepartment(existing, headcount !== undefined ? headcount : 0);
     } : null,
+    extraFooter: (existing && Store.canManage() ? '<button type="button" class="btn btn-ghost" id="form-delete-btn" style="margin-right:auto;color:var(--red)">' + icon("trash", 13) + ' Delete</button>' : '') + (Store.canManage() ? '<button type="button" class="btn btn-ghost" id="form-new-head-btn" style="' + (existing ? '' : 'margin-right:auto;') + 'color:var(--accent)">' + icon("plus", 13) + ' Designate leader</button>' : ''),
+    onMount: (card) => {
+      const btn = card.querySelector("#form-new-head-btn");
+      if (btn) {
+        btn.onclick = () => {
+          openDeptHeadForm(null, () => {
+            openDeptForm(existing, headcount);
+          });
+        };
+      }
+    },
     fields: [
       { name: "name", label: "Department / Unit name", required: true, value: d.name },
       { name: "code", label: "Code", value: d.code, placeholder: "OPS / OPS-LOG" },
       { name: "parent_id", label: "Parent (leave blank for top-level)", type: "select", options: deptOptions().filter(o => !existing || String(o.value) !== String(existing.id)), value: d.parent_id, placeholder: "Top level department" },
       { name: "branch_id", label: "Branch / Location", type: "select", options: optionsFrom(Store.meta.branches, "name", "id"), value: d.branch_id },
-      { name: "head_id", label: "Department head", type: "select", options: employeeOptions(), value: d.head_id, placeholder: "Unassigned" },
+      { name: "head_id", label: "Department head (HOD / MD)", type: "select", options: deptHeadOptions(d.head_id), value: d.head_id, placeholder: "Select designated HOD or MD…", hint: "Only designated heads & MD appear here (manage in Department heads tab)" },
+      { name: "assistant_head_id", label: "Department assistant / Deputy", type: "select", options: deptAssistantOptions(d.assistant_head_id), value: d.assistant_head_id, placeholder: "Select designated assistant…", hint: "Reusable across departments and units" },
       { name: "email", label: "Shared inbox", type: "email", value: d.email, placeholder: "operations@meridian.gh" },
       { name: "phone", label: "Phone", value: d.phone },
       { name: "cost_centre", label: "Cost centre", value: d.cost_centre, placeholder: "CC-OPS" },
@@ -1003,6 +1330,7 @@ function openDeptForm(existing, headcount) {
     ],
     onSubmit: async (data) => {
       if (!data.head_id) delete data.head_id;
+      if (!data.assistant_head_id) delete data.assistant_head_id;
       if (!data.parent_id) delete data.parent_id;
       ["target_headcount", "budget"].forEach(k => { if (data[k] === "" || data[k] === null || data[k] === undefined) delete data[k]; });
       data.company_id = 1;
@@ -1036,10 +1364,15 @@ function openDesigForm(existing, staffCount) {
   });
 }
 
-function openGradeForm(existing) {
+function openGradeForm(existing, empCount) {
   const g = existing || {};
   formModal({
     title: existing ? "Edit grade" : "Add grade",
+    extraFooter: existing && Store.canManage() ? '<button type="button" class="btn btn-ghost" id="form-delete-btn" style="margin-right:auto;color:var(--red)">' + icon("trash", 13) + ' Delete</button>' : '',
+    onDelete: existing ? () => {
+      closeModal();
+      deleteGrade(existing, empCount !== undefined ? empCount : 0);
+    } : null,
     fields: [
       { name: "name", label: "Grade name", required: true, value: g.name },
       { name: "level", label: "Level", type: "number", value: g.level || 1, min: 1 },
@@ -1056,10 +1389,15 @@ function openGradeForm(existing) {
   });
 }
 
-function openBranchForm(existing) {
+function openBranchForm(existing, empCount, deptCount) {
   const b = existing || {};
   formModal({
     title: existing ? "Edit location" : "Add location",
+    extraFooter: existing && Store.canManage() ? '<button type="button" class="btn btn-ghost" id="form-delete-btn" style="margin-right:auto;color:var(--red)">' + icon("trash", 13) + ' Delete</button>' : '',
+    onDelete: existing ? () => {
+      closeModal();
+      deleteBranch(existing, empCount !== undefined ? empCount : 0, deptCount !== undefined ? deptCount : 0);
+    } : null,
     fields: [
       { name: "name", label: "Branch name", required: true, value: b.name },
       { name: "code", label: "Code", value: b.code },

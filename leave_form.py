@@ -21,7 +21,52 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
-from models import db, LeaveRequest, Company, Employee, LeaveBalance
+from models import db, LeaveRequest, Company, Employee, LeaveBalance, Department, DepartmentHead
+
+
+def resolve_form_approvers(lr):
+    """Resolve HoD (department-mapped), Accountant (fixed), and MD (fixed) for a leave request."""
+    emp = lr.employee
+
+    # MD (fixed organization-wide)
+    md_emp = lr.md_approver or (emp.md if emp else None)
+    if not md_emp:
+        dh_md = DepartmentHead.query.filter_by(role_type="md", status="active").first()
+        if dh_md and dh_md.employee and not dh_md.employee.deleted_at:
+            md_emp = dh_md.employee
+        elif emp:
+            md_emp = Employee.query.filter(Employee.deleted_at.is_(None)).order_by(Employee.id.asc()).first()
+
+    # Accountant (fixed organization-wide)
+    acc_emp = lr.accountant_approver or (emp.accountant if emp else None)
+    if not acc_emp:
+        dh_acc = DepartmentHead.query.filter(DepartmentHead.role_type == "accountant", DepartmentHead.status == "active").first()
+        if dh_acc and dh_acc.employee and not dh_acc.employee.deleted_at:
+            acc_emp = dh_acc.employee
+        else:
+            acc_cand = (Employee.query.filter(Employee.deleted_at.is_(None), Employee.status.in_(["active", "probation"]))
+                        .join(Department, Employee.department_id == Department.id)
+                        .filter(Department.name.ilike("%finance%"))
+                        .order_by(Employee.id.asc()).first())
+            acc_emp = acc_cand or db.session.get(Employee, 4)
+
+    # HoD (mapped dynamically to employee's department head)
+    hod_emp = lr.hod_approver or (emp.hod if emp else None)
+    if not hod_emp and emp:
+        if emp.department_id:
+            dh = DepartmentHead.query.filter_by(department_id=emp.department_id, role_type="head", status="active").first()
+            if dh and dh.employee and not dh.employee.deleted_at:
+                hod_emp = dh.employee if dh.employee_id != emp.id else md_emp
+            else:
+                dept = emp.department or db.session.get(Department, emp.department_id)
+                if dept and dept.head_id:
+                    head = db.session.get(Employee, dept.head_id)
+                    if head and not head.deleted_at:
+                        hod_emp = head if head.id != emp.id else md_emp
+        if not hod_emp:
+            hod_emp = emp.manager if emp.manager and not emp.manager.deleted_at and emp.manager_id != emp.id else md_emp
+
+    return hod_emp, acc_emp, md_emp
 
 
 def _esc(val):
@@ -127,18 +172,28 @@ def build_leave_form_html(lr, standalone=False):
     # Format taken days cleanly (e.g. 5 instead of 5.0)
     taken_display = int(taken_days) if taken_days == int(taken_days) else taken_days
 
+    # Approvers resolution (dynamically mapped HoD and fixed Accountant & MD)
+    target_hod, target_acc, target_md = resolve_form_approvers(lr)
+
     # Signatures
-    def sig_html(approver_emp, sig_str, date_val):
+    def sig_html(approver_emp, sig_str, date_val, target_emp=None):
         date_str = _fmt_date(date_val)
         sig_markup = ""
-        if approver_emp and approver_emp.signature_url:
-            sig_markup = f'<img src="{_esc(approver_emp.signature_url)}" style="max-height:36px;max-width:160px;object-fit:contain;vertical-align:bottom">'
-        elif sig_str:
-            sig_markup = f'<span style="font-family:\'Brush Script MT\',cursive;font-size:20px;color:#14312e">{_esc(sig_str)}</span>'
-        elif approver_emp:
-            sig_markup = f'<span style="font-weight:600;font-size:12px">{_esc(approver_emp.full_name)}</span>'
+        if date_val:
+            if approver_emp and approver_emp.signature_url:
+                sig_markup = f'<img src="{_esc(approver_emp.signature_url)}" style="max-height:36px;max-width:160px;object-fit:contain;vertical-align:bottom">'
+            elif sig_str:
+                sig_markup = f'<span style="font-family:\'Brush Script MT\',cursive;font-size:20px;color:#14312e">{_esc(sig_str)}</span>'
+            elif approver_emp:
+                sig_markup = f'<span style="font-weight:600;font-size:12px">{_esc(approver_emp.full_name)}</span>'
+            else:
+                sig_markup = '<span style="color:#0f766e;font-weight:600;font-size:12px">Approved</span>'
         else:
-            sig_markup = '<span style="color:#999;font-style:italic">Pending Approval</span>'
+            if target_emp:
+                sig_markup = f'<span style="color:#475569;font-size:12px">Pending Approval &mdash; <strong>{_esc(target_emp.full_name)}</strong></span>'
+            else:
+                sig_markup = '<span style="color:#94a3b8;font-style:italic">Pending Approval</span>'
+            date_str = '<span style="color:#94a3b8">&mdash;</span>'
         return sig_markup, date_str
 
     emp_sig_markup = ""
@@ -149,9 +204,9 @@ def build_leave_form_html(lr, standalone=False):
     else:
         emp_sig_markup = f'<span style="font-weight:600">{_esc(emp.full_name)}</span>'
 
-    hod_sig, hod_date = sig_html(lr.hod_approver, lr.hod_signature, lr.hod_approved_at)
-    acc_sig, acc_date = sig_html(lr.accountant_approver, lr.accountant_signature, lr.accountant_approved_at)
-    md_sig, md_date = sig_html(lr.md_approver, lr.md_signature, lr.md_approved_at)
+    hod_sig, hod_date = sig_html(lr.hod_approver, lr.hod_signature, lr.hod_approved_at, target_hod)
+    acc_sig, acc_date = sig_html(lr.accountant_approver, lr.accountant_signature, lr.accountant_approved_at, target_acc)
+    md_sig, md_date = sig_html(lr.md_approver, lr.md_signature, lr.md_approved_at, target_md)
 
     def chk(flag):
         return '<span class="lf-chk lf-chk-on">☑</span>' if flag else '<span class="lf-chk">☐</span>'
@@ -441,7 +496,7 @@ def build_leave_form_html(lr, standalone=False):
         </div>
       </div>
 
-      <div class="lf-box sub">MANAGEMENT USE ONLY</div>
+      <div class="lf-box sub">ORGANISATION USE ONLY</div>
 
       <div class="lf-approvals">
         <div class="lf-approv-head">Approved by :</div>
@@ -758,32 +813,35 @@ def build_leave_form_pdf(lr):
     elements.append(Spacer(1, 0.12 * inch))
 
     # 6. Management Use Only Section
-    elements.append(make_box("MANAGEMENT USE ONLY", font_size=10.5, height=19))
+    elements.append(make_box("ORGANISATION USE ONLY", font_size=10.5, height=19))
     elements.append(Spacer(1, 0.08 * inch))
 
-    def get_sig_flowable(approver_emp, sig_str):
-        if approver_emp and approver_emp.signature_url:
-            spath = approver_emp.signature_url.lstrip("/")
-            if os.path.exists(spath):
-                try:
-                    return Image(spath, width=1.6 * inch, height=0.4 * inch, kind="proportional")
-                except Exception:
-                    pass
-        if sig_str:
-            return Paragraph(f"<i>{sig_str}</i>", val_style)
-        if approver_emp:
-            return Paragraph(approver_emp.full_name, val_style)
-        return Paragraph("", val_style)
+    target_hod, target_acc, target_md = resolve_form_approvers(lr)
 
-    hod_emp = lr.hod_approver
-    acc_emp = lr.accountant_approver
-    md_emp = lr.md_approver
+    def get_sig_flowable(approver_emp, sig_str, date_val, target_emp):
+        if date_val:
+            if approver_emp and approver_emp.signature_url:
+                spath = approver_emp.signature_url.lstrip("/")
+                if os.path.exists(spath):
+                    try:
+                        return Image(spath, width=1.6 * inch, height=0.4 * inch, kind="proportional")
+                    except Exception:
+                        pass
+            if sig_str:
+                return Paragraph(f"<i>{sig_str}</i>", val_style)
+            if approver_emp:
+                return Paragraph(approver_emp.full_name, val_style)
+            return Paragraph("Approved", val_style)
+        else:
+            if target_emp:
+                return Paragraph(f'<font color="#475569" size="8">Pending Approval &mdash; <b>{target_emp.full_name}</b></font>', val_style)
+            return Paragraph('<font color="#94a3b8"><i>Pending Approval</i></font>', val_style)
 
     mgmt_data = [
         [Paragraph("<b>Approved by :</b>", lbl_style), Paragraph("", val_style), Paragraph("<b>Date</b>", lbl_style), Paragraph("", val_style)],
-        [Paragraph("Head of Department", lbl_style), get_sig_flowable(hod_emp, lr.hod_signature), Paragraph("", lbl_style), Paragraph(_fmt_date(lr.hod_approved_at), val_style)],
-        [Paragraph("Accountant", lbl_style), get_sig_flowable(acc_emp, lr.accountant_signature), Paragraph("", lbl_style), Paragraph(_fmt_date(lr.accountant_approved_at), val_style)],
-        [Paragraph("Managing Director", lbl_style), get_sig_flowable(md_emp, lr.md_signature), Paragraph("", lbl_style), Paragraph(_fmt_date(lr.md_approved_at), val_style)],
+        [Paragraph("Head of Department", lbl_style), get_sig_flowable(lr.hod_approver, lr.hod_signature, lr.hod_approved_at, target_hod), Paragraph("", lbl_style), Paragraph(_fmt_date(lr.hod_approved_at), val_style)],
+        [Paragraph("Accountant", lbl_style), get_sig_flowable(lr.accountant_approver, lr.accountant_signature, lr.accountant_approved_at, target_acc), Paragraph("", lbl_style), Paragraph(_fmt_date(lr.accountant_approved_at), val_style)],
+        [Paragraph("Managing Director", lbl_style), get_sig_flowable(lr.md_approver, lr.md_signature, lr.md_approved_at, target_md), Paragraph("", lbl_style), Paragraph(_fmt_date(lr.md_approved_at), val_style)],
     ]
     mgmt_table = Table(mgmt_data, colWidths=[1.6 * inch, 3.1 * inch, 0.65 * inch, 1.8 * inch])
     mgmt_table.setStyle(

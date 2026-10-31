@@ -1,11 +1,12 @@
 """Validation and referential-integrity rules for talent/lifecycle CRUD."""
 from decimal import Decimal
 from flask import request
-from models import (db, Employee, Department, Goal, Appraisal, AppraisalCycle,
+from models import (db, Employee, Department, DepartmentHead, Goal, Appraisal, AppraisalCycle,
                     JobPosting, Candidate, Application, Interview, OnboardingTask,
-                    Offboarding, Document, Policy, PolicyAck)
+                    Offboarding, Document, Policy, PolicyAck, Grade, Branch, Holiday)
 
 REQUIRED = {
+    DepartmentHead: ('employee_id', 'role_type'),
     Goal: ('title', 'employee_id'), AppraisalCycle: ('name',),
     Appraisal: ('employee_id', 'cycle_id'), JobPosting: ('title',),
     Candidate: ('first_name', 'last_name'), Application: ('job_posting_id', 'candidate_id'),
@@ -13,6 +14,7 @@ REQUIRED = {
     Offboarding: ('employee_id',), Document: ('title',), Policy: ('title',),
 }
 ENUMS = {
+    DepartmentHead: {'role_type': ('head', 'assistant', 'md'), 'status': ('active', 'inactive')},
     Goal: {'status': ('active', 'completed', 'on_hold', 'cancelled')},
     AppraisalCycle: {'status': ('open', 'closed', 'draft')},
     Appraisal: {'status': ('draft', 'self_review', 'in_review', 'completed', 'submitted')},
@@ -58,7 +60,8 @@ def validate(model, fields, obj=None):
                 raise ValueError(f'{key.replace("_", " ")} must be between {low} and {high}')
     references = {'employee_id': Employee, 'reviewer_id': Employee, 'department_id': Department,
                   'cycle_id': AppraisalCycle, 'job_posting_id': JobPosting,
-                  'candidate_id': Candidate, 'application_id': Application}
+                  'candidate_id': Candidate, 'application_id': Application,
+                  'reports_to_id': Employee, 'head_id': Employee, 'assistant_head_id': Employee}
     for key, target in references.items():
         if key in model.__table__.columns and value(key) is not None:
             record = db.session.get(target, value(key))
@@ -90,6 +93,20 @@ def deletion_conflict(model, obj):
         child, key = dependencies[model]
         if child.query.filter_by(**{key: obj.id}).first():
             return 'This record has linked records. Delete or reassign those records first.'
+    if model is Grade:
+        active_emp = Employee.query.filter(Employee.grade_id == obj.id, Employee.deleted_at.is_(None)).first()
+        if active_emp:
+            return f"Cannot delete grade '{obj.name}' because it is assigned to active employee(s). Please reassign their pay grade first."
+        Employee.query.filter_by(grade_id=obj.id).update({Employee.grade_id: None})
+    if model is Branch:
+        active_emp = Employee.query.filter(Employee.branch_id == obj.id, Employee.deleted_at.is_(None)).first()
+        if active_emp:
+            return f"Cannot delete location '{obj.name}' because it is assigned to active employee(s). Please reassign their work location first."
+        dept = Department.query.filter_by(branch_id=obj.id).first()
+        if dept:
+            return f"Cannot delete location '{obj.name}' because department '{dept.name}' is assigned to this location. Please reassign the department first."
+        Employee.query.filter_by(branch_id=obj.id).update({Employee.branch_id: None})
+        Holiday.query.filter_by(branch_id=obj.id).delete(synchronize_session=False)
     if model is Policy:
         PolicyAck.query.filter_by(policy_id=obj.id).delete(synchronize_session=False)
     return None

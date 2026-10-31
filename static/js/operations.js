@@ -34,8 +34,10 @@ const opsState = {
   storeroomFilter: "all",
   storeroomSearch: "",
   selectedHubId: null,
+  maintenanceView: "schedule", // "schedule" or "categories"
   maintenanceSearch: "",
   maintenanceStatus: "",
+  maintenanceCategory: "",
   maintenanceFrom: "",
   maintenanceTo: "",
 };
@@ -77,8 +79,11 @@ Views.operations = async function (root, params) {
       API.get("/operations/storerooms"),
       API.get("/assets", { per_page: 200 }),
       opsState.tab === "maintenance"
-        ? API.get("/operations/maintenance", maintenanceApiFilters())
-        : Promise.resolve({ data: [] }),
+        ? Promise.all([
+            API.get("/operations/maintenance", maintenanceApiFilters()),
+            API.get("/operations/maintenance/categories"),
+          ])
+        : Promise.resolve([{ data: [] }, { data: [] }]),
     ]);
 
     const dash = (dashRes && dashRes.data) || {};
@@ -86,7 +91,9 @@ Views.operations = async function (root, params) {
     const workOrders = (woRes && woRes.data) || [];
     const storerooms = (storeRes && storeRes.data) || [];
     const assets = (assetRes && assetRes.data) || [];
-    const maintenanceWorks = (maintenanceRes && maintenanceRes.data) || [];
+    const maintenanceData = Array.isArray(maintenanceRes) ? maintenanceRes : [maintenanceRes, { data: [] }];
+    const maintenanceWorks = (maintenanceData[0] && maintenanceData[0].data) || [];
+    const maintenanceCategories = (maintenanceData[1] && maintenanceData[1].data) || [];
     const canManageAssets = Store.canOperations ? (Store.canOperations() || Store.canManage()) : Store.canManage();
 
     const tabs = [
@@ -499,31 +506,68 @@ Views.operations = async function (root, params) {
 
     // ============================================================ TAB: MAINTENANCE
     } else if (opsState.tab === "maintenance") {
-      const scheduledCount = maintenanceWorks.filter(w => w.status === "scheduled").length;
-      const inProgressCount = maintenanceWorks.filter(w => w.status === "in_progress").length;
-      const completedCount = maintenanceWorks.filter(w => w.status === "completed").length;
-      const totalCharges = maintenanceWorks.reduce((sum, work) => sum + Number(work.amount || 0), 0);
+      const isCategoriesView = opsState.maintenanceView === "categories";
 
-      body = '<div class="grid grid-4" style="margin-bottom:18px">'
-        + kpiCard({ label: "Scheduled", value: scheduledCount, icon: "calendar", tone: "blue", foot: "Planned maintenance jobs" })
-        + kpiCard({ label: "In Progress", value: inProgressCount, icon: "clock", tone: "amber", foot: "Work underway" })
-        + kpiCard({ label: "Completed", value: completedCount, icon: "checkCircle", tone: "teal", foot: "Completed in this view" })
-        + kpiCard({ label: "Total Charges", value: money(totalCharges, "GHS"), icon: "wallet", tone: "purple", foot: "Based on current filters" })
+      const subTabs = '<div class="row" style="justify-content:space-between;align-items:center;margin-bottom:18px;gap:12px;flex-wrap:wrap">'
+        + '<div class="segmented" style="display:inline-flex">'
+        + '<button type="button" class="btn ' + (!isCategoriesView ? "btn-accent active" : "btn-ghost") + '" id="ops-maint-subtab-sched">'
+        + icon("calendar", 14) + ' Maintenance Schedule & Jobs (' + maintenanceWorks.length + ')</button>'
+        + '<button type="button" class="btn ' + (isCategoriesView ? "btn-accent active" : "btn-ghost") + '" id="ops-maint-subtab-cats">'
+        + icon("layers", 14) + ' Work Types & Categories (' + maintenanceCategories.length + ')</button>'
         + '</div>'
-        + '<div class="card card-pad" style="margin-bottom:16px">'
-        + '<div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">'
-        + '<div class="field" style="flex:1;min-width:220px;margin:0"><label for="ops-maint-search">Search maintenance</label><input class="input" id="ops-maint-search" value="' + esc(opsState.maintenanceSearch) + '" placeholder="Work, worker, location or remarks…"></div>'
-        + '<div class="field" style="min-width:155px;margin:0"><label for="ops-maint-status">Status</label><select class="select" id="ops-maint-status"><option value="">All statuses</option>'
-        + [["scheduled", "Scheduled"], ["in_progress", "In progress"], ["completed", "Completed"], ["cancelled", "Cancelled"]].map(o => '<option value="' + o[0] + '"' + (opsState.maintenanceStatus === o[0] ? " selected" : "") + '>' + o[1] + '</option>').join("")
-        + '</select></div>'
-        + '<div class="field" style="min-width:145px;margin:0"><label for="ops-maint-from">From date</label><input class="input" id="ops-maint-from" type="date" value="' + esc(opsState.maintenanceFrom) + '"></div>'
-        + '<div class="field" style="min-width:145px;margin:0"><label for="ops-maint-to">To date</label><input class="input" id="ops-maint-to" type="date" value="' + esc(opsState.maintenanceTo) + '"></div>'
-        + '<button class="btn btn-ghost" id="ops-maint-apply">Apply filters</button>'
-        + '<button class="btn btn-soft" id="ops-maint-clear">Clear</button>'
-        + '</div>'
-        + '<div class="tiny muted" style="margin-top:10px">The selected dates, status and search are used for both the printed and emailed report.</div>'
-        + '</div>'
-        + renderMaintenanceTable(maintenanceWorks);
+        + (isCategoriesView
+            ? '<button class="btn btn-accent btn-sm" id="ops-maint-cat-new-top">' + icon("plus", 13) + ' New Category / Type</button>'
+            : '<div class="row" style="gap:8px">'
+              + '<button class="btn btn-soft btn-sm" id="ops-maint-switch-cats-quick">' + icon("layers", 13) + ' Manage Categories</button>'
+              + '<button class="btn btn-accent btn-sm" id="ops-maint-new-quick">' + icon("plus", 13) + ' Schedule Job</button>'
+              + '</div>')
+        + '</div>';
+
+      if (isCategoriesView) {
+        const totalCats = maintenanceCategories.length;
+        const activeCats = maintenanceCategories.filter(c => c.status === "active").length;
+        const urgentSlaCats = maintenanceCategories.filter(c => Number(c.sla_hours || 0) <= 12).length;
+        const totalLinkedJobs = maintenanceCategories.reduce((sum, c) => sum + (c.work_count || 0), 0);
+
+        body = subTabs
+          + '<div class="grid grid-4" style="margin-bottom:18px">'
+          + kpiCard({ label: "Total Categories", value: totalCats, icon: "layers", tone: "blue", foot: "Configured work classifications" })
+          + kpiCard({ label: "Active Categories", value: activeCats, icon: "checkCircle", tone: "teal", foot: "Available for scheduling" })
+          + kpiCard({ label: "Urgent SLA (≤12h)", value: urgentSlaCats, icon: "clock", tone: "amber", foot: "Rapid response categories" })
+          + kpiCard({ label: "Jobs Linked", value: totalLinkedJobs, icon: "tool", tone: "purple", foot: "Across all maintenance records" })
+          + '</div>'
+          + renderMaintenanceCategoriesTable(maintenanceCategories);
+      } else {
+        const scheduledCount = maintenanceWorks.filter(w => w.status === "scheduled").length;
+        const inProgressCount = maintenanceWorks.filter(w => w.status === "in_progress").length;
+        const completedCount = maintenanceWorks.filter(w => w.status === "completed").length;
+        const totalCharges = maintenanceWorks.reduce((sum, work) => sum + Number(work.amount || 0), 0);
+
+        body = subTabs
+          + '<div class="grid grid-4" style="margin-bottom:18px">'
+          + kpiCard({ label: "Scheduled", value: scheduledCount, icon: "calendar", tone: "blue", foot: "Planned maintenance jobs" })
+          + kpiCard({ label: "In Progress", value: inProgressCount, icon: "clock", tone: "amber", foot: "Work underway" })
+          + kpiCard({ label: "Completed", value: completedCount, icon: "checkCircle", tone: "teal", foot: "Completed in this view" })
+          + kpiCard({ label: "Total Charges", value: money(totalCharges, "GHS"), icon: "wallet", tone: "purple", foot: "Based on current filters" })
+          + '</div>'
+          + '<div class="card card-pad" style="margin-bottom:16px">'
+          + '<div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">'
+          + '<div class="field" style="flex:1;min-width:200px;margin:0"><label for="ops-maint-search">Search maintenance</label><input class="input" id="ops-maint-search" value="' + esc(opsState.maintenanceSearch) + '" placeholder="Work, worker, location or remarks…"></div>'
+          + '<div class="field" style="min-width:145px;margin:0"><label for="ops-maint-status">Status</label><select class="select" id="ops-maint-status"><option value="">All statuses</option>'
+          + [["scheduled", "Scheduled"], ["in_progress", "In progress"], ["completed", "Completed"], ["cancelled", "Cancelled"]].map(o => '<option value="' + o[0] + '"' + (opsState.maintenanceStatus === o[0] ? " selected" : "") + '>' + o[1] + '</option>').join("")
+          + '</select></div>'
+          + '<div class="field" style="min-width:155px;margin:0"><label for="ops-maint-cat-filter">Category</label><select class="select" id="ops-maint-cat-filter"><option value="">All categories</option>'
+          + maintenanceCategories.map(c => '<option value="' + esc(c.name) + '"' + (opsState.maintenanceCategory === c.name ? " selected" : "") + '>' + esc(c.name) + '</option>').join("")
+          + '</select></div>'
+          + '<div class="field" style="min-width:135px;margin:0"><label for="ops-maint-from">From date</label><input class="input" id="ops-maint-from" type="date" value="' + esc(opsState.maintenanceFrom) + '"></div>'
+          + '<div class="field" style="min-width:135px;margin:0"><label for="ops-maint-to">To date</label><input class="input" id="ops-maint-to" type="date" value="' + esc(opsState.maintenanceTo) + '"></div>'
+          + '<button class="btn btn-ghost" id="ops-maint-apply">Apply filters</button>'
+          + '<button class="btn btn-soft" id="ops-maint-clear">Clear</button>'
+          + '</div>'
+          + '<div class="tiny muted" style="margin-top:10px">The selected dates, status, category and search are used for both the printed and emailed report.</div>'
+          + '</div>'
+          + renderMaintenanceTable(maintenanceWorks, maintenanceCategories);
+      }
 
     } else if (opsState.tab === "storerooms") {
       const allStorerooms = storerooms || [];
@@ -878,11 +922,16 @@ Views.operations = async function (root, params) {
 
     // Render outer shell
     const isMaintenanceTab = opsState.tab === "maintenance";
+    const isCategoriesView = isMaintenanceTab && opsState.maintenanceView === "categories";
     const isAssetsTab = opsState.tab === "assets";
     const pageActions = isMaintenanceTab
-      ? '<button class="btn btn-ghost" id="ops-maint-print">' + icon("printer", 15) + ' Print report</button>'
-        + '<button class="btn btn-ghost" id="ops-maint-send">' + icon("send", 15) + ' Send report to MD</button>'
-        + '<button class="btn btn-accent" id="ops-maint-new">' + icon("plus", 15) + ' Schedule maintenance</button>'
+      ? (isCategoriesView
+          ? '<button class="btn btn-ghost" id="ops-maint-switch-schedule">' + icon("calendar", 15) + ' View Schedule</button>'
+            + '<button class="btn btn-accent" id="ops-maint-cat-new">' + icon("plus", 15) + ' New Category / Type</button>'
+          : '<button class="btn btn-ghost" id="ops-maint-switch-cats">' + icon("layers", 15) + ' Work Types & Categories</button>'
+            + '<button class="btn btn-ghost" id="ops-maint-print">' + icon("printer", 15) + ' Print report</button>'
+            + '<button class="btn btn-ghost" id="ops-maint-send">' + icon("send", 15) + ' Send report to MD</button>'
+            + '<button class="btn btn-accent" id="ops-maint-new">' + icon("plus", 15) + ' Schedule maintenance</button>')
       : isAssetsTab
       ? (canManageAssets ? '<button class="btn btn-accent" id="ops-asset-add">' + icon("plus", 15) + ' Register Asset</button>' : '')
       : '<button class="btn btn-ghost" id="ops-top-restock">' + icon("zap", 15) + ' Restock Supplies</button>'
@@ -890,7 +939,9 @@ Views.operations = async function (root, params) {
     root.innerHTML = pageHead(
       "Hotel Operations",
       isMaintenanceTab
-        ? "Schedule repairs and inspections, assign employees or contractors, track GHS charges, and report to the Managing Director."
+        ? (isCategoriesView
+            ? "Configure maintenance work categories, response SLA targets, default priorities, and hotel repair classifications."
+            : "Schedule repairs and inspections, assign employees or contractors, track GHS charges, and report to the Managing Director.")
         : isAssetsTab
         ? "Hotel equipment register, HVAC machinery, laundry extractors, POS terminals, asset tracking, and depreciation."
         : "Executive command centre for storerooms, linen inventory, guest work orders, room turnaround, and property readiness.",
@@ -949,14 +1000,74 @@ Views.operations = async function (root, params) {
 
     const btnNewMaintenance = root.querySelector("#ops-maint-new");
     if (btnNewMaintenance) btnNewMaintenance.onclick = () => openMaintenanceForm();
+    const btnNewMaintenanceQuick = root.querySelector("#ops-maint-new-quick");
+    if (btnNewMaintenanceQuick) btnNewMaintenanceQuick.onclick = () => openMaintenanceForm();
     const btnPrintMaintenance = root.querySelector("#ops-maint-print");
     if (btnPrintMaintenance) btnPrintMaintenance.onclick = () => printMaintenanceReport(maintenanceWorks, maintenanceApiFilters());
     const btnSendMaintenance = root.querySelector("#ops-maint-send");
     if (btnSendMaintenance) btnSendMaintenance.onclick = () => sendMaintenanceReport(maintenanceWorks.length);
 
+    // Sub-tab navigation
+    const subtabSched = root.querySelector("#ops-maint-subtab-sched");
+    if (subtabSched) subtabSched.onclick = () => {
+      opsState.maintenanceView = "schedule";
+      Views.operations(root, ["maintenance"]);
+    };
+    const subtabCats = root.querySelector("#ops-maint-subtab-cats");
+    if (subtabCats) subtabCats.onclick = () => {
+      opsState.maintenanceView = "categories";
+      Views.operations(root, ["maintenance"]);
+    };
+    const btnSwitchCats = root.querySelector("#ops-maint-switch-cats");
+    if (btnSwitchCats) btnSwitchCats.onclick = () => {
+      opsState.maintenanceView = "categories";
+      Views.operations(root, ["maintenance"]);
+    };
+    const btnSwitchCatsQuick = root.querySelector("#ops-maint-switch-cats-quick");
+    if (btnSwitchCatsQuick) btnSwitchCatsQuick.onclick = () => {
+      opsState.maintenanceView = "categories";
+      Views.operations(root, ["maintenance"]);
+    };
+    const btnSwitchSchedule = root.querySelector("#ops-maint-switch-schedule");
+    if (btnSwitchSchedule) btnSwitchSchedule.onclick = () => {
+      opsState.maintenanceView = "schedule";
+      Views.operations(root, ["maintenance"]);
+    };
+
+    // Category CRUD actions
+    onDelegate(root, "click", "#ops-maint-cat-new, #ops-maint-cat-new-top, #ops-maint-cat-add-table", () => {
+      openMaintenanceCategoryModal(null, () => Views.operations(root, ["maintenance"]));
+    });
+
+    onDelegate(root, "click", "[data-maint-cat-edit]", (btn) => {
+      const catId = Number(btn.dataset.maintCatEdit);
+      const cat = maintenanceCategories.find(c => c.id === catId);
+      if (cat) openMaintenanceCategoryModal(cat, () => Views.operations(root, ["maintenance"]));
+    });
+
+    onDelegate(root, "click", "[data-maint-cat-del]", (btn) => {
+      const catId = Number(btn.dataset.maintCatDel);
+      const cat = maintenanceCategories.find(c => c.id === catId);
+      if (cat) deleteMaintenanceCategory(cat, () => Views.operations(root, ["maintenance"]));
+    });
+
+    // Maintenance Work CRUD actions
+    onDelegate(root, "click", "[data-maint-edit]", (btn) => {
+      const workId = Number(btn.dataset.maintEdit);
+      const record = maintenanceWorks.find(work => work.id === workId);
+      if (record) openMaintenanceForm(record);
+    });
+
+    onDelegate(root, "click", "[data-maint-del]", (btn) => {
+      const workId = Number(btn.dataset.maintDel);
+      const record = maintenanceWorks.find(work => work.id === workId);
+      if (record) deleteMaintenanceWork(record, () => Views.operations(root, ["maintenance"]));
+    });
+
     const applyMaintenanceFilters = () => {
       const search = (root.querySelector("#ops-maint-search")?.value || "").trim();
       const status = root.querySelector("#ops-maint-status")?.value || "";
+      const cat = root.querySelector("#ops-maint-cat-filter")?.value || "";
       const from = root.querySelector("#ops-maint-from")?.value || "";
       const to = root.querySelector("#ops-maint-to")?.value || "";
       if (from && to && from > to) {
@@ -965,6 +1076,7 @@ Views.operations = async function (root, params) {
       }
       opsState.maintenanceSearch = search;
       opsState.maintenanceStatus = status;
+      opsState.maintenanceCategory = cat;
       opsState.maintenanceFrom = from;
       opsState.maintenanceTo = to;
       Views.operations(root, ["maintenance"]);
@@ -975,10 +1087,15 @@ Views.operations = async function (root, params) {
     if (clearMaintenanceButton) clearMaintenanceButton.onclick = () => {
       opsState.maintenanceSearch = "";
       opsState.maintenanceStatus = "";
+      opsState.maintenanceCategory = "";
       opsState.maintenanceFrom = "";
       opsState.maintenanceTo = "";
       Views.operations(root, ["maintenance"]);
     };
+    const maintenanceCatFilter = root.querySelector("#ops-maint-cat-filter");
+    if (maintenanceCatFilter) maintenanceCatFilter.onchange = applyMaintenanceFilters;
+    const maintenanceStatusFilter = root.querySelector("#ops-maint-status");
+    if (maintenanceStatusFilter) maintenanceStatusFilter.onchange = applyMaintenanceFilters;
     const maintenanceSearchInput = root.querySelector("#ops-maint-search");
     if (maintenanceSearchInput) maintenanceSearchInput.onkeydown = event => {
       if (event.key === "Enter") {
@@ -986,12 +1103,6 @@ Views.operations = async function (root, params) {
         applyMaintenanceFilters();
       }
     };
-    root.querySelectorAll("[data-maint-edit]").forEach(button => {
-      button.onclick = () => {
-        const record = maintenanceWorks.find(work => work.id === Number(button.dataset.maintEdit));
-        if (record) openMaintenanceForm(record);
-      };
-    });
     root.querySelectorAll(".ops-maint-status-select").forEach(select => {
       select.onchange = async () => {
         select.disabled = true;
@@ -1234,6 +1345,7 @@ function maintenanceApiFilters() {
   return {
     q: opsState.maintenanceSearch,
     status: opsState.maintenanceStatus,
+    category: opsState.maintenanceCategory || "",
     from_date: opsState.maintenanceFrom,
     to_date: opsState.maintenanceTo,
   };
@@ -1245,15 +1357,23 @@ function maintenanceReportPeriod(filters) {
   const end = filters.to_date;
   let period = start && end ? fmtDate(start) + " – " + fmtDate(end)
     : (start ? "From " + fmtDate(start) : (end ? "Through " + fmtDate(end) : "All scheduled dates"));
+  if (filters.category) period += " · Category: " + filters.category;
   if (filters.status) period += " · " + filters.status.replace(/_/g, " ");
   if (filters.q) period += " · Search: " + filters.q;
   return period;
 }
 
-function renderMaintenanceTable(records) {
+function getCategoryBadge(catName, categories) {
+  if (!catName) return '<span class="chip slate">General</span>';
+  const cat = (categories || []).find(c => (c.name || "").toLowerCase() === (catName || "").toLowerCase());
+  const tone = cat ? (cat.color_tone || "blue") : "blue";
+  return '<span class="chip ' + tone + '">' + esc(catName) + '</span>';
+}
+
+function renderMaintenanceTable(records, categories) {
   const rows = records || [];
-  const head = '<tr><th>Reference</th><th>Scheduled</th><th>Work & location</th><th>Worker</th>'
-    + '<th>Charge</th><th>Status</th><th>Remarks</th><th></th></tr>';
+  const head = '<tr><th>Reference & Type</th><th>Scheduled</th><th>Work & location</th><th>Worker</th>'
+    + '<th>Charge</th><th>Status</th><th>Remarks</th><th>Actions</th></tr>';
   const body = rows.length ? rows.map(work => {
     const details = work.description
       ? '<div class="tiny muted" style="max-width:260px">' + esc(work.description) + '</div>' : '';
@@ -1263,20 +1383,216 @@ function renderMaintenanceTable(records) {
       + status.replace(/_/g, " ") + '</option>'
     ).join("");
     return '<tr>'
-      + '<td><b class="mono">' + esc(work.reference_no) + '</b><div class="tiny muted">' + esc(work.category) + '</div></td>'
+      + '<td><b class="mono">' + esc(work.reference_no) + '</b><div style="margin-top:4px">' + getCategoryBadge(work.category, categories) + '</div></td>'
       + '<td><b>' + esc(fmtDate(work.scheduled_at)) + '</b><div class="tiny muted">' + esc(fmtTime(work.scheduled_at)) + '</div></td>'
       + '<td><b>' + esc(work.title) + '</b><div class="tiny muted">' + esc(work.location) + '</div>' + details + '</td>'
       + '<td>' + esc(work.worker_name || "—") + '</td>'
       + '<td><b>' + esc(money(work.amount || 0, "GHS")) + '</b></td>'
       + '<td><select class="select ops-maint-status-select" data-maint-id="' + work.id + '" aria-label="Update status for ' + esc(work.reference_no) + '" style="min-width:125px;height:32px">' + statusOptions + '</select></td>'
       + '<td><span class="tiny" title="' + esc(remarks) + '" style="display:block;max-width:190px;white-space:normal">' + esc(remarks.length > 96 ? remarks.slice(0, 93) + "…" : remarks) + '</span></td>'
-      + '<td><button type="button" class="btn btn-sm btn-ghost" data-maint-edit="' + work.id + '">' + icon("edit", 12) + ' Edit</button></td>'
+      + '<td><div class="row" style="gap:4px;flex-wrap:nowrap">'
+      + '<button type="button" class="btn btn-sm btn-ghost" data-maint-edit="' + work.id + '" title="Edit work">' + icon("edit", 12) + ' Edit</button>'
+      + '<button type="button" class="btn btn-sm btn-ghost" data-maint-del="' + work.id + '" title="Delete maintenance job" style="color:var(--danger)">' + icon("trash", 12) + '</button>'
+      + '</div></td>'
       + '</tr>';
   }).join("") : '<tr><td colspan="8">' + emptyState("No maintenance work found", "Schedule a repair, inspection or preventive maintenance job to get started.", "calendar") + '</td></tr>';
 
   return '<div class="card"><div class="card-head"><div><h3>Maintenance schedule & charge register</h3>'
     + '<div class="sub">' + rows.length + ' record(s) · Filter the schedule, then print or email this report to the MD.</div></div></div>'
     + '<div class="table-wrap"><table><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div></div>';
+}
+
+function renderMaintenanceCategoriesTable(categories) {
+  const rows = categories || [];
+  const head = '<tr><th>Category & Scope</th><th>Code</th><th>Default Priority</th><th>SLA Target</th><th>Status</th><th>Work Linked</th><th>Actions</th></tr>';
+  const body = rows.length ? rows.map(cat => {
+    const desc = cat.description ? '<div class="tiny muted" style="max-width:320px;margin-top:2px;line-height:1.4">' + esc(cat.description) + '</div>' : '';
+    const prioTone = { emergency: "red", high: "amber", medium: "blue", low: "teal" }[cat.priority_default] || "blue";
+    const statusChip = cat.status === "active"
+      ? '<span class="chip green">Active</span>'
+      : '<span class="chip slate">Inactive</span>';
+    const slaFormatted = cat.sla_hours >= 24
+      ? cat.sla_hours + ' hrs <span class="tiny muted">(' + (cat.sla_hours / 24).toFixed(cat.sla_hours % 24 === 0 ? 0 : 1) + 'd)</span>'
+      : cat.sla_hours + ' hrs';
+    return '<tr>'
+      + '<td><div style="font-weight:600;font-size:13px"><span class="chip ' + esc(cat.color_tone || "blue") + '" style="margin-right:6px">●</span><b>' + esc(cat.name) + '</b></div>' + desc + '</td>'
+      + '<td><b class="mono" style="font-size:12px">' + esc(cat.code || "—") + '</b></td>'
+      + '<td><span class="chip ' + prioTone + '" style="text-transform:capitalize">' + esc(cat.priority_default) + '</span></td>'
+      + '<td><b>' + slaFormatted + '</b></td>'
+      + '<td>' + statusChip + '</td>'
+      + '<td><span class="pill-tag ' + (cat.work_count > 0 ? "blue" : "slate") + '">' + cat.work_count + ' job(s)</span></td>'
+      + '<td><div class="row" style="gap:4px;flex-wrap:nowrap">'
+      + '<button type="button" class="btn btn-sm btn-ghost" data-maint-cat-edit="' + cat.id + '" title="Edit category">' + icon("edit", 12) + ' Edit</button>'
+      + '<button type="button" class="btn btn-sm btn-ghost" data-maint-cat-del="' + cat.id + '" title="Delete category" style="color:var(--danger)">' + icon("trash", 12) + '</button>'
+      + '</div></td>'
+      + '</tr>';
+  }).join("") : '<tr><td colspan="7">' + emptyState("No maintenance categories found", "Create custom maintenance work types to categorize repairs, inspections and SLAs.", "layers") + '</td></tr>';
+
+  return '<div class="card"><div class="card-head"><div><h3>Maintenance Work Types & Categories</h3>'
+    + '<div class="sub">' + rows.length + ' category type(s) configured · Manage custom work classifications, standard SLA targets, and defaults.</div></div>'
+    + '<button class="btn btn-accent btn-sm" id="ops-maint-cat-add-table">' + icon("plus", 13) + ' Add Category</button>'
+    + '</div>'
+    + '<div class="table-wrap"><table><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div></div>';
+}
+
+function openMaintenanceCategoryModal(existing, onSuccess) {
+  const isEdit = !!existing;
+  openFormModal({
+    title: isEdit ? "Edit Maintenance Work Type" : "Create Maintenance Work Type",
+    subtitle: "Define custom maintenance categories, SLA response targets, and default priorities.",
+    fields: [
+      {
+        name: "name",
+        label: "Category / Type Name",
+        placeholder: "e.g. Elevators & Lifts, Carpentry & Locks, Swimming Pool",
+        value: isEdit ? existing.name : "",
+        required: true,
+      },
+      {
+        name: "code",
+        label: "Type Code / Abbreviation",
+        placeholder: "e.g. ELEV, CARP, POOL",
+        value: isEdit ? existing.code : "",
+      },
+      {
+        name: "priority_default",
+        label: "Default Priority",
+        type: "select",
+        options: [
+          { value: "low", label: "Low (General maintenance & aesthetic checks)" },
+          { value: "medium", label: "Medium (Standard maintenance & servicing)" },
+          { value: "high", label: "High (Affects guest rooms, urgent fixes)" },
+          { value: "emergency", label: "Emergency (Immediate hazard, guest-facing stoppage)" },
+        ],
+        value: isEdit ? existing.priority_default : "medium",
+        required: true,
+      },
+      {
+        name: "sla_hours",
+        label: "Standard SLA Target (Hours)",
+        type: "number",
+        min: 1,
+        max: 720,
+        default: 24,
+        placeholder: "24",
+        value: isEdit ? existing.sla_hours : 24,
+        required: true,
+      },
+      {
+        name: "color_tone",
+        label: "Color Tone / Badge Theme",
+        type: "select",
+        options: [
+          { value: "blue", label: "Blue (Standard / Preventive)" },
+          { value: "amber", label: "Amber (Attention / Mechanical)" },
+          { value: "teal", label: "Teal (Inspection / Facilities)" },
+          { value: "purple", label: "Purple (Electrical / Systems)" },
+          { value: "red", label: "Red (Critical / Kitchen & Safety)" },
+          { value: "green", label: "Green (General / Grounds)" },
+          { value: "slate", label: "Slate (Neutral / Routine)" },
+        ],
+        value: isEdit ? existing.color_tone : "blue",
+      },
+      {
+        name: "status",
+        label: "Status",
+        type: "select",
+        options: [
+          { value: "active", label: "Active (Available for scheduling)" },
+          { value: "inactive", label: "Inactive (Hidden from new work creation)" },
+        ],
+        value: isEdit ? existing.status : "active",
+      },
+      {
+        name: "description",
+        label: "Category Scope & Description",
+        type: "textarea",
+        rows: 3,
+        full: true,
+        placeholder: "Describe what types of equipment, locations, or repairs fall under this category…",
+        value: isEdit ? existing.description : "",
+      },
+    ],
+    submitLabel: isEdit ? "Save Changes" : "Create Category",
+    extraFooter: isEdit ? '<button type="button" class="btn btn-danger" id="form-delete-btn" style="margin-right:auto">' + icon("trash", 13) + ' Delete Category</button>' : '',
+    onDelete: isEdit ? () => deleteMaintenanceCategory(existing, onSuccess) : null,
+    async onSubmit(values) {
+      const payload = {
+        name: (values.name || "").trim(),
+        code: (values.code || "").trim(),
+        priority_default: values.priority_default || "medium",
+        sla_hours: Number(values.sla_hours || 24),
+        color_tone: values.color_tone || "blue",
+        status: values.status || "active",
+        description: (values.description || "").trim(),
+      };
+      if (isEdit) {
+        await API.put("/operations/maintenance/categories/" + existing.id, payload);
+        toast("Maintenance category updated", "success");
+      } else {
+        await API.post("/operations/maintenance/categories", payload);
+        toast("Maintenance category created", "success");
+      }
+      if (typeof onSuccess === "function") onSuccess();
+      else {
+        const view = document.getElementById("view");
+        if (view) await Views.operations(view, ["maintenance"]);
+      }
+    },
+  });
+}
+
+function deleteMaintenanceCategory(category, onSuccess) {
+  if (category.work_count > 0) {
+    confirmDialog(
+      "Cannot Delete Category",
+      'The category "' + esc(category.name) + '" is currently assigned to ' + category.work_count + ' maintenance work record(s). To preserve maintenance history, reassign or remove those jobs first, or set this category to Inactive.',
+      null,
+      { alertOnly: true, confirmLabel: "Understood" }
+    );
+    return;
+  }
+  confirmDialog(
+    "Delete Maintenance Category",
+    'Are you sure you want to permanently delete the category "' + (category.name || "") + '"? This action cannot be undone.',
+    async () => {
+      try {
+        await API.del("/operations/maintenance/categories/" + category.id);
+        toast("Category deleted successfully", "success");
+        closeModal();
+        if (typeof onSuccess === "function") onSuccess();
+        else {
+          const view = document.getElementById("view");
+          if (view) await Views.operations(view, ["maintenance"]);
+        }
+      } catch (err) {
+        toast("Failed to delete category: " + (err.message || err), "error");
+      }
+    },
+    { danger: true, confirmLabel: "Delete category" }
+  );
+}
+
+function deleteMaintenanceWork(work, onSuccess) {
+  confirmDialog(
+    "Delete Maintenance Job",
+    'Are you sure you want to permanently delete maintenance job ' + (work.reference_no || "") + ' ("' + (work.title || "") + '")? This action cannot be undone.',
+    async () => {
+      try {
+        await API.del("/operations/maintenance/" + work.id);
+        toast("Maintenance job deleted successfully", "success");
+        closeModal();
+        if (typeof onSuccess === "function") onSuccess();
+        else {
+          const view = document.getElementById("view");
+          if (view) await Views.operations(view, ["maintenance"]);
+        }
+      } catch (err) {
+        toast("Failed to delete maintenance job: " + (err.message || err), "error");
+      }
+    },
+    { danger: true, confirmLabel: "Delete job" }
+  );
 }
 
 function defaultMaintenanceDateTime() {
@@ -1289,19 +1605,51 @@ function defaultMaintenanceDateTime() {
 
 async function openMaintenanceForm(record) {
   try {
-    const response = await API.get("/employees", { per_page: 500 });
-    const employees = (response.data || []).filter(employee => ["active", "probation"].includes(employee.status));
+    const [empRes, catRes] = await Promise.all([
+      API.get("/employees", { per_page: 500 }),
+      API.get("/operations/maintenance/categories"),
+    ]);
+    const employees = (empRes.data || []).filter(employee => ["active", "probation"].includes(employee.status));
     const employeeOptions = employees.map(employee => ({
       value: employee.id,
       label: (employee.full_name || employee.employee_name || [employee.first_name, employee.last_name].filter(Boolean).join(" "))
         + (employee.department_name ? " · " + employee.department_name : ""),
     }));
+    const rawCategories = (catRes && catRes.data) || [];
+    const availableCategories = rawCategories.length
+      ? rawCategories
+      : [
+          { name: "Preventive", priority_default: "medium", sla_hours: 48 },
+          { name: "Repair", priority_default: "high", sla_hours: 12 },
+          { name: "Inspection", priority_default: "low", sla_hours: 72 },
+          { name: "Electrical", priority_default: "high", sla_hours: 8 },
+          { name: "Plumbing", priority_default: "high", sla_hours: 8 },
+          { name: "HVAC", priority_default: "medium", sla_hours: 24 },
+          { name: "Kitchen & Cold Room", priority_default: "emergency", sla_hours: 4 },
+          { name: "Fire & Life Safety", priority_default: "emergency", sla_hours: 2 },
+          { name: "Other", priority_default: "low", sla_hours: 48 },
+        ];
+
+    const categoryOptions = availableCategories
+      .filter(c => c.status !== "inactive" || (record && record.category === c.name))
+      .map(c => ({
+        value: c.name,
+        label: c.name + (c.sla_hours ? " (" + (c.priority_default ? c.priority_default.toUpperCase() + " · " : "") + c.sla_hours + "h SLA)" : ""),
+      }));
+
+    if (record && record.category && !categoryOptions.some(opt => opt.value === record.category)) {
+      categoryOptions.unshift({ value: record.category, label: record.category });
+    }
+
+    const defaultCategory = record ? record.category : (categoryOptions[0] ? categoryOptions[0].value : "Repair");
+
     const fields = [
       { name: "title", label: "Maintenance work", placeholder: "e.g. Service the main generator", required: true },
       {
-        name: "category", label: "Work type", type: "select", required: true,
-        options: ["Preventive", "Repair", "Inspection", "Electrical", "Plumbing", "HVAC", "Other"],
-        value: record ? record.category : "Repair",
+        name: "category", label: "Work type / Category", type: "select", required: true,
+        options: categoryOptions,
+        value: defaultCategory,
+        hint: "Manage custom categories & SLA response times in Work Types & Categories.",
       },
       { name: "location", label: "Location / asset", placeholder: "e.g. Staff quarters, Room 204, generator house", required: true },
       {
@@ -1334,6 +1682,8 @@ async function openMaintenanceForm(record) {
       wide: true,
       fields,
       submitLabel: record ? "Save changes" : "Schedule work",
+      extraFooter: record ? '<button type="button" class="btn btn-danger" id="form-delete-btn" style="margin-right:auto">' + icon("trash", 13) + ' Delete Job</button>' : '',
+      onDelete: record ? () => deleteMaintenanceWork(record) : null,
       successMessage: record ? "Maintenance work updated" : "Maintenance work scheduled",
       async onSubmit(values) {
         const externalWorker = String(values.worker_id) === "external";

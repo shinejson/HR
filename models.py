@@ -109,7 +109,8 @@ class Department(db.Model, TimestampMixin):
     parent_id = db.Column(db.Integer, db.ForeignKey("departments.id"))
     name = db.Column(db.String(120), nullable=False)
     code = db.Column(db.String(20))
-    head_id = db.Column(db.Integer)
+    head_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=True)
+    assistant_head_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=True)
     cost_centre = db.Column(db.String(40))
     branch_id = db.Column(db.Integer, db.ForeignKey("branches.id"))
     description = db.Column(db.Text)
@@ -120,6 +121,27 @@ class Department(db.Model, TimestampMixin):
     phone = db.Column(db.String(40))
     parent = db.relationship("Department", remote_side="Department.id")
     branch = db.relationship("Branch")
+    head = db.relationship("Employee", foreign_keys=[head_id])
+    assistant_head = db.relationship("Employee", foreign_keys=[assistant_head_id])
+
+
+class DepartmentHead(db.Model, TimestampMixin):
+    """Configurable departmental leadership: Department Heads, Assistants / Deputies, and Managing Director."""
+    __tablename__ = "department_heads"
+    id = db.Column(db.Integer, primary_key=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=False, index=True)
+    role_type = db.Column(db.String(40), nullable=False, default="head")  # "head", "assistant", "md"
+    title = db.Column(db.String(120))  # e.g. "Head of Operations", "Assistant Head of Finance", "Managing Director"
+    department_id = db.Column(db.Integer, db.ForeignKey("departments.id"), nullable=True)  # Primary department
+    reports_to_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=True)
+    status = db.Column(db.String(20), default="active")  # "active", "inactive"
+    phone = db.Column(db.String(40))
+    email = db.Column(db.String(180))
+    notes = db.Column(db.Text)
+
+    employee = db.relationship("Employee", foreign_keys=[employee_id])
+    department = db.relationship("Department", foreign_keys=[department_id])
+    reports_to = db.relationship("Employee", foreign_keys=[reports_to_id])
 
 
 class Designation(db.Model, TimestampMixin):
@@ -179,7 +201,7 @@ class Employee(db.Model, TimestampMixin, SoftDeleteMixin):
     blood_group = db.Column(db.String(10))
     linkedin_url = db.Column(db.String(255))
     work_location = db.Column(db.String(80), default="Office")
-    department = db.relationship("Department")
+    department = db.relationship("Department", foreign_keys=[department_id])
     designation = db.relationship("Designation")
     grade = db.relationship("Grade")
     branch = db.relationship("Branch")
@@ -348,7 +370,7 @@ class JobRequisition(db.Model, TimestampMixin):
     status = db.Column(db.String(20), default="pending")
     requested_by = db.Column(db.Integer)
     approved_by = db.Column(db.Integer)
-    department = db.relationship("Department")
+    department = db.relationship("Department", foreign_keys=[department_id])
 
 
 class JobPosting(db.Model, TimestampMixin):
@@ -365,7 +387,7 @@ class JobPosting(db.Model, TimestampMixin):
     status = db.Column(db.String(20), default="open")
     posted_at = db.Column(db.Date)
     closes_at = db.Column(db.Date)
-    department = db.relationship("Department")
+    department = db.relationship("Department", foreign_keys=[department_id])
 
 
 class Candidate(db.Model, TimestampMixin):
@@ -1048,6 +1070,19 @@ class HotelWorkOrder(db.Model, TimestampMixin):
     assigned_to_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=True)
     completed_at = db.Column(db.DateTime, nullable=True)
     assigned_to = db.relationship("Employee")
+
+
+class MaintenanceCategory(db.Model, TimestampMixin):
+    """Configurable maintenance work categories, types, and SLAs."""
+    __tablename__ = "maintenance_categories"
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(80), unique=True, nullable=False, index=True)
+    code = db.Column(db.String(30))
+    description = db.Column(db.String(255))
+    priority_default = db.Column(db.String(20), default="medium")  # low, medium, high, emergency
+    sla_hours = db.Column(db.Integer, default=24)
+    color_tone = db.Column(db.String(20), default="blue")  # blue, teal, amber, purple, red, green
+    status = db.Column(db.String(20), default="active")  # active, inactive
 
 
 class MaintenanceWork(db.Model, TimestampMixin):

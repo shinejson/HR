@@ -368,6 +368,7 @@ function formModal(opts) {
       form.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && e.target.tagName !== "TEXTAREA") { e.preventDefault(); submit.click(); }
       });
+      if (opts.onMount) opts.onMount(card);
     },
   });
 }

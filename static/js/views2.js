@@ -657,11 +657,16 @@ Views.leave = async function (root) {
               
               if (r.status !== "pending") return btns;
               
-              // Dynamic check against designated approvers on employee profile
+              // Dynamic check against designated approvers on employee profile & department
               const reqEmp = (Store.meta && Store.meta.employees) ? Store.meta.employees.find(e => e.id === r.employee_id) : null;
-              const isHod = (reqEmp && reqEmp.hod_id === user.employee_id) || (reqEmp && !reqEmp.hod_id && reqEmp.manager_id === user.employee_id);
-              const isAcc = reqEmp && reqEmp.accountant_id === user.employee_id;
-              const isMd = reqEmp && reqEmp.md_id === user.employee_id;
+              const reqDept = reqEmp && reqEmp.department_id ? (Store.meta.departments || []).find(d => d.id === reqEmp.department_id) : null;
+              const deptHodId = reqDept ? reqDept.head_id : null;
+              const fixedAccId = Store.meta?.fixed_approvers?.accountant?.id || 4;
+              const fixedMdId = Store.meta?.fixed_approvers?.md?.id || 1;
+
+              const isHod = (reqEmp && reqEmp.hod_id === user.employee_id) || (deptHodId && deptHodId === user.employee_id) || (reqEmp && !reqEmp.hod_id && reqEmp.manager_id === user.employee_id);
+              const isAcc = (reqEmp && reqEmp.accountant_id === user.employee_id) || (fixedAccId === user.employee_id);
+              const isMd = (reqEmp && reqEmp.md_id === user.employee_id) || (fixedMdId === user.employee_id);
 
               const canApproveHOD = isHod || (role === "super_admin" || role === "hr_admin" || (role === "manager" && reqEmp?.manager_id === user.employee_id));
               const canApproveAccountant = isAcc || (role === "super_admin" || role === "hr_admin");
@@ -934,14 +939,39 @@ function openLeaveForm(prefill) {
   const dateEmployed = emp?.hire_date || '';
   const currentYear = new Date().getFullYear();
 
-  // Find designated approvers
-  const hodEmp = emp && emp.hod_id ? Store.meta.employees.find(e => e.id === emp.hod_id) : (emp && emp.manager_id ? Store.meta.employees.find(e => e.id === emp.manager_id) : null);
-  const accEmp = emp && emp.accountant_id ? Store.meta.employees.find(e => e.id === emp.accountant_id) : null;
-  const mdEmp = emp && emp.md_id ? Store.meta.employees.find(e => e.id === emp.md_id) : null;
+  // Find designated approvers (HoD mapped to department head; Accountant & MD fixed organization-wide)
+  const fixedAcc = (Store.meta && Store.meta.fixed_approvers && Store.meta.fixed_approvers.accountant) || (Store.meta?.employees ? Store.meta.employees.find(e => e.id === 4) : null);
+  const fixedMd = (Store.meta && Store.meta.fixed_approvers && Store.meta.fixed_approvers.md) || (Store.meta?.employees ? Store.meta.employees.find(e => e.id === 1) : null);
 
-  const hodName = hodEmp ? (hodEmp.name + ' (Designated HoD)') : (emp?.hod_name ? emp.hod_name + ' (Designated HoD)' : 'Not set on profile');
-  const accName = accEmp ? (accEmp.name + ' (Designated Accountant)') : (emp?.accountant_name ? emp.accountant_name + ' (Designated Accountant)' : 'Not set on profile');
-  const mdName = mdEmp ? (mdEmp.name + ' (Designated MD)') : (emp?.md_name ? emp.md_name + ' (Designated MD)' : 'Not set on profile');
+  let hodEmp = null;
+  if (department) {
+    if (department.head_id) {
+      hodEmp = (Store.meta.employees || []).find(e => e.id === department.head_id);
+    }
+    if (!hodEmp && Store.meta.department_heads) {
+      const dh = Store.meta.department_heads.find(h => h.department_id === department.id && h.role_type === 'head');
+      if (dh) hodEmp = (Store.meta.employees || []).find(e => e.id === dh.employee_id);
+    }
+  }
+  if (hodEmp && emp && hodEmp.id === emp.id) {
+    hodEmp = fixedMd;
+  }
+  if (!hodEmp && emp && emp.hod_id) {
+    hodEmp = (Store.meta.employees || []).find(e => e.id === emp.hod_id);
+  }
+  if (!hodEmp && emp && emp.manager_id) {
+    hodEmp = (Store.meta.employees || []).find(e => e.id === emp.manager_id);
+  }
+  if (!hodEmp) {
+    hodEmp = fixedMd;
+  }
+
+  const accEmp = fixedAcc;
+  const mdEmp = fixedMd;
+
+  const hodName = hodEmp ? (hodEmp.name + (departmentName ? ' — Head of ' + departmentName : ' (Head of Department)')) : (emp?.hod_name ? emp.hod_name : 'Head of Department');
+  const accName = accEmp ? (accEmp.name + ' — Accountant / Finance (Fixed)') : (emp?.accountant_name ? emp.accountant_name + ' — Accountant (Fixed)' : 'Yaw Asante — Accountant (Fixed)');
+  const mdName = mdEmp ? (mdEmp.name + ' — Managing Director (Fixed)') : (emp?.md_name ? emp.md_name + ' — Managing Director (Fixed)' : 'Ama Mensah — Managing Director (Fixed)');
 
   const sigUrl = emp?.signature_url || '';
 
@@ -1012,14 +1042,14 @@ function openLeaveForm(prefill) {
         )
       + '</div></div></div>'
       
-      + '<div class="card"><div class="card-head"><h3 style="background:var(--line);padding:8px 12px;margin:-12px -12px 12px;text-transform:uppercase;font-size:12px;letter-spacing:0.5px">Approval Chain (Management Use Only)</h3></div><div class="card-body">'
-      + '<div class="stack" style="gap:8px"><div class="tiny muted">Leave applications route through the 3-stage authority chain configured on your employee profile:</div>'
+      + '<div class="card"><div class="card-head"><h3 style="background:var(--line);padding:8px 12px;margin:-12px -12px 12px;text-transform:uppercase;font-size:12px;letter-spacing:0.5px">Approval Chain (Organisation Use Only)</h3></div><div class="card-body">'
+      + '<div class="stack" style="gap:8px"><div class="tiny muted">Leave applications route through the 3-stage authority chain (HoD mapped by department; Accountant & MD fixed organization-wide):</div>'
       + '<div class="form-grid">'
       + '<div class="field"><label>1. Head of Department (HoD)</label><input class="input" value="' + esc(hodName) + '" readonly style="font-weight:500;background:var(--paper-2)"></div>'
-      + '<div class="field"><label>2. Accountant / Finance</label><input class="input" value="' + esc(accName) + '" readonly style="font-weight:500;background:var(--paper-2)"></div>'
-      + '<div class="field"><label>3. Managing Director (MD)</label><input class="input" value="' + esc(mdName) + '" readonly style="font-weight:500;background:var(--paper-2)"></div>'
+      + '<div class="field"><label>2. Accountant / Finance (Fixed)</label><input class="input" value="' + esc(accName) + '" readonly style="font-weight:500;background:var(--paper-2)"></div>'
+      + '<div class="field"><label>3. Managing Director (Fixed)</label><input class="input" value="' + esc(mdName) + '" readonly style="font-weight:500;background:var(--paper-2)"></div>'
       + '</div>'
-      + ((!emp?.hod_id || !emp?.accountant_id || !emp?.md_id) ? '<div class="tiny" style="color:var(--amber)">Tip: To designate or update your HoD, Accountant, or MD approvers, visit your <a class="link" onclick="closeModal();go(&quot;profile&quot;)">Profile page</a>.</div>' : '')
+      + '<div class="tiny text-muted" style="color:var(--ink-3)">✓ HoD is mapped dynamically from your department (' + esc(departmentName || 'General') + '). Accountant and Managing Director are fixed for all employees.</div>'
       + '</div></div></div></div>'
       + '</form>',
     footer: '<button class="btn btn-ghost" data-close-modal>Cancel</button>'

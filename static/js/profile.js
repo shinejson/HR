@@ -625,23 +625,23 @@ async function viewEmployeeDetail(root, id, initialTab) {
           + '<div class="team-mini-card" style="border:1px solid var(--line);border-radius:8px;padding:8px 12px">'
           + (e.hod_card ? avatarHTML(e.hod_card.name, "avatar-sm", "", e.hod_card.photo_url) : '<div class="avatar-sm" style="background:var(--paper-2);display:flex;align-items:center;justify-content:center;color:var(--ink-4);font-weight:600">1</div>')
           + '<div style="flex:1;min-width:0"><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.06em">Level 1 · Head of Department (HoD)</div>'
-          + (e.hod_card ? '<b style="font-size:13px;display:block">' + esc(e.hod_card.name) + '</b><span class="tiny muted">' + esc(e.hod_card.title || "HoD") + '</span>' : '<span class="small muted" style="font-style:italic">Not designated — click Set Approvers</span>')
+          + (e.hod_card ? '<b style="font-size:13px;display:block">' + esc(e.hod_card.name) + '</b><span class="tiny muted">' + esc(e.hod_card.title || "Head of Department") + (e.hod_card.department ? ' · ' + esc(e.hod_card.department) : '') + '</span>' : '<span class="small muted" style="font-style:italic">Not designated — click Set Approvers</span>')
           + '</div>'
-          + (e.hod_card ? '<span class="chip teal tiny">Designated</span>' : '<span class="chip amber tiny">Pending</span>')
+          + (e.hod_card ? '<span class="chip teal tiny" title="Mapped automatically from your department">Mapped to Dept Head</span>' : '<span class="chip amber tiny">Pending</span>')
           + '</div>'
           + '<div class="team-mini-card" style="border:1px solid var(--line);border-radius:8px;padding:8px 12px">'
           + (e.accountant_card ? avatarHTML(e.accountant_card.name, "avatar-sm", "", e.accountant_card.photo_url) : '<div class="avatar-sm" style="background:var(--paper-2);display:flex;align-items:center;justify-content:center;color:var(--ink-4);font-weight:600">2</div>')
           + '<div style="flex:1;min-width:0"><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.06em">Level 2 · Accountant / Finance</div>'
           + (e.accountant_card ? '<b style="font-size:13px;display:block">' + esc(e.accountant_card.name) + '</b><span class="tiny muted">' + esc(e.accountant_card.title || "Accountant") + '</span>' : '<span class="small muted" style="font-style:italic">Not designated — click Set Approvers</span>')
           + '</div>'
-          + (e.accountant_card ? '<span class="chip teal tiny">Designated</span>' : '<span class="chip amber tiny">Pending</span>')
+          + (e.accountant_card ? '<span class="chip teal tiny" title="Fixed organization-wide finance approver">Fixed Org Approver</span>' : '<span class="chip amber tiny">Pending</span>')
           + '</div>'
           + '<div class="team-mini-card" style="border:1px solid var(--line);border-radius:8px;padding:8px 12px">'
           + (e.md_card ? avatarHTML(e.md_card.name, "avatar-sm", "", e.md_card.photo_url) : '<div class="avatar-sm" style="background:var(--paper-2);display:flex;align-items:center;justify-content:center;color:var(--ink-4);font-weight:600">3</div>')
           + '<div style="flex:1;min-width:0"><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.06em">Level 3 · Managing Director (MD)</div>'
           + (e.md_card ? '<b style="font-size:13px;display:block">' + esc(e.md_card.name) + '</b><span class="tiny muted">' + esc(e.md_card.title || "Managing Director") + '</span>' : '<span class="small muted" style="font-style:italic">Not designated — click Set Approvers</span>')
           + '</div>'
-          + (e.md_card ? '<span class="chip teal tiny">Designated</span>' : '<span class="chip amber tiny">Pending</span>')
+          + (e.md_card ? '<span class="chip teal tiny" title="Fixed organization-wide executive approver">Fixed Org Approver</span>' : '<span class="chip amber tiny">Pending</span>')
           + '</div>'
           + '</div>'
           + '</div></div>'

@@ -403,6 +403,7 @@ const letterHubState = {
   category: "",
   staffCategory: "",
   selectedTemplateKey: "permanent",
+  selectedDeptId: null,
 };
 
 Views["employment-letters"] = async function (root) {
@@ -467,14 +468,73 @@ Views["employment-letters"] = async function (root) {
   /* --------- HR / ADMIN / MANAGER VIEW: DIRECTORY + TEMPLATES --------- */
   root.innerHTML = pageHead("Employment Letters & Credentials", "Loading appointment letters & portal accounts…", "", "Core HR") + spinners(4);
   try {
-    const [listRes, tplRes] = await Promise.all([
+    const [listRes, tplRes, deptTplRes] = await Promise.all([
       API.get("/employment-letters"),
       API.get("/employment-letters/templates"),
+      API.get("/employment-letters/department-templates").catch(() => ({ data: { data: [], placeholders: [] } })),
     ]);
     const allRows = listRes.data || [];
     const categories = listRes.categories || [];
     const summaryByCat = listRes.summary_by_category || {};
     const templates = tplRes.data || [];
+    const rawDeptTpl = deptTplRes || {};
+    let deptList = [];
+    if (Array.isArray(rawDeptTpl.data)) {
+      deptList = rawDeptTpl.data;
+    } else if (Array.isArray(rawDeptTpl.departments)) {
+      deptList = rawDeptTpl.departments;
+    } else if (rawDeptTpl.data && Array.isArray(rawDeptTpl.data.departments)) {
+      deptList = rawDeptTpl.data.departments;
+    } else if (rawDeptTpl.data && Array.isArray(rawDeptTpl.data.data)) {
+      deptList = rawDeptTpl.data.data;
+    }
+
+    // Fallback to Store.meta.departments if backend response had 0 departments
+    if (!deptList.length && Store.meta && Array.isArray(Store.meta.departments) && Store.meta.departments.length) {
+      deptList = Store.meta.departments.map(d => ({
+        department_id: d.id,
+        department_name: d.name,
+        department_code: d.code || "",
+        employee_count: 0,
+        is_custom: false,
+        template: {
+          department_id: d.id,
+          department_name: d.name,
+          department_code: d.code || "",
+          letter_title: "OFFER OF APPOINTMENT — " + d.name.toUpperCase(),
+          subject_line: "OFFER OF APPOINTMENT — {{designation}} (" + d.name.toUpperCase() + " DEPARTMENT)",
+          working_hours: "40 hours per week (shift schedule or duty roster as assigned)",
+          notice_period: "One (1) calendar month written notice (or salary in lieu thereof)",
+          probation_months: 3,
+          opening: "Management is pleased to offer you appointment with {{company_legal_name}} in the " + d.name + " Department.",
+          sections: [],
+          extra_clause: "",
+          closing: "Kindly confirm your acceptance by signing and returning a copy of this letter.",
+        }
+      }));
+    }
+
+    const placeholders = rawDeptTpl.placeholders
+      || rawDeptTpl.available_placeholders
+      || (rawDeptTpl.data && rawDeptTpl.data.placeholders)
+      || (rawDeptTpl.data && rawDeptTpl.data.available_placeholders)
+      || [
+        { tag: "{{employee_name}}", label: "Full Name" },
+        { tag: "{{salary}}", label: "Basic Salary" },
+        { tag: "{{basic_salary}}", label: "Basic Salary (Exact)" },
+        { tag: "{{gross_salary}}", label: "Gross Salary" },
+        { tag: "{{department}}", label: "Department" },
+        { tag: "{{designation}}", label: "Job Title" },
+        { tag: "{{staff_category}}", label: "Category" },
+        { tag: "{{hire_date}}", label: "Start Date" },
+        { tag: "{{manager_name}}", label: "HOD / Manager" },
+        { tag: "{{working_hours}}", label: "Hours" },
+        { tag: "{{notice_period}}", label: "Notice" },
+        { tag: "{{leave_days}}", label: "Annual Leave" },
+        { tag: "{{company_legal_name}}", label: "Employer Legal Name" },
+        { tag: "{{issue_date}}", label: "Issue Date" },
+        { tag: "{{reference_no}}", label: "Ref #" },
+      ];
     const canManage = Store.canManage();
 
     const filteredRows = letterHubState.category
@@ -488,8 +548,11 @@ Views["employment-letters"] = async function (root) {
       + (Store.user && Store.user.employee_id
           ? '<button class="btn btn-ghost" id="btn-my-own-letter">' + icon("file", 14) + ' My Letter</button>'
           : '')
+      + (canManage
+          ? '<button class="btn btn-teal" id="btn-header-upload-doc">' + icon("upload", 14) + ' Upload Word / PDF Template</button>'
+          : '')
       + (canManage && missingAccounts > 0
-          ? '<button class="btn btn-teal" id="btn-bulk-provision">' + icon("send", 14) + ' Email Missing Accounts (' + missingAccounts + ')</button>'
+          ? '<button class="btn btn-soft" id="btn-bulk-provision">' + icon("send", 14) + ' Email Missing Accounts (' + missingAccounts + ')</button>'
           : '')
       + (canManage
           ? '<button class="btn btn-accent" onclick="go(\'employees\')">' + icon("plus", 14) + ' Onboard Employee</button>'
@@ -557,7 +620,14 @@ Views["employment-letters"] = async function (root) {
           {
             label: "Position & Dept",
             key: "designation_title",
-            render: r => '<b>' + esc(r.designation_title) + '</b><div class="tiny muted">' + esc(r.department_name) + '</div>',
+            render: r => {
+              const deptObj = deptList.find(d => (d.department_id || d.id) === r.department_id);
+              const isDeptCustom = deptObj && (deptObj.is_custom || deptObj.has_custom_template);
+              return '<b>' + esc(r.designation_title) + '</b><div class="tiny muted" style="display:flex;align-items:center;gap:4px">'
+                + esc(r.department_name)
+                + (isDeptCustom ? ' <span class="chip-sm green" title="Custom department appointment letter active" style="font-size:9px;padding:1px 5px">Dept Tpl</span>' : '')
+                + '</div>';
+            },
           },
           {
             label: "Reference & Dates",
@@ -586,6 +656,165 @@ Views["employment-letters"] = async function (root) {
         emptyTitle: "No employment letters in this category",
         emptyText: "Select another category pill or add an employee in this employment category.",
       });
+    } else if (letterHubState.tab === "dept_templates") {
+      if (!deptList.length) {
+        bodyHtml = emptyState("No departments found", "Create departments in the Organisation section first before configuring department-specific templates.", "building", canManage ? '<button class="btn btn-accent" onclick="go(&quot;organisation/departments&quot;)">' + icon("plus", 14) + ' Go to Organisation</button>' : "");
+      } else {
+        if (!letterHubState.selectedDeptId || !deptList.find(d => (d.department_id || d.id) === letterHubState.selectedDeptId)) {
+          letterHubState.selectedDeptId = deptList[0].department_id || deptList[0].id;
+        }
+        const curDept = deptList.find(d => (d.department_id || d.id) === letterHubState.selectedDeptId) || deptList[0];
+        const curDeptId = curDept.department_id || curDept.id;
+        const curDeptName = curDept.department_name || curDept.name;
+        const curTpl = curDept.template || {};
+        const isCustom = Boolean(curDept.is_custom || curDept.has_custom_template);
+
+        bodyHtml = '<div class="grid grid-3" style="align-items:start">'
+          + '<div class="card">'
+          + '  <div class="card-head"><div><h3>Departments (' + deptList.length + ')</h3><div class="sub">Select department to tailor appointment letter</div></div></div>'
+          + '  <div class="card-body stack" style="gap:8px">'
+          + (deptList.length > 5
+              ? '    <input class="input input-sm" id="dept-search-input" placeholder="Search departments…">'
+              : '')
+          + '    <div class="stack" style="gap:6px" id="dept-list-container">'
+          + deptList.map(d => {
+              const dId = d.department_id || d.id;
+              const dName = d.department_name || d.name;
+              const dCode = d.department_code || d.code || "";
+              const activeClass = (dId === curDeptId) ? "active" : "";
+              const customBadge = (d.is_custom || d.has_custom_template)
+                ? '<span class="chip green" style="font-size:10px">Custom</span>'
+                : '<span class="chip grey" style="font-size:10px">Default</span>';
+              return '<button type="button" class="tpl-pick-btn ' + activeClass + '" data-pick-dept="' + dId + '">'
+                + '<div><b>' + esc(dName) + '</b><div class="tiny muted">' + esc(dCode || "No code") + ' · ' + (d.employee_count || 0) + ' staff</div></div>'
+                + customBadge
+                + '</button>';
+            }).join("")
+          + '    </div>'
+          + '  </div>'
+          + '</div>'
+
+          + '<div class="card span-2">'
+          + '  <div class="card-head" style="align-items:flex-start">'
+          + '    <div>'
+          + '      <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">'
+          + '        <h3 style="margin:0">' + esc(curDeptName) + ' Appointment Letter</h3>'
+          + (isCustom
+              ? '<span class="chip green">' + icon("check", 12) + ' Custom Template Active</span>'
+              : '<span class="chip grey">Inheriting Global Defaults</span>')
+          + '      </div>'
+          + '      <div class="sub" style="margin-top:4px">Upload a Word/PDF contract or edit clauses with dynamic placeholders like <span class="mono">{{salary}}</span>, <span class="mono">{{employee_name}}</span>, <span class="mono">{{department}}</span>.</div>'
+          + '    </div>'
+          + '    <div class="row" style="gap:6px;flex-wrap:wrap">'
+          + (isCustom && canManage
+              ? '<button type="button" class="btn btn-sm btn-ghost text-danger" id="btn-reset-dept-tpl" title="Revert to baseline default template">' + icon("refresh", 13) + ' Reset to Default</button>'
+              : '')
+          + '      <button type="button" class="btn btn-sm btn-soft" id="btn-preview-dept-tpl">' + icon("eye", 13) + ' Test & Preview</button>'
+          + '    </div>'
+          + '  </div>'
+
+          + '  <div class="card-body stack" style="gap:16px">'
+          + '    <div class="card card-pad" id="dept-tpl-dropzone" style="border:2px dashed var(--accent);background:var(--surface-2);border-radius:10px;padding:16px 20px;transition:all .2s ease">'
+          + '      <div class="row-between" style="flex-wrap:wrap;gap:12px;align-items:center">'
+          + '        <div style="max-width:540px">'
+          + '          <div style="font-weight:600;font-size:14.5px;display:flex;align-items:center;gap:8px">'
+          + '            <div class="kpi-icon teal" style="width:34px;height:34px">' + icon("upload", 16) + '</div>'
+          + '            <div>'
+          + '              Upload Word (.docx / .doc) or PDF Contract for ' + esc(curDeptName)
+          + '              <div class="tiny muted" style="font-weight:normal;margin-top:2px">'
+          + '                Upload an existing appointment letter. Headings, clauses, salary, employee name, department and designation are automatically converted into dynamic template tags and editable fields.'
+          + '              </div>'
+          + '            </div>'
+          + '          </div>'
+          + '          <div class="row" style="gap:6px;margin-top:8px">'
+          + '            <span class="pill-tag" style="font-size:10.5px">.DOCX</span>'
+          + '            <span class="pill-tag" style="font-size:10.5px">.PDF</span>'
+          + '            <span class="pill-tag" style="font-size:10.5px">.DOC</span>'
+          + '            <span class="pill-tag" style="font-size:10.5px">.TXT</span>'
+          + '            <span class="tiny muted" style="margin-left:4px">Drag and drop file here or click choose</span>'
+          + '          </div>'
+          + '        </div>'
+          + '        <div>'
+          + '          <input type="file" id="dept-tpl-doc-input" accept=".docx,.doc,.pdf,.txt" style="display:none">'
+          + '          <button type="button" class="btn btn-teal" id="dept-tpl-upload-btn" style="padding:9px 18px;font-weight:600">' + icon("upload", 15) + ' Choose Contract File</button>'
+          + '        </div>'
+          + '      </div>'
+          + '      <div id="dept-tpl-upload-feedback" style="display:none;margin-top:12px"></div>'
+          + '    </div>'
+
+          + '    <div class="card card-pad" style="background:var(--surface);border:1px solid var(--line);border-radius:10px">'
+          + '      <div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:8px">'
+          + '        <div style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px">'
+          +            icon("sparkle", 14) + ' Dynamic Placeholders (Click to insert into focused field)'
+          + '        </div>'
+          + '        <span class="tiny muted">Values are dynamically populated when printing or generating letters</span>'
+          + '      </div>'
+          + '      <div class="row" style="gap:6px;flex-wrap:wrap" id="dept-placeholder-chips">'
+          +          placeholders.map(p =>
+                       '<button type="button" class="btn btn-xs btn-ghost placeholder-tag-btn" style="border:1px solid var(--line);font-family:monospace;font-size:11px" data-insert-tag="' + esc(p.tag) + '" title="' + esc(p.desc || p.label) + '">'
+                       + '<span style="color:var(--accent);font-weight:600">' + esc(p.tag) + '</span>'
+                       + '<span class="muted" style="font-size:10px;font-family:inherit;margin-left:4px">' + esc(p.label) + '</span>'
+                       + '</button>'
+                     ).join("")
+          + '      </div>'
+          + '    </div>'
+
+          + '    <form id="dept-tpl-form" class="stack" style="gap:16px">'
+          + '      <div class="form-grid">'
+          + '        <div class="field full">'
+          + '          <label>Official Document Title / Heading</label>'
+          + '          <input class="input" name="letter_title" value="' + esc(curTpl.letter_title || ("OFFER OF APPOINTMENT — " + curDeptName.toUpperCase())) + '" placeholder="OFFER OF APPOINTMENT">'
+          + '        </div>'
+          + '        <div class="field full">'
+          + '          <label>Default Subject Line</label>'
+          + '          <input class="input" name="subject_line" value="' + esc(curTpl.subject_line || ("APPOINTMENT AS {{designation}} — " + curDeptName.toUpperCase() + " DEPARTMENT")) + '" placeholder="APPOINTMENT AS {{designation}} — {{department}}">'
+          + '        </div>'
+          + '        <div class="field">'
+          + '          <label>Standard Working Hours / Shift Schedule</label>'
+          + '          <input class="input" name="working_hours" value="' + esc(curTpl.working_hours || "40 hours per week (operational shifts as scheduled by Department Supervisor)") + '">'
+          + '        </div>'
+          + '        <div class="field">'
+          + '          <label>Termination Notice Clause</label>'
+          + '          <input class="input" name="notice_period" value="' + esc(curTpl.notice_period || "One (1) calendar month written notice (or salary in lieu thereof)") + '">'
+          + '        </div>'
+          + '        <div class="field full">'
+          + '          <label>Opening Appointment Paragraph</label>'
+          + '          <textarea class="textarea" rows="3" name="opening">' + esc(curTpl.opening || ("Management of {{company_legal_name}} is pleased to offer you an appointment as {{designation}} in our " + curDeptName + " Department effective {{hire_date}}.")) + '</textarea>'
+          + '        </div>'
+          + '      </div>'
+
+          + '      <div class="card card-pad" style="background:var(--surface-2);border-radius:10px">'
+          + '        <div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:12px">'
+          + '          <div>'
+          + '            <div style="font-weight:600;font-size:14px">Contract Sections & Department Clauses</div>'
+          + '            <div class="tiny muted">Specific duties, compensation, schedule, and standards for ' + esc(curDeptName) + '.</div>'
+          + '          </div>'
+          + '          <button type="button" class="btn btn-sm btn-ghost" id="btn-add-section">' + icon("plus", 13) + ' Add Clause</button>'
+          + '        </div>'
+          + '        <div id="dept-sections-container" class="stack" style="gap:10px"></div>'
+          + '      </div>'
+
+          + '      <div class="form-grid">'
+          + '        <div class="field full">'
+          + '          <label>Department-Specific Special Terms / Uniform / Duty Meals / Allowance Clause (Optional)</label>'
+          + '          <textarea class="textarea" rows="2" name="extra_clause" placeholder="e.g. Duty meals, uniform laundering, night audit allowance, tools provision, or service charge policy…">' + esc(curTpl.extra_clause || "") + '</textarea>'
+          + '        </div>'
+          + '        <div class="field full">'
+          + '          <label>Closing Acceptance Paragraph</label>'
+          + '          <textarea class="textarea" rows="2" name="closing">' + esc(curTpl.closing || "Kindly confirm your acceptance of the terms and conditions of this appointment by signing the duplicate copy below.") + '</textarea>'
+          + '        </div>'
+          + '      </div>'
+
+          + '      <div class="row-between" style="flex-wrap:wrap;gap:10px;margin-top:8px">'
+          + '        <button type="button" class="btn btn-soft" id="btn-preview-bottom">' + icon("eye", 14) + ' Test & Preview Letter</button>'
+          + (canManage
+              ? '        <button type="submit" class="btn btn-accent" id="btn-save-dept-tpl">' + icon("check", 14) + ' Save ' + esc(curDeptName) + ' Template</button>'
+              : '')
+          + '      </div>'
+          + '    </form>'
+          + '  </div>'
+          + '</div></div>';
+      }
     } else {
       const curTpl = templates.find(t => t.key === letterHubState.selectedTemplateKey) || templates[0] || {};
       bodyHtml = '<div class="grid grid-3" style="align-items:start">'
@@ -601,6 +830,25 @@ Views["employment-letters"] = async function (root) {
 
         + '<div class="card span-2"><div class="card-head">'
         + '<div><h3>' + esc(curTpl.label || "") + ' Template</h3><div class="sub">Placeholders supported: <span class="mono">{{employee_name}}</span>, <span class="mono">{{designation}}</span>, <span class="mono">{{department}}</span>, <span class="mono">{{staff_category}}</span>, <span class="mono">{{basic_salary}}</span>, <span class="mono">{{hire_date}}</span>, <span class="mono">{{end_date}}</span></div></div>'
+        + '</div>'
+        + '<div class="card-body stack" style="gap:14px;padding-bottom:0">'
+        + '  <div class="card card-pad" id="cat-tpl-dropzone" style="border:2px dashed var(--accent);background:var(--surface-2);border-radius:10px;padding:14px 18px">'
+        + '    <div class="row-between" style="flex-wrap:wrap;gap:12px;align-items:center">'
+        + '      <div style="max-width:520px">'
+        + '        <div style="font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px">'
+        +            icon("upload", 16) + ' Upload Word (.docx / .doc) or PDF Contract for ' + esc(curTpl.label)
+        + '        </div>'
+        + '        <div class="tiny muted" style="margin-top:2px">'
+        + '          Extracts contract text and populates category fields with dynamic variables (salary, employee name, department, designation).'
+        + '        </div>'
+        + '      </div>'
+        + '      <div>'
+        + '        <input type="file" id="cat-tpl-doc-input" accept=".docx,.doc,.pdf,.txt" style="display:none">'
+        + '        <button type="button" class="btn btn-teal btn-sm" id="cat-tpl-upload-btn">' + icon("upload", 14) + ' Browse File</button>'
+        + '      </div>'
+        + '    </div>'
+        + '    <div id="cat-tpl-upload-feedback" style="display:none;margin-top:10px"></div>'
+        + '  </div>'
         + '</div>'
         + '<form id="tpl-save-form" class="card-body stack">'
         + '  <div class="form-grid">'
@@ -640,6 +888,7 @@ Views["employment-letters"] = async function (root) {
           ? '  <button class="tab ' + (letterHubState.tab === "my_letter" ? "active" : "") + '" data-ltab="my_letter">' + icon("file", 14) + ' My Appointment Letter</button>'
           : '')
       + '  <button class="tab ' + (letterHubState.tab === "register" ? "active" : "") + '" data-ltab="register">Employee Letters & Credentials (' + allRows.length + ')</button>'
+      + '  <button class="tab ' + (letterHubState.tab === "dept_templates" ? "active" : "") + '" data-ltab="dept_templates">' + icon("briefcase", 14) + ' Department Templates (' + deptList.length + ')</button>'
       + '  <button class="tab ' + (letterHubState.tab === "templates" ? "active" : "") + '" data-ltab="templates">Category Templates (' + templates.length + ')</button>'
       + '</div>'
       + bodyHtml;
@@ -662,6 +911,19 @@ Views["employment-letters"] = async function (root) {
     });
     const myOwnBtn = root.querySelector("#btn-my-own-letter");
     if (myOwnBtn) myOwnBtn.onclick = () => openEmploymentLetterModal(Store.user.employee_id, () => Views["employment-letters"](root));
+
+    const headerUploadBtn = root.querySelector("#btn-header-upload-doc");
+    if (headerUploadBtn) {
+      headerUploadBtn.onclick = () => {
+        letterHubState.tab = "dept_templates";
+        letterHubState._userSwitchedTab = true;
+        Views["employment-letters"](root);
+        setTimeout(() => {
+          const di = root.querySelector("#dept-tpl-doc-input");
+          if (di) di.click();
+        }, 150);
+      };
+    }
 
     const bulkBtn = root.querySelector("#btn-bulk-provision");
     if (bulkBtn) bulkBtn.onclick = async () => {
@@ -687,6 +949,89 @@ Views["employment-letters"] = async function (root) {
       Views["employment-letters"](root);
     });
 
+    const catDocInput = root.querySelector("#cat-tpl-doc-input");
+    const catUploadBtn = root.querySelector("#cat-tpl-upload-btn");
+    const catFeedbackEl = root.querySelector("#cat-tpl-upload-feedback");
+    const catDropzone = root.querySelector("#cat-tpl-dropzone");
+
+    if (catDropzone && catDocInput) {
+      ['dragenter', 'dragover'].forEach(name => {
+        catDropzone.addEventListener(name, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          catDropzone.style.borderColor = 'var(--accent)';
+          catDropzone.style.background = 'var(--surface-3, var(--surface))';
+        });
+      });
+      ['dragleave', 'drop'].forEach(name => {
+        catDropzone.addEventListener(name, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          catDropzone.style.borderColor = 'var(--accent)';
+          catDropzone.style.background = 'var(--surface-2)';
+        });
+      });
+      catDropzone.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        if (dt && dt.files && dt.files.length) {
+          catDocInput.files = dt.files;
+          catDocInput.dispatchEvent(new Event('change'));
+        }
+      });
+    }
+
+    if (catUploadBtn && catDocInput) {
+      catUploadBtn.onclick = () => catDocInput.click();
+      catDocInput.onchange = async () => {
+        if (!catDocInput.files || !catDocInput.files[0]) return;
+        const file = catDocInput.files[0];
+        const fd = new FormData();
+        fd.append("file", file);
+
+        catFeedbackEl.style.display = "block";
+        catFeedbackEl.innerHTML = '<div class="callout-banner amber" style="padding:10px 14px;border-radius:8px">' + spinners(1) + ' Converting <b>' + esc(file.name) + '</b>…</div>';
+        try {
+          const res = await API.upload("/employment-letters/parse-document", fd);
+          const parsed = (res && res.data) ? res.data : (res || {});
+          if (parsed.letter_title) {
+            const inp = root.querySelector('#tpl-save-form [name="letter_title"]');
+            if (inp) inp.value = parsed.letter_title;
+          }
+          if (parsed.subject_line) {
+            const inp = root.querySelector('#tpl-save-form [name="subject_line"]');
+            if (inp) inp.value = parsed.subject_line;
+          }
+          if (parsed.working_hours) {
+            const inp = root.querySelector('#tpl-save-form [name="working_hours"]');
+            if (inp) inp.value = parsed.working_hours;
+          }
+          if (parsed.notice_period) {
+            const inp = root.querySelector('#tpl-save-form [name="notice_period"]');
+            if (inp) inp.value = parsed.notice_period;
+          }
+          if (parsed.opening) {
+            const inp = root.querySelector('#tpl-save-form [name="opening"]');
+            if (inp) inp.value = parsed.opening;
+          }
+          if (parsed.closing) {
+            const inp = root.querySelector('#tpl-save-form [name="closing"]');
+            if (inp) inp.value = parsed.closing;
+          }
+          if (parsed.extra_clause) {
+            const inp = root.querySelector('#tpl-save-form [name="extra_clause"]');
+            if (inp) inp.value = parsed.extra_clause;
+          }
+          catFeedbackEl.innerHTML = '<div class="callout-banner green" style="padding:10px 14px;border-radius:8px"><b>Document Parsed!</b> Form fields populated from <i>' + esc(file.name) + '</i>. Click "Save Template" below to apply.</div>';
+          toast("Document parsed into category template", "success");
+        } catch (err) {
+          catFeedbackEl.innerHTML = '<div class="callout-banner red" style="padding:10px 14px;border-radius:8px"><b>Error:</b> ' + esc(err.message) + '</div>';
+          toast(err.message, "error");
+        } finally {
+          catDocInput.value = "";
+        }
+      };
+    }
+
     const tplForm = root.querySelector("#tpl-save-form");
     if (tplForm) tplForm.onsubmit = async (ev) => {
       ev.preventDefault();
@@ -699,6 +1044,331 @@ Views["employment-letters"] = async function (root) {
         Views["employment-letters"](root);
       } catch (err) { handleErr(err); }
     };
+
+    /* ---------------- DEPARTMENT TEMPLATES TAB INTERACTIONS ---------------- */
+    if (letterHubState.tab === "dept_templates" && deptList.length) {
+      const curDept = deptList.find(d => (d.department_id || d.id) === letterHubState.selectedDeptId) || deptList[0];
+      const curDeptId = curDept.department_id || curDept.id;
+      const curDeptName = curDept.department_name || curDept.name;
+      const curTpl = curDept.template || {};
+
+      let lastFocusedInput = null;
+      root.querySelectorAll("#dept-tpl-form input, #dept-tpl-form textarea").forEach(el => {
+        el.addEventListener("focus", () => { lastFocusedInput = el; });
+      });
+
+      function createSectionRowElement(heading, body) {
+        const row = document.createElement("div");
+        row.className = "section-row card card-pad";
+        row.style.cssText = "border:1px solid var(--line);background:var(--surface);padding:10px;border-radius:8px";
+        row.innerHTML = '<div class="row-between" style="margin-bottom:6px;gap:8px">'
+          + '  <input class="input input-sm section-heading" style="font-weight:600;flex:1" placeholder="Clause heading (e.g. 1. Duties & Reporting Line)" value="' + esc(heading || "") + '">'
+          + '  <button type="button" class="btn btn-xs btn-ghost text-danger btn-remove-section" title="Remove clause">' + icon("trash", 13) + '</button>'
+          + '</div>'
+          + '<textarea class="textarea section-body" rows="3" placeholder="Clause body text with dynamic placeholders (e.g. Your monthly basic salary shall be {{salary}}...)">' + esc(body || "") + '</textarea>';
+
+        row.querySelector(".btn-remove-section").onclick = () => row.remove();
+        row.querySelectorAll("input, textarea").forEach(el => {
+          el.addEventListener("focus", () => { lastFocusedInput = el; });
+        });
+        return row;
+      }
+
+      const sectionsContainer = root.querySelector("#dept-sections-container");
+      if (sectionsContainer) {
+        sectionsContainer.innerHTML = "";
+        const initSections = (curTpl.sections && curTpl.sections.length)
+          ? curTpl.sections
+          : [
+              ["1. Duties & Reporting Line", "You will perform duties as {{designation}} ({{staff_category}}) in the {{department}} Department at {{branch_location}}, reporting directly to {{manager_name}}."],
+              ["2. Working Hours & Shift Roster", "Your contracted hours are {{working_hours}}. You are required to observe all attendance, shift rotation, and punctuality rules."],
+              ["3. Remuneration & Deductions", "Your monthly basic salary shall be {{salary}} ({{gross_clause}}), paid monthly in arrears subject to statutory PAYE tax and SSNIT pension deductions."],
+              ["4. Probation & Confirmation", "{{probation_clause}}"],
+              ["5. Annual Leave & Standards", "You are entitled to {{leave_days}} working days of paid annual leave per completed year. You agree to adhere strictly to all company safety, ethics, and service quality policies."],
+              ["6. Termination of Appointment", "Either party may terminate this appointment by giving {{notice_period}} in writing or salary in lieu of notice."]
+            ];
+        initSections.forEach(([h, b]) => {
+          sectionsContainer.appendChild(createSectionRowElement(h, b));
+        });
+      }
+
+      const addSecBtn = root.querySelector("#btn-add-section");
+      if (addSecBtn && sectionsContainer) {
+        addSecBtn.onclick = () => {
+          const newRow = createSectionRowElement("", "");
+          sectionsContainer.appendChild(newRow);
+          const inp = newRow.querySelector(".section-heading");
+          if (inp) inp.focus();
+        };
+      }
+
+      root.querySelectorAll(".placeholder-tag-btn").forEach(btn => {
+        btn.onclick = (e) => {
+          e.preventDefault();
+          const tag = btn.dataset.insertTag;
+          if (lastFocusedInput && document.body.contains(lastFocusedInput)) {
+            const start = lastFocusedInput.selectionStart || 0;
+            const end = lastFocusedInput.selectionEnd || 0;
+            const val = lastFocusedInput.value || "";
+            lastFocusedInput.value = val.substring(0, start) + tag + val.substring(end);
+            lastFocusedInput.focus();
+            const nextPos = start + tag.length;
+            lastFocusedInput.setSelectionRange(nextPos, nextPos);
+            toast("Inserted " + tag, "success");
+          } else {
+            copyTextToClipboard(tag, tag);
+          }
+        };
+      });
+
+      const docInput = root.querySelector("#dept-tpl-doc-input");
+      const uploadBtn = root.querySelector("#dept-tpl-upload-btn");
+      const feedbackEl = root.querySelector("#dept-tpl-upload-feedback");
+      const dropzone = root.querySelector("#dept-tpl-dropzone");
+
+      if (dropzone && docInput) {
+        ['dragenter', 'dragover'].forEach(name => {
+          dropzone.addEventListener(name, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.style.borderColor = 'var(--accent)';
+            dropzone.style.background = 'var(--surface-3, var(--surface))';
+          });
+        });
+        ['dragleave', 'drop'].forEach(name => {
+          dropzone.addEventListener(name, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.style.borderColor = 'var(--accent)';
+            dropzone.style.background = 'var(--surface-2)';
+          });
+        });
+        dropzone.addEventListener('drop', (e) => {
+          const dt = e.dataTransfer;
+          if (dt && dt.files && dt.files.length) {
+            docInput.files = dt.files;
+            docInput.dispatchEvent(new Event('change'));
+          }
+        });
+      }
+
+      if (uploadBtn && docInput) {
+        uploadBtn.onclick = () => docInput.click();
+        docInput.onchange = async () => {
+          if (!docInput.files || !docInput.files[0]) return;
+          const file = docInput.files[0];
+          const fd = new FormData();
+          fd.append("file", file);
+
+          feedbackEl.style.display = "block";
+          feedbackEl.innerHTML = '<div class="callout-banner amber" style="padding:10px 14px;border-radius:8px;display:flex;align-items:center;gap:8px">'
+            + spinners(1) + ' Uploading and converting <b>' + esc(file.name) + '</b> into dynamic template…</div>';
+
+          try {
+            const res = await API.upload("/employment-letters/parse-document", fd);
+            const parsed = (res && res.data) ? res.data : (res || {});
+            const detected = res.detected_placeholders || (res.data && res.data.detected_placeholders) || [];
+
+            if (parsed.letter_title) {
+              const inp = root.querySelector('[name="letter_title"]');
+              if (inp) inp.value = parsed.letter_title;
+            }
+            if (parsed.subject_line) {
+              const inp = root.querySelector('[name="subject_line"]');
+              if (inp) inp.value = parsed.subject_line;
+            }
+            if (parsed.working_hours) {
+              const inp = root.querySelector('[name="working_hours"]');
+              if (inp) inp.value = parsed.working_hours;
+            }
+            if (parsed.notice_period) {
+              const inp = root.querySelector('[name="notice_period"]');
+              if (inp) inp.value = parsed.notice_period;
+            }
+            if (parsed.opening) {
+              const inp = root.querySelector('[name="opening"]');
+              if (inp) inp.value = parsed.opening;
+            }
+            if (parsed.closing) {
+              const inp = root.querySelector('[name="closing"]');
+              if (inp) inp.value = parsed.closing;
+            }
+            if (parsed.extra_clause) {
+              const inp = root.querySelector('[name="extra_clause"]');
+              if (inp) inp.value = parsed.extra_clause;
+            }
+
+            if (parsed.sections && parsed.sections.length && sectionsContainer) {
+              sectionsContainer.innerHTML = "";
+              parsed.sections.forEach(([h, b]) => {
+                sectionsContainer.appendChild(createSectionRowElement(h, b));
+              });
+            }
+
+            const detectedBadges = detected.length
+              ? '<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">' + detected.map(t => '<span class="chip-sm mono" style="font-size:11px">{{' + esc(t.replace(/[{}]/g, "")) + '}}</span>').join("") + '</div>'
+              : '';
+
+            feedbackEl.innerHTML = '<div class="callout-banner green">'
+              + '<div><b>Document Parsed Successfully!</b> Imported ' + ((parsed.sections && parsed.sections.length) || 0) + ' clauses from <b>' + esc(file.name) + '</b>. '
+              + detectedBadges
+              + '<div class="tiny" style="margin-top:6px">Clauses and text populated below. Review, make adjustments, and click <b>Save ' + esc(curDeptName) + ' Template</b>.</div>'
+              + '</div></div>';
+            toast("Appointment letter document parsed & populated", "success");
+          } catch (err) {
+            feedbackEl.innerHTML = '<div class="callout-banner red"><b>Conversion Failed:</b> ' + esc(err.message) + '</div>';
+            toast(err.message, "error");
+          } finally {
+            docInput.value = "";
+          }
+        };
+      }
+
+      function harvestDeptTemplateData() {
+        const form = root.querySelector("#dept-tpl-form");
+        if (!form) return {};
+        const fd = new FormData(form);
+        const out = {};
+        for (const [k, v] of fd.entries()) out[k] = v;
+
+        const sections = [];
+        root.querySelectorAll("#dept-sections-container .section-row").forEach(row => {
+          const h = (row.querySelector(".section-heading")?.value || "").trim();
+          const b = (row.querySelector(".section-body")?.value || "").trim();
+          if (h || b) {
+            sections.push([h, b]);
+          }
+        });
+        out.sections = sections;
+        return out;
+      }
+
+      async function openDeptTemplatePreviewModal() {
+        const deptEmps = allRows.filter(r => (r.department_name === curDeptName) || (r.department_id === curDeptId));
+        const candidateEmps = deptEmps.length ? deptEmps : allRows;
+        let activeEmpId = candidateEmps.length ? candidateEmps[0].employee_id : null;
+        let cachedPreviewHtml = "";
+
+        openModal({
+          title: "Preview " + curDeptName + " Appointment Letter",
+          sub: "Dynamic placeholder verification with live employee data (salary, department, designation, etc.)",
+          wide: true,
+          body: '<div class="stack" style="gap:14px">'
+            + '<div class="row-between" style="background:var(--surface-2);padding:10px 14px;border-radius:10px;border:1px solid var(--line);flex-wrap:wrap;gap:10px">'
+            + '  <div class="row" style="gap:10px;align-items:center;flex-wrap:wrap">'
+            + '    <label class="small" style="font-weight:600">Select Test Employee:</label>'
+            + '    <select id="modal-preview-emp-select" class="input input-sm" style="min-width:260px">'
+            +        candidateEmps.map(e =>
+                       '<option value="' + e.employee_id + '" ' + (e.employee_id === activeEmpId ? "selected" : "") + '>'
+                       + esc(e.employee_name) + ' — ' + esc(e.designation_title || "Staff") + ' (' + esc(e.department_name || "") + ')'
+                       + '</option>'
+                     ).join("")
+            + '    </select>'
+            + (!deptEmps.length ? '<span class="tiny amber">Note: Showing cross-department staff because no employees are assigned to ' + esc(curDeptName) + ' yet.</span>' : '')
+            + '  </div>'
+            + '  <div class="row" style="gap:8px">'
+            + '    <button type="button" class="btn btn-sm btn-ghost" id="modal-refresh-preview">' + icon("refresh", 13) + ' Refresh</button>'
+            + '    <button type="button" class="btn btn-sm btn-accent" id="modal-print-preview">' + icon("printer", 13) + ' Print / Save PDF</button>'
+            + '  </div>'
+            + '</div>'
+            + '<div id="modal-preview-canvas" class="letter-preview-canvas" style="min-height:420px;background:#fff">' + spinners(3) + '</div>'
+            + '</div>',
+          footer: '<button class="btn btn-ghost" data-close-modal>Close Preview</button>'
+        });
+
+        async function fetchAndRenderPreview(empId) {
+          const canvas = document.getElementById("modal-preview-canvas");
+          if (!canvas) return;
+          canvas.innerHTML = spinners(3);
+          const draftTpl = harvestDeptTemplateData();
+          try {
+            const res = await API.post("/employment-letters/preview-department-template", {
+              department_id: curDeptId,
+              employee_id: empId,
+              template: draftTpl
+            });
+            const d = res.data;
+            cachedPreviewHtml = d.html || "";
+            canvas.innerHTML = cachedPreviewHtml;
+          } catch (err) {
+            canvas.innerHTML = emptyState("Failed to render preview", err.message, "alert");
+          }
+        }
+
+        const selectEl = document.getElementById("modal-preview-emp-select");
+        if (selectEl) {
+          selectEl.onchange = () => {
+            activeEmpId = Number(selectEl.value);
+            fetchAndRenderPreview(activeEmpId);
+          };
+        }
+        const refreshBtn = document.getElementById("modal-refresh-preview");
+        if (refreshBtn) refreshBtn.onclick = () => fetchAndRenderPreview(activeEmpId);
+        const printBtn = document.getElementById("modal-print-preview");
+        if (printBtn) printBtn.onclick = () => {
+          if (cachedPreviewHtml) printLetterHtml(cachedPreviewHtml);
+        };
+
+        fetchAndRenderPreview(activeEmpId);
+      }
+
+      const prevBtn1 = root.querySelector("#btn-preview-dept-tpl");
+      const prevBtn2 = root.querySelector("#btn-preview-bottom");
+      if (prevBtn1) prevBtn1.onclick = openDeptTemplatePreviewModal;
+      if (prevBtn2) prevBtn2.onclick = openDeptTemplatePreviewModal;
+
+      const deptForm = root.querySelector("#dept-tpl-form");
+      if (deptForm) {
+        deptForm.onsubmit = async (ev) => {
+          ev.preventDefault();
+          const tplData = harvestDeptTemplateData();
+          try {
+            await API.put("/employment-letters/department-templates/" + curDeptId, tplData);
+            toast("Saved appointment letter template for " + curDeptName, "success");
+            Views["employment-letters"](root);
+          } catch (err) {
+            handleErr(err);
+          }
+        };
+      }
+
+      const resetBtn = root.querySelector("#btn-reset-dept-tpl");
+      if (resetBtn) {
+        resetBtn.onclick = () => {
+          confirmDialog(
+            "Reset Template to Default",
+            "Are you sure you want to revert the " + curDeptName + " appointment letter template back to baseline default? Custom clauses and document text will be removed.",
+            async () => {
+              try {
+                await API.delete("/employment-letters/department-templates/" + curDeptId);
+                toast("Reset " + curDeptName + " template to baseline default", "success");
+                Views["employment-letters"](root);
+              } catch (err) {
+                handleErr(err);
+              }
+            },
+            { danger: true, confirmLabel: "Reset to Default" }
+          );
+        };
+      }
+
+      root.querySelectorAll("[data-pick-dept]").forEach(b => {
+        b.onclick = () => {
+          letterHubState.selectedDeptId = Number(b.dataset.pickDept);
+          Views["employment-letters"](root);
+        };
+      });
+
+      const deptSearch = root.querySelector("#dept-search-input");
+      if (deptSearch) {
+        deptSearch.oninput = () => {
+          const q = deptSearch.value.toLowerCase().trim();
+          root.querySelectorAll("#dept-list-container [data-pick-dept]").forEach(btn => {
+            btn.style.display = (!q || btn.textContent.toLowerCase().includes(q)) ? "flex" : "none";
+          });
+        };
+      }
+    }
   } catch (err) {
     root.innerHTML = pageHead("Employment Letters", "Unavailable") + emptyState("Could not load employment letters", err.message, "alert");
   }

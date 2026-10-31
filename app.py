@@ -33,7 +33,8 @@ from models import (
     NotificationPreference, NotificationDelivery, Approval, AuditLog, Setting,
     LoginHistory, MfaTrustedDevice, DatabaseBackup,
     HotelInventoryItem, HotelStockMovement, HotelWorkOrder,
-    HotelStoreroom, HotelStoreroomSection, MaintenanceWork,
+    HotelStoreroom, HotelStoreroomSection, MaintenanceWork, MaintenanceCategory,
+    DepartmentHead,
 )
 import models
 import mfa
@@ -166,6 +167,7 @@ def ensure_schema():
             ("status", "VARCHAR(20) DEFAULT 'active'"),
             ("email", "VARCHAR(180)"),
             ("phone", "VARCHAR(40)"),
+            ("assistant_head_id", "INTEGER"),
         ],
     }
     with db.engine.begin() as conn:
@@ -462,6 +464,354 @@ def ensure_demo_enrichment():
         db.session.commit()
 
 
+BASELINE_MAINTENANCE_CATEGORIES = [
+    {
+        "name": "Preventive",
+        "code": "PREV",
+        "description": "Routine scheduled service, filter checks, and regular servicing to avoid system failures.",
+        "priority_default": "medium",
+        "sla_hours": 48,
+        "color_tone": "blue",
+    },
+    {
+        "name": "Repair",
+        "code": "REP",
+        "description": "Corrective fixing of damaged fixtures, hotel equipment, or guest room defects.",
+        "priority_default": "high",
+        "sla_hours": 12,
+        "color_tone": "amber",
+    },
+    {
+        "name": "Inspection",
+        "code": "INSP",
+        "description": "Routine audit checks, structural, environmental, and equipment assessments.",
+        "priority_default": "low",
+        "sla_hours": 72,
+        "color_tone": "teal",
+    },
+    {
+        "name": "Electrical",
+        "code": "ELEC",
+        "description": "Lighting, generators, wiring, power distribution boards, and circuit breakers.",
+        "priority_default": "high",
+        "sla_hours": 8,
+        "color_tone": "purple",
+    },
+    {
+        "name": "Plumbing",
+        "code": "PLUMB",
+        "description": "Pipes, water heaters, booster pumps, guest bath fixtures, and drainage lines.",
+        "priority_default": "high",
+        "sla_hours": 8,
+        "color_tone": "blue",
+    },
+    {
+        "name": "HVAC",
+        "code": "HVAC",
+        "description": "Central air conditioning, roof chillers, ducting, and room air handling units.",
+        "priority_default": "medium",
+        "sla_hours": 24,
+        "color_tone": "teal",
+    },
+    {
+        "name": "Kitchen & Cold Room",
+        "code": "KITCH",
+        "description": "Walk-in chillers, ovens, fryers, commercial dishwashers, and kitchen extractors.",
+        "priority_default": "emergency",
+        "sla_hours": 4,
+        "color_tone": "red",
+    },
+    {
+        "name": "Fire & Life Safety",
+        "code": "FIRE",
+        "description": "Smoke detectors, fire extinguishers, emergency stairwell lights, and sprinkler valves.",
+        "priority_default": "emergency",
+        "sla_hours": 2,
+        "color_tone": "red",
+    },
+    {
+        "name": "Other",
+        "code": "OTHER",
+        "description": "General carpentry, painting, masonry, grounds, and miscellaneous facility repairs.",
+        "priority_default": "low",
+        "sla_hours": 48,
+        "color_tone": "green",
+    },
+]
+
+
+def ensure_maintenance_categories():
+    """Ensure baseline maintenance categories exist and import any distinct category from historical works."""
+    try:
+        existing = {c.name.strip().lower() for c in MaintenanceCategory.query.all()}
+    except Exception:
+        return
+
+    added = False
+    for item in BASELINE_MAINTENANCE_CATEGORIES:
+        if item["name"].strip().lower() not in existing:
+            cat = MaintenanceCategory(
+                name=item["name"],
+                code=item["code"],
+                description=item["description"],
+                priority_default=item.get("priority_default", "medium"),
+                sla_hours=item.get("sla_hours", 24),
+                color_tone=item.get("color_tone", "blue"),
+                status="active",
+            )
+            db.session.add(cat)
+            existing.add(item["name"].strip().lower())
+            added = True
+
+    try:
+        used_cats = [r[0] for r in db.session.query(MaintenanceWork.category).distinct().all() if r[0]]
+        for uc in used_cats:
+            clean = uc.strip()
+            if clean and clean.lower() not in existing:
+                cat = MaintenanceCategory(
+                    name=clean,
+                    code=clean[:6].upper(),
+                    description=f"{clean} maintenance works",
+                    priority_default="medium",
+                    sla_hours=24,
+                    color_tone="blue",
+                    status="active",
+                )
+                db.session.add(cat)
+                existing.add(clean.lower())
+                added = True
+    except Exception:
+        pass
+
+    if added:
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+
+def ensure_department_heads():
+    """Seed baseline department heads, assistants, and MD from existing records."""
+    try:
+        if DepartmentHead.query.count() > 0:
+            return
+    except Exception:
+        return
+
+    added = False
+    # 1. Seed Managing Director
+    md_emp = None
+    executives = (
+        Employee.query.join(Designation, Employee.designation_id == Designation.id)
+        .filter(
+            Employee.deleted_at.is_(None),
+            Employee.status.in_(["active", "probation"]),
+            or_(
+                Designation.title.ilike("%managing director%"),
+                Designation.title.ilike("%chief executive%"),
+                func.lower(Designation.title).in_(["ceo", "md"]),
+            ),
+        )
+        .order_by(Employee.id.asc())
+        .all()
+    )
+    if executives:
+        md_emp = executives[0]
+    elif Employee.query.count() > 0:
+        md_emp = Employee.query.order_by(Employee.id.asc()).first()
+
+    if md_emp:
+        md_leader = DepartmentHead(
+            employee_id=md_emp.id,
+            role_type="md",
+            title=md_emp.designation.title if md_emp.designation else "Managing Director",
+            department_id=md_emp.department_id,
+            status="active",
+            phone=md_emp.phone or "",
+            email=md_emp.email or "",
+            notes="Chief Executive / Managing Director leading overall hotel & organisational strategy.",
+        )
+        db.session.add(md_leader)
+        added = True
+
+    # 2. Seed Heads from existing departments
+    seen_head_emps = set()
+    if md_emp:
+        seen_head_emps.add(md_emp.id)
+
+    depts = Department.query.order_by(Department.id.asc()).all()
+    for d in depts:
+        if d.head_id and d.head_id not in seen_head_emps:
+            head_emp = db.session.get(Employee, d.head_id)
+            if head_emp and not head_emp.deleted_at:
+                dh = DepartmentHead(
+                    employee_id=head_emp.id,
+                    role_type="head",
+                    title=f"Head of {d.name}",
+                    department_id=d.id,
+                    reports_to_id=md_emp.id if md_emp else None,
+                    status="active",
+                    phone=head_emp.phone or "",
+                    email=head_emp.email or "",
+                    notes=f"Designated head of {d.name} department.",
+                )
+                db.session.add(dh)
+                seen_head_emps.add(head_emp.id)
+                added = True
+
+        if getattr(d, "assistant_head_id", None):
+            asst_emp = db.session.get(Employee, d.assistant_head_id)
+            if asst_emp and not asst_emp.deleted_at:
+                da = DepartmentHead(
+                    employee_id=asst_emp.id,
+                    role_type="assistant",
+                    title=f"Assistant Head of {d.name}",
+                    department_id=d.id,
+                    reports_to_id=d.head_id or (md_emp.id if md_emp else None),
+                    status="active",
+                    phone=asst_emp.phone or "",
+                    email=asst_emp.email or "",
+                    notes=f"Designated assistant head of {d.name} department.",
+                )
+                db.session.add(da)
+                added = True
+
+    if added:
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+
+def get_fixed_md():
+    """Retrieve the organization's fixed Managing Director / CEO."""
+    try:
+        dh = DepartmentHead.query.filter_by(role_type="md", status="active").first()
+        if dh and dh.employee and not dh.employee.deleted_at:
+            return dh.employee
+        executives = (
+            Employee.query.join(Designation, Employee.designation_id == Designation.id)
+            .filter(
+                Employee.deleted_at.is_(None),
+                Employee.status.in_(["active", "probation"]),
+                or_(
+                    Designation.title.ilike("%managing director%"),
+                    Designation.title.ilike("%chief executive%"),
+                    func.lower(Designation.title).in_(["ceo", "md"]),
+                ),
+            )
+            .order_by(Employee.id.asc())
+            .all()
+        )
+        if executives:
+            return executives[0]
+        return Employee.query.filter(Employee.deleted_at.is_(None)).order_by(Employee.id.asc()).first()
+    except Exception:
+        return None
+
+
+def get_fixed_accountant():
+    """Retrieve the organization's fixed Lead Accountant / CFO."""
+    try:
+        dh = DepartmentHead.query.filter(
+            DepartmentHead.role_type == "accountant",
+            DepartmentHead.status == "active"
+        ).first()
+        if dh and dh.employee and not dh.employee.deleted_at:
+            return dh.employee
+        finance_staff = (
+            Employee.query.filter(
+                Employee.deleted_at.is_(None),
+                Employee.status.in_(["active", "probation"])
+            )
+            .join(Department, Employee.department_id == Department.id)
+            .filter(Department.name.ilike("%finance%"))
+            .order_by(Employee.id.asc())
+            .all()
+        )
+        for cand in finance_staff:
+            t = cand.designation.title.lower() if cand.designation and cand.designation.title else ""
+            if any(k in t for k in ["chief financial officer", "cfo", "accountant", "controller", "finance manager"]):
+                return cand
+        if finance_staff:
+            return finance_staff[0]
+        return db.session.get(Employee, 4)
+    except Exception:
+        return None
+
+
+def get_employee_hod(emp):
+    """Retrieve the Head of Department for a given employee.
+    If the employee is themselves the head of department, escalates to the MD.
+    """
+    if not emp:
+        return None
+    try:
+        md = get_fixed_md()
+        dept_id = emp.department_id
+        if dept_id:
+            # 1. Check DepartmentHead table for role_type == 'head'
+            dh = DepartmentHead.query.filter_by(
+                department_id=dept_id,
+                role_type="head",
+                status="active"
+            ).first()
+            if dh and dh.employee and not dh.employee.deleted_at:
+                if dh.employee_id != emp.id:
+                    return dh.employee
+                else:
+                    return md
+
+            # 2. Check Department.head_id
+            dept = emp.department or db.session.get(Department, dept_id)
+            if dept and dept.head_id:
+                head = db.session.get(Employee, dept.head_id)
+                if head and not head.deleted_at:
+                    if head.id != emp.id:
+                        return head
+                    else:
+                        return md
+
+        # Fallbacks: direct manager or MD
+        if emp.manager and not emp.manager.deleted_at and emp.manager_id != emp.id:
+            return emp.manager
+        return md
+    except Exception:
+        return None
+
+
+def sync_employee_approvers():
+    """Synchronize all active employees' approver references so their HoD matches
+    their department head and their Accountant & MD are fixed org leaders."""
+    try:
+        md = get_fixed_md()
+        acc = get_fixed_accountant()
+        md_id = md.id if md else None
+        acc_id = acc.id if acc else None
+
+        employees = Employee.query.filter(Employee.deleted_at.is_(None)).all()
+        changed = 0
+        for emp in employees:
+            target_hod = get_employee_hod(emp)
+            hod_id = target_hod.id if target_hod else None
+            dirty = False
+            if emp.accountant_id != acc_id and acc_id:
+                emp.accountant_id = acc_id
+                dirty = True
+            if emp.md_id != md_id and md_id:
+                emp.md_id = md_id
+                dirty = True
+            if hod_id and emp.hod_id != hod_id:
+                emp.hod_id = hod_id
+                dirty = True
+            if dirty:
+                changed += 1
+        if changed > 0:
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
 def bootstrap_database():
     with app.app_context():
         db.create_all()
@@ -471,6 +821,9 @@ def bootstrap_database():
         ensure_delivery_settings()
         ensure_demo_enrichment()
         hotel_ops.seed_hotel_operations(db, models)
+        ensure_maintenance_categories()
+        ensure_department_heads()
+        sync_employee_approvers()
 
 
 READ_ONLY = {"auditor"}
@@ -524,9 +877,10 @@ WRITE_PERMS = {
     "hotel-work-orders": {"super_admin", "hr_admin", "operations_manager", "operations_officer", "hotel_manager", "manager", "employee"},
     "hotel-stock-movements": {"super_admin", "hr_admin", "operations_manager", "operations_officer", "hotel_manager"},
     "departments": {"super_admin", "hr_admin", "hr_officer"},
+    "department-heads": {"super_admin", "hr_admin", "hr_officer"},
     "designations": {"super_admin", "hr_admin", "hr_officer"},
-    "grades": {"super_admin", "hr_admin"},
-    "branches": {"super_admin", "hr_admin"},
+    "grades": {"super_admin", "hr_admin", "hr_officer"},
+    "branches": {"super_admin", "hr_admin", "hr_officer"},
     "companies": {"super_admin", "hr_admin"},
     "users": {"super_admin", "hr_admin"},
     "roles": {"super_admin"},
@@ -1289,7 +1643,18 @@ RESOURCES = {
                               "grade_name": "grade.name",
                               "hod_name": "hod.full_name", "accountant_name": "accountant.full_name", "md_name": "md.full_name"}),
     "departments": dict(model=Department, order="name", search=["name", "code"],
-                        labels={"head_name": "head_id", "branch_name": "branch.name"}),
+                        labels={"head_name": "head.full_name", "assistant_name": "assistant_head.full_name", "branch_name": "branch.name"}),
+    "department-heads": dict(
+        model=DepartmentHead,
+        order="id",
+        search=["title", "role_type", "status", "phone", "email"],
+        labels={
+            "employee_name": "employee.full_name",
+            "employee_no": "employee.employee_no",
+            "department_name": "department.name",
+            "reports_to_name": "reports_to.full_name",
+        },
+    ),
     "designations": dict(model=Designation, order="title", search=["title"]),
     "grades": dict(model=Grade, order="level", search=["name"]),
     "branches": dict(model=Branch, order="name", search=["name", "city"]),
@@ -2181,6 +2546,20 @@ def admin_conflict(model, fields, obj=None):
                 q = q.filter(Asset.id != obj.id)
             if q.first():
                 return f"An equipment asset with tag '{tag}' already exists. Please choose a unique tag."
+    if model is DepartmentHead:
+        emp_id = fields.get("employee_id")
+        role_type = fields.get("role_type", "head")
+        dept_id = fields.get("department_id")
+        if emp_id:
+            q = DepartmentHead.query.filter_by(employee_id=emp_id, role_type=role_type)
+            if dept_id:
+                q = q.filter_by(department_id=dept_id)
+            if obj:
+                q = q.filter(DepartmentHead.id != obj.id)
+            if q.first():
+                emp = db.session.get(Employee, emp_id)
+                emp_name = emp.full_name if emp else "This employee"
+                return f"{emp_name} is already designated in this leadership role"
     return None
 
 
@@ -2414,6 +2793,14 @@ def _create(resource, model):
             dispatch_event("training_enrolled", [trainee], "You have been enrolled in training",
                            f"{obj.training.title if obj.training else 'A training programme'} has been added to your learning plan.",
                            "/app/training")
+    if model is DepartmentHead:
+        if obj.department_id:
+            if obj.role_type == "head":
+                Department.query.filter_by(id=obj.department_id).update({Department.head_id: obj.employee_id})
+            elif obj.role_type == "assistant":
+                Department.query.filter_by(id=obj.department_id).update({Department.assistant_head_id: obj.employee_id})
+        if obj.role_type == "md":
+            Employee.query.filter(Employee.id != obj.employee_id, Employee.deleted_at.is_(None)).update({Employee.md_id: obj.employee_id})
     audit(request.user, "create", resource, obj.id, new=fields)
     db.session.commit()
     payload = serialize(obj, resource)
@@ -2519,6 +2906,14 @@ def update_resource(resource, rid):
                     lu.email = obj.email.strip().lower()
     if hasattr(obj, "updated_by"):
         obj.updated_by = request.user.id
+    if model is DepartmentHead:
+        if obj.department_id:
+            if obj.role_type == "head":
+                Department.query.filter_by(id=obj.department_id).update({Department.head_id: obj.employee_id})
+            elif obj.role_type == "assistant":
+                Department.query.filter_by(id=obj.department_id).update({Department.assistant_head_id: obj.employee_id})
+        if obj.role_type == "md":
+            Employee.query.filter(Employee.id != obj.employee_id, Employee.deleted_at.is_(None)).update({Employee.md_id: obj.employee_id})
     audit(request.user, "update", resource, obj.id, old=old, new=fields)
     db.session.commit()
     return jsonify({"data": serialize(obj, resource)})
@@ -2580,6 +2975,8 @@ def delete_resource(resource, rid):
         if request.user.employee_id == obj.id:
             return error("You cannot delete your own employee record", 409)
         Department.query.filter_by(head_id=obj.id).update({Department.head_id: None})
+        Department.query.filter_by(assistant_head_id=obj.id).update({Department.assistant_head_id: None})
+        DepartmentHead.query.filter_by(employee_id=obj.id).delete()
         Employee.query.filter_by(manager_id=obj.id).update({Employee.manager_id: None})
         lu = User.query.filter_by(employee_id=obj.id).first()
         if lu:
@@ -2588,6 +2985,9 @@ def delete_resource(resource, rid):
             lu.token_expires_at = None
             lu.deleted_at = datetime.utcnow()
         obj.status = "inactive"
+    if model is DepartmentHead:
+        Department.query.filter_by(head_id=obj.employee_id).update({Department.head_id: None})
+        Department.query.filter_by(assistant_head_id=obj.employee_id).update({Department.assistant_head_id: None})
     if model is Department:
         emp_count = Employee.query.filter(Employee.department_id == obj.id, Employee.deleted_at.is_(None)).count()
         if emp_count > 0:
@@ -2601,6 +3001,7 @@ def delete_resource(resource, rid):
         if desig_with_emps > 0:
             return error(f"Cannot delete department '{obj.name}' because its job designations are held by {desig_with_emps} active employee(s). Please reassign them first.", 409)
         Employee.query.filter(Employee.department_id == obj.id, Employee.deleted_at.isnot(None)).update({Employee.department_id: None})
+        DepartmentHead.query.filter_by(department_id=obj.id).update({DepartmentHead.department_id: None})
         Designation.query.filter_by(department_id=obj.id).delete()
         JobRequisition.query.filter_by(department_id=obj.id).update({JobRequisition.department_id: None})
         JobPosting.query.filter_by(department_id=obj.id).update({JobPosting.department_id: None})
@@ -3030,6 +3431,24 @@ MAINTENANCE_CATEGORIES = ("Preventive", "Repair", "Inspection", "Electrical", "P
 MAINTENANCE_STATUSES = ("scheduled", "in_progress", "completed", "cancelled")
 
 
+def _maintenance_category_dict(cat, work_count=None):
+    if work_count is None:
+        work_count = MaintenanceWork.query.filter_by(category=cat.name).count()
+    return {
+        "id": cat.id,
+        "name": cat.name,
+        "code": cat.code or "",
+        "description": cat.description or "",
+        "priority_default": cat.priority_default or "medium",
+        "sla_hours": int(cat.sla_hours or 24),
+        "color_tone": cat.color_tone or "blue",
+        "status": cat.status or "active",
+        "work_count": work_count,
+        "created_at": conv(cat.created_at),
+        "updated_at": conv(cat.updated_at),
+    }
+
+
 def _maintenance_work_dict(work):
     return {
         "id": work.id,
@@ -3075,6 +3494,9 @@ def _maintenance_filters_query(filters):
     query = MaintenanceWork.query.outerjoin(Employee, MaintenanceWork.worker_id == Employee.id)
     if status:
         query = query.filter(MaintenanceWork.status == status)
+    category_filter = str(filters.get("category") or "").strip()
+    if category_filter:
+        query = query.filter(MaintenanceWork.category == category_filter)
     if from_date:
         query = query.filter(MaintenanceWork.scheduled_at >= datetime.combine(from_date, datetime.min.time()))
     if to_date:
@@ -3097,6 +3519,7 @@ def _maintenance_filters_query(filters):
     query = query.order_by(MaintenanceWork.scheduled_at.desc(), MaintenanceWork.id.desc())
     return query, {
         "status": status,
+        "category": category_filter,
         "from_date": from_date,
         "to_date": to_date,
         "search": search,
@@ -3129,9 +3552,19 @@ def _maintenance_input_values(data, work=None, creating=False):
 
     if creating or "category" in data:
         category = str(data.get("category") or ("Repair" if creating else "")).strip()
-        if category not in MAINTENANCE_CATEGORIES:
-            return None, "Choose a valid maintenance category"
-        values["category"] = category
+        if not category:
+            return None, "Choose a maintenance category"
+        cat_record = MaintenanceCategory.query.filter(
+            func.lower(MaintenanceCategory.name) == category.lower()
+        ).first()
+        if cat_record:
+            if creating and cat_record.status == "inactive":
+                return None, f"Category '{cat_record.name}' is inactive and cannot be selected for new work"
+            values["category"] = cat_record.name
+        elif category in MAINTENANCE_CATEGORIES:
+            values["category"] = category
+        else:
+            return None, f"'{category}' is not a valid maintenance category"
 
     if creating or "scheduled_at" in data:
         scheduled_at = _maintenance_schedule_value(data.get("scheduled_at"))
@@ -3314,6 +3747,197 @@ def update_operations_maintenance(work_id):
               {"status": old_status}, {"status": work.status})
     db.session.commit()
     return jsonify({"message": "Maintenance work updated", "data": _maintenance_work_dict(work)})
+
+
+@app.delete("/api/v1/operations/maintenance/<int:work_id>")
+@operations_required
+def delete_operations_maintenance(work_id):
+    work = db.session.get(MaintenanceWork, work_id)
+    if not work:
+        return error("Maintenance work not found", 404)
+    ref_no = work.reference_no
+    title = work.title
+    db.session.delete(work)
+    audit(request.user, "maintenance_work_deleted", "maintenance_works", work.id,
+          {"reference_no": ref_no, "title": title, "amount": str(work.amount)}, None)
+    db.session.commit()
+    return jsonify({"message": f"Maintenance work '{ref_no}' deleted successfully"})
+
+
+@app.get("/api/v1/operations/maintenance/categories")
+@operations_required
+def get_operations_maintenance_categories():
+    categories = MaintenanceCategory.query.order_by(MaintenanceCategory.status.asc(), MaintenanceCategory.name.asc()).all()
+    counts = dict(
+        db.session.query(MaintenanceWork.category, func.count(MaintenanceWork.id))
+        .group_by(MaintenanceWork.category)
+        .all()
+    )
+    return jsonify({"data": [_maintenance_category_dict(cat, counts.get(cat.name, 0)) for cat in categories]})
+
+
+@app.post("/api/v1/operations/maintenance/categories")
+@operations_required
+def create_operations_maintenance_category():
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return error("Category payload must be a JSON object", 422)
+
+    name = str(body.get("name") or "").strip()
+    if not name:
+        return error("Category name is required", 422)
+    if len(name) > 80:
+        return error("Category name must be 80 characters or fewer", 422)
+
+    existing = MaintenanceCategory.query.filter(func.lower(MaintenanceCategory.name) == name.lower()).first()
+    if existing:
+        return error(f"A maintenance category named '{name}' already exists", 409)
+
+    code = str(body.get("code") or "").strip().upper()[:30]
+    description = str(body.get("description") or "").strip()[:255]
+    priority_default = str(body.get("priority_default") or "medium").strip().lower()
+    if priority_default not in ("low", "medium", "high", "emergency"):
+        priority_default = "medium"
+
+    try:
+        sla_hours = int(body.get("sla_hours") or 24)
+        if sla_hours < 1 or sla_hours > 720:
+            return error("SLA hours must be between 1 and 720 hours (30 days)", 422)
+    except (TypeError, ValueError):
+        return error("SLA hours must be a positive integer", 422)
+
+    color_tone = str(body.get("color_tone") or "blue").strip().lower()
+    if color_tone not in ("blue", "teal", "amber", "purple", "red", "green", "indigo", "slate"):
+        color_tone = "blue"
+
+    status = str(body.get("status") or "active").strip().lower()
+    if status not in ("active", "inactive"):
+        status = "active"
+
+    cat = MaintenanceCategory(
+        name=name,
+        code=code or None,
+        description=description or None,
+        priority_default=priority_default,
+        sla_hours=sla_hours,
+        color_tone=color_tone,
+        status=status,
+    )
+    db.session.add(cat)
+    db.session.flush()
+
+    audit(request.user, "maintenance_category_created", "maintenance_categories", cat.id, None,
+          {"name": cat.name, "code": cat.code, "priority_default": cat.priority_default, "sla_hours": cat.sla_hours})
+    db.session.commit()
+    return jsonify({"message": f"Maintenance category '{cat.name}' created", "data": _maintenance_category_dict(cat, 0)}), 201
+
+
+@app.put("/api/v1/operations/maintenance/categories/<int:cat_id>")
+@operations_required
+def update_operations_maintenance_category(cat_id):
+    cat = db.session.get(MaintenanceCategory, cat_id)
+    if not cat:
+        return error("Maintenance category not found", 404)
+
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return error("Category updates must be submitted as a JSON object", 422)
+
+    old_values = {
+        "name": cat.name,
+        "code": cat.code,
+        "description": cat.description,
+        "priority_default": cat.priority_default,
+        "sla_hours": cat.sla_hours,
+        "color_tone": cat.color_tone,
+        "status": cat.status,
+    }
+
+    old_name = cat.name
+    if "name" in body:
+        new_name = str(body.get("name") or "").strip()
+        if not new_name:
+            return error("Category name cannot be empty", 422)
+        if len(new_name) > 80:
+            return error("Category name must be 80 characters or fewer", 422)
+        conflict = MaintenanceCategory.query.filter(
+            func.lower(MaintenanceCategory.name) == new_name.lower(),
+            MaintenanceCategory.id != cat.id
+        ).first()
+        if conflict:
+            return error(f"Another category named '{new_name}' already exists", 409)
+        cat.name = new_name
+
+    if "code" in body:
+        cat.code = str(body.get("code") or "").strip().upper()[:30] or None
+
+    if "description" in body:
+        cat.description = str(body.get("description") or "").strip()[:255] or None
+
+    if "priority_default" in body:
+        priority = str(body.get("priority_default") or "medium").strip().lower()
+        if priority in ("low", "medium", "high", "emergency"):
+            cat.priority_default = priority
+
+    if "sla_hours" in body:
+        try:
+            sla = int(body.get("sla_hours"))
+            if sla < 1 or sla > 720:
+                return error("SLA hours must be between 1 and 720 hours", 422)
+            cat.sla_hours = sla
+        except (TypeError, ValueError):
+            return error("SLA hours must be a valid number", 422)
+
+    if "color_tone" in body:
+        tone = str(body.get("color_tone") or "blue").strip().lower()
+        if tone in ("blue", "teal", "amber", "purple", "red", "green", "indigo", "slate"):
+            cat.color_tone = tone
+
+    if "status" in body:
+        st = str(body.get("status") or "active").strip().lower()
+        if st in ("active", "inactive"):
+            cat.status = st
+
+    if cat.name != old_name:
+        MaintenanceWork.query.filter_by(category=old_name).update({MaintenanceWork.category: cat.name})
+
+    new_values = {
+        "name": cat.name,
+        "code": cat.code,
+        "description": cat.description,
+        "priority_default": cat.priority_default,
+        "sla_hours": cat.sla_hours,
+        "color_tone": cat.color_tone,
+        "status": cat.status,
+    }
+
+    audit(request.user, "maintenance_category_updated", "maintenance_categories", cat.id, old_values, new_values)
+    db.session.commit()
+
+    work_count = MaintenanceWork.query.filter_by(category=cat.name).count()
+    return jsonify({"message": f"Maintenance category '{cat.name}' updated", "data": _maintenance_category_dict(cat, work_count)})
+
+
+@app.delete("/api/v1/operations/maintenance/categories/<int:cat_id>")
+@operations_required
+def delete_operations_maintenance_category(cat_id):
+    cat = db.session.get(MaintenanceCategory, cat_id)
+    if not cat:
+        return error("Maintenance category not found", 404)
+
+    work_count = MaintenanceWork.query.filter_by(category=cat.name).count()
+    if work_count > 0:
+        return error(
+            f"Cannot delete category '{cat.name}' because {work_count} maintenance work record(s) are assigned to it. "
+            f"Please reassign or delete those jobs first, or change this category's status to Inactive.",
+            409
+        )
+
+    cat_name = cat.name
+    db.session.delete(cat)
+    audit(request.user, "maintenance_category_deleted", "maintenance_categories", cat.id, {"name": cat_name}, None)
+    db.session.commit()
+    return jsonify({"message": f"Maintenance category '{cat_name}' deleted successfully"})
 
 
 @app.post("/api/v1/operations/maintenance/report/send")
@@ -3925,38 +4549,44 @@ def employee_profile(eid):
     else:
         data["manager_card"] = None
 
-    data["hod_id"] = emp.hod_id
-    data["hod_name"] = emp.hod.full_name if emp.hod else None
+    resolved_hod = emp.hod or get_employee_hod(emp)
+    data["hod_id"] = resolved_hod.id if resolved_hod else None
+    data["hod_name"] = resolved_hod.full_name if resolved_hod else None
     data["hod_card"] = {
-        "id": emp.hod.id,
-        "name": emp.hod.full_name,
-        "title": emp.hod.designation.title if emp.hod.designation else "Head of Department",
-        "department": emp.hod.department.name if emp.hod.department else "",
-        "email": emp.hod.email,
-        "photo_url": emp.hod.photo_url,
-    } if emp.hod else None
+        "id": resolved_hod.id,
+        "name": resolved_hod.full_name,
+        "title": resolved_hod.designation.title if resolved_hod.designation else "Head of Department",
+        "department": resolved_hod.department.name if resolved_hod.department else "",
+        "email": resolved_hod.email,
+        "photo_url": resolved_hod.photo_url,
+        "is_dept_head": True,
+    } if resolved_hod else None
 
-    data["accountant_id"] = emp.accountant_id
-    data["accountant_name"] = emp.accountant.full_name if emp.accountant else None
+    resolved_acc = emp.accountant or get_fixed_accountant()
+    data["accountant_id"] = resolved_acc.id if resolved_acc else None
+    data["accountant_name"] = resolved_acc.full_name if resolved_acc else None
     data["accountant_card"] = {
-        "id": emp.accountant.id,
-        "name": emp.accountant.full_name,
-        "title": emp.accountant.designation.title if emp.accountant.designation else "Accountant",
-        "department": emp.accountant.department.name if emp.accountant.department else "",
-        "email": emp.accountant.email,
-        "photo_url": emp.accountant.photo_url,
-    } if emp.accountant else None
+        "id": resolved_acc.id,
+        "name": resolved_acc.full_name,
+        "title": resolved_acc.designation.title if resolved_acc.designation else "Accountant / Finance",
+        "department": resolved_acc.department.name if resolved_acc.department else "Finance",
+        "email": resolved_acc.email,
+        "photo_url": resolved_acc.photo_url,
+        "is_fixed": True,
+    } if resolved_acc else None
 
-    data["md_id"] = emp.md_id
-    data["md_name"] = emp.md.full_name if emp.md else None
+    resolved_md = emp.md or get_fixed_md()
+    data["md_id"] = resolved_md.id if resolved_md else None
+    data["md_name"] = resolved_md.full_name if resolved_md else None
     data["md_card"] = {
-        "id": emp.md.id,
-        "name": emp.md.full_name,
-        "title": emp.md.designation.title if emp.md.designation else "Managing Director",
-        "department": emp.md.department.name if emp.md.department else "",
-        "email": emp.md.email,
-        "photo_url": emp.md.photo_url,
-    } if emp.md else None
+        "id": resolved_md.id,
+        "name": resolved_md.full_name,
+        "title": resolved_md.designation.title if resolved_md.designation else "Managing Director",
+        "department": resolved_md.department.name if resolved_md.department else "Executive",
+        "email": resolved_md.email,
+        "photo_url": resolved_md.photo_url,
+        "is_fixed": True,
+    } if resolved_md else None
 
     data["signature_url"] = emp.signature_url
 
@@ -4471,6 +5101,160 @@ def update_letter_template(category_key):
     audit(request.user, "update_letter_template", "settings", None, new={"category": category_key})
     db.session.commit()
     return jsonify({"data": saved})
+
+
+# ============================================================ DEPARTMENT LETTER TEMPLATES
+
+@app.get("/api/v1/employment-letters/department-templates")
+@login_required
+def get_all_department_letter_templates():
+    departments = Department.query.filter(
+        (Department.status == "active") | (Department.status.is_(None))
+    ).order_by(Department.name.asc()).all()
+    dept_templates = letters.get_department_templates()
+    base_templates = letters.get_merged_templates()
+    perm_base = base_templates.get("permanent") or {}
+
+    out = []
+    for d in departments:
+        emp_count = Employee.query.filter_by(department_id=d.id, deleted_at=None).count()
+        t = dept_templates.get(str(d.id))
+        is_custom = bool(t)
+
+        tpl_data = dict(t) if t else {
+            "department_id": d.id,
+            "department_name": d.name,
+            "department_code": d.code or "",
+            "letter_title": f"OFFER OF APPOINTMENT — {d.name.upper()}",
+            "subject_line": f"OFFER OF APPOINTMENT — {{{{designation}}}} ({d.name.upper()} DEPARTMENT)",
+            "working_hours": perm_base.get("working_hours", "40 hours per week (Monday to Friday, or duty schedule assigned by department)"),
+            "notice_period": perm_base.get("notice_period", "One (1) calendar month written notice (or salary in lieu thereof)"),
+            "probation_months": perm_base.get("probation_months", 3),
+            "opening": perm_base.get("opening", "").replace("{{department}}", d.name),
+            "sections": list(perm_base.get("sections") or []),
+            "extra_clause": "",
+            "closing": perm_base.get("closing", ""),
+        }
+        out.append({
+            "department_id": d.id,
+            "department_name": d.name,
+            "department_code": d.code or "",
+            "employee_count": emp_count,
+            "is_custom": is_custom,
+            "template": tpl_data,
+        })
+
+    return jsonify({
+        "data": out,
+        "departments": out,
+        "placeholders": letters.AVAILABLE_PLACEHOLDERS,
+        "available_placeholders": letters.AVAILABLE_PLACEHOLDERS,
+    })
+
+
+@app.get("/api/v1/employment-letters/department-templates/<int:dept_id>")
+@login_required
+def get_single_department_letter_template(dept_id):
+    dept = db.session.get(Department, dept_id)
+    if not dept:
+        return error("Department not found", 404)
+    dept_templates = letters.get_department_templates()
+    t = dept_templates.get(str(dept_id))
+    is_custom = bool(t)
+    base_templates = letters.get_merged_templates()
+    perm_base = base_templates.get("permanent") or {}
+
+    tpl_data = dict(t) if t else {
+        "department_id": dept.id,
+        "department_name": dept.name,
+        "department_code": dept.code or "",
+        "letter_title": f"OFFER OF APPOINTMENT — {dept.name.upper()}",
+        "subject_line": f"OFFER OF APPOINTMENT — {{{{designation}}}} ({dept.name.upper()} DEPARTMENT)",
+        "working_hours": perm_base.get("working_hours", "40 hours per week (Monday to Friday, or duty schedule assigned by department)"),
+        "notice_period": perm_base.get("notice_period", "One (1) calendar month written notice (or salary in lieu thereof)"),
+        "probation_months": perm_base.get("probation_months", 3),
+        "opening": perm_base.get("opening", "").replace("{{department}}", dept.name),
+        "sections": list(perm_base.get("sections") or []),
+        "extra_clause": "",
+        "closing": perm_base.get("closing", ""),
+    }
+
+    emps = Employee.query.filter_by(department_id=dept.id, deleted_at=None).order_by(Employee.first_name.asc()).all()
+    emp_list = [{"id": e.id, "name": e.full_name, "designation": e.designation.title if e.designation else "Staff", "salary": float(e.basic_salary or 0)} for e in emps]
+
+    return jsonify({
+        "data": tpl_data,
+        "is_custom": is_custom,
+        "department": {"id": dept.id, "name": dept.name, "code": dept.code or ""},
+        "employees": emp_list,
+        "placeholders": letters.AVAILABLE_PLACEHOLDERS,
+    })
+
+
+@app.put("/api/v1/employment-letters/department-templates/<int:dept_id>")
+@login_required
+def update_department_letter_template(dept_id):
+    if role_of(request.user) not in ("super_admin", "hr_admin", "hr_officer"):
+        return error("Forbidden", 403)
+    dept = db.session.get(Department, dept_id)
+    if not dept:
+        return error("Department not found", 404)
+    data = request.get_json(silent=True) or {}
+    try:
+        saved = letters.save_department_template(dept_id, data)
+    except ValueError as e:
+        return error(str(e), 422)
+    audit(request.user, "update_department_letter_template", "departments", dept_id, new={"department": dept.name})
+    return jsonify({"data": saved, "message": f"Appointment letter template for {dept.name} saved successfully"})
+
+
+@app.delete("/api/v1/employment-letters/department-templates/<int:dept_id>")
+@login_required
+def delete_department_letter_template_endpoint(dept_id):
+    if role_of(request.user) not in ("super_admin", "hr_admin", "hr_officer"):
+        return error("Forbidden", 403)
+    dept = db.session.get(Department, dept_id)
+    if not dept:
+        return error("Department not found", 404)
+    letters.delete_department_template(dept_id)
+    audit(request.user, "reset_department_letter_template", "departments", dept_id, new={"department": dept.name})
+    return jsonify({"message": f"Template for {dept.name} reset to baseline default successfully"})
+
+
+@app.post("/api/v1/employment-letters/parse-document")
+@login_required
+def parse_letter_document():
+    if role_of(request.user) not in ("super_admin", "hr_admin", "hr_officer"):
+        return error("Forbidden", 403)
+    if "file" not in request.files:
+        return error("No document file was uploaded", 400)
+    file = request.files["file"]
+    if not file or not file.filename:
+        return error("No selected file", 400)
+    try:
+        file_bytes = file.read()
+        parsed = letters.parse_uploaded_letter_document(file_bytes, file.filename)
+        return jsonify({
+            "ok": True,
+            "data": parsed,
+            "message": f"Document '{file.filename}' parsed successfully. Form fields populated."
+        })
+    except Exception as e:
+        return error(str(e), 422)
+
+
+@app.post("/api/v1/employment-letters/preview-department-template")
+@login_required
+def preview_department_template_endpoint():
+    data = request.get_json(silent=True) or {}
+    dept_id = data.get("department_id")
+    emp_id = data.get("employee_id")
+    template_data = data.get("template") or {}
+    try:
+        preview = letters.render_department_template_preview(dept_id, template_data, emp_id)
+        return jsonify({"data": preview})
+    except Exception as e:
+        return error(str(e), 422)
 
 
 @app.get("/api/v1/employees/<int:eid>/employment-letter")
@@ -5057,8 +5841,13 @@ def approve_leave_level(rid):
     approval_level = data.get("level")  # "hod", "accountant", "md"
     
     # Check if user has permission to approve at this level
+    req_hod = get_employee_hod(req_emp) if req_emp else None
+    fixed_acc = get_fixed_accountant()
+    fixed_md = get_fixed_md()
+
     can_approve_hod = (
         role in ("super_admin", "hr_admin") or 
+        (req_hod and req_hod.id == user.employee_id) or
         (req_emp and req_emp.hod_id and req_emp.hod_id == user.employee_id) or
         (req_emp and not req_emp.hod_id and req_emp.manager_id and req_emp.manager_id == user.employee_id) or
         (role == "manager" and req_emp and req_emp.manager_id == user.employee_id) or
@@ -5066,11 +5855,13 @@ def approve_leave_level(rid):
     )
     can_approve_accountant = (
         role in ("super_admin", "hr_admin") or
+        (fixed_acc and fixed_acc.id == user.employee_id) or
         (req_emp and req_emp.accountant_id and req_emp.accountant_id == user.employee_id) or
         (emp and emp.designation and emp.designation.title and "accountant" in emp.designation.title.lower())
     )
     can_approve_md = (
         role in ("super_admin",) or
+        (fixed_md and fixed_md.id == user.employee_id) or
         (req_emp and req_emp.md_id and req_emp.md_id == user.employee_id) or
         (emp and emp.designation and emp.designation.title and
          ("managing director" in emp.designation.title.lower() or 
@@ -6727,16 +7518,42 @@ def meta():
                     "currency", "timezone", "address", "phone", "email", "tax_id",
                     "logo_url", "favicon_url", "theme", "website"):
             comp_data[fld] = getattr(company, fld)
+    f_acc = get_fixed_accountant()
+    f_md = get_fixed_md()
     return jsonify({"data": {
         "company": comp_data,
-        "departments": [{"id": d.id, "name": d.name} for d in Department.query.order_by(Department.name)],
+        "fixed_approvers": {
+            "accountant": {
+                "id": f_acc.id,
+                "name": f_acc.full_name,
+                "title": f_acc.designation.title if f_acc and f_acc.designation else "Accountant / Finance",
+                "department": f_acc.department.name if f_acc and f_acc.department else "Finance",
+                "email": f_acc.email if f_acc else "",
+            } if f_acc else None,
+            "md": {
+                "id": f_md.id,
+                "name": f_md.full_name,
+                "title": f_md.designation.title if f_md and f_md.designation else "Managing Director",
+                "department": f_md.department.name if f_md and f_md.department else "Executive",
+                "email": f_md.email if f_md else "",
+            } if f_md else None,
+        },
+        "departments": [{"id": d.id, "name": d.name, "head_id": d.head_id, "assistant_head_id": d.assistant_head_id} for d in Department.query.order_by(Department.name)],
+        "department_heads": [{"id": h.id, "employee_id": h.employee_id, "role_type": h.role_type,
+                              "title": h.title, "department_id": h.department_id,
+                              "reports_to_id": h.reports_to_id, "status": h.status,
+                              "name": h.employee.full_name if h.employee else "",
+                              "employee_no": h.employee.employee_no if h.employee else "",
+                              "dept_name": h.department.name if h.department else ""}
+                             for h in DepartmentHead.query.all()],
         "designations": [{"id": d.id, "title": d.title, "department_id": d.department_id}
                          for d in Designation.query.order_by(Designation.title)],
         "grades": [{"id": g.id, "name": g.name} for g in Grade.query.order_by(Grade.level)],
         "branches": [{"id": b.id, "name": b.name} for b in Branch.query.order_by(Branch.name)],
         "employees": [{"id": e.id, "name": e.full_name, "employee_no": e.employee_no,
                        "department_id": e.department_id, "designation_id": e.designation_id,
-                       "hire_date": e.hire_date.isoformat() if e.hire_date else None}
+                       "hire_date": e.hire_date.isoformat() if e.hire_date else None,
+                       "hod_id": e.hod_id, "accountant_id": e.accountant_id, "md_id": e.md_id}
                       for e in Employee.query.filter(Employee.deleted_at.is_(None), Employee.status == "active")
                       .order_by(Employee.first_name)],
         "roles": [{"id": r.id, "name": r.name, "slug": r.slug} for r in Role.query.order_by(Role.id)],
