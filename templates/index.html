@@ -1,21 +1,242 @@
-﻿<div class="toast-root" id="toast-root"></div>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ brand.name }} — {{ brand.tagline }}</title>
+  <meta name="description" content="Meridian HR: a modern human resource management system for people, payroll and performance.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/app.css?v=1.0.25">
+  <link rel="stylesheet" href="/static/css/themes.css?v=1.0.25">
+  <link rel="stylesheet" href="/static/css/reports.css?v=1.1.0">
+  <link id="favicon-link" rel="icon" href="{{ brand.favicon_url }}">
+</head>
+<body>
 
-<script src="/static/js/api.js?v=1.0.27"></script>
-<script src="/static/js/theme.js?v=1.0.27"></script>
-<script src="/static/js/theme-settings.js?v=1.0.27"></script>
-<script src="/static/js/ui.js?v=1.0.27"></script>
-<script src="/static/js/datatable.js?v=1.0.27"></script>
-<script src="/static/js/views.js?v=1.0.27"></script>
-<script src="/static/js/records.js?v=1.0.27"></script>
-<script src="/static/js/views2.js?v=1.0.27"></script>
-<script src="/static/js/views3.js?v=1.0.27"></script>
-<script src="/static/js/reports.js?v=1.0.27"></script>
-<script src="/static/js/profile.js?v=1.0.27"></script>
-<script src="/static/js/settings_notifications.js?v=1.0.27"></script>
-<script src="/static/js/letters.js?v=1.0.27"></script>
-<script src="/static/js/operations.js?v=1.0.27"></script>
-<script src="/static/js/backups.js?v=1.0.27"></script>
-<script src="/static/js/mfa.js?v=1.0.27"></script>
-<script src="/static/js/app.js?v=1.0.27"></script>
+<div id="login-view" class="login-shell hidden">
+  <section class="login-brand">
+    <div class="brand-mark">
+      <div class="glyph{% if brand.logo_url %} has-logo{% endif %}" id="login-brand-glyph">{% if brand.logo_url %}<img src="{{ brand.logo_url }}" alt="{{ brand.name }} logo">{% else %}{{ brand.initial }}{% endif %}</div>
+      <div>
+        <div class="name" id="login-brand-name">{{ brand.name }}</div>
+        <div class="sub" id="login-brand-sub">{{ brand.tagline }}</div>
+      </div>
+    </div>
+    <div class="login-copy">
+      <div class="eyebrow">Human capital, thoughtfully managed</div>
+      <h1>Every person.<br>Every process.<br><em>One record.</em></h1>
+      <p>From the first offer letter to the final payslip — Meridian brings hiring, attendance, leave, payroll and performance into a single, auditable system of record.</p>
+      <div class="login-stats">
+        <div class="stat"><b>14</b><span>Team members</span></div>
+        <div class="stat"><b>8</b><span>Departments</span></div>
+        <div class="stat"><b>6</b><span>Core modules</span></div>
+      </div>
+    </div>
+    <div style="font-size:11px;color:rgba(244,241,232,.4)">Ghana Data Protection Act, 2012 (Act 843) aligned &middot; Audit trailing on every change</div>
+  </section>
+  <section class="login-panel">
+    <div class="login-card">
+      <div class="eyebrow">Secure sign in</div>
+      <h2>Welcome back</h2>
+      <p class="hint">Sign in using your registered email, username, or employee ID.</p>
+      <form id="login-form" autocomplete="on">
+        <div id="login-error" class="form-error hidden"></div>
+        <div class="field" style="margin-bottom:12px">
+          <label for="login-email">Email, Username or Employee ID</label>
+          <input class="input" id="login-email" type="text" placeholder="e.g. name@gmail.com, username, or EMP-2026-0001" autocomplete="username" required>
+        </div>
+        <div class="field" style="margin-bottom:8px">
+          <label for="login-password">Password</label>
+          <div style="position:relative;display:flex;align-items:center">
+            <input class="input" id="login-password" type="password" placeholder="Your password" autocomplete="current-password" required style="padding-right:40px;width:100%">
+            <button type="button" id="toggle-pw-visibility" style="position:absolute;right:8px;background:none;border:none;cursor:pointer;color:var(--muted);padding:4px;display:flex;align-items:center;" title="Show or hide password">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="row-between" style="margin:6px 0 18px">
+          <label class="row" style="font-size:11.5px;color:var(--muted);gap:6px">
+            <input type="checkbox" id="login-remember" checked> Remember this device
+          </label>
+          <span class="link" onclick="toast('Contact your HR administrator to reset a password.')">Forgot password?</span>
+        </div>
+        <button class="btn btn-accent" type="submit" id="login-submit" style="width:100%;height:42px">Sign in to Meridian</button>
+      </form>
+
+      <div id="mfa-step" class="hidden">
+        <div class="eyebrow" id="mfa-step-eyebrow">Step 2 of 2 &middot; Verification</div>
+        <h2 id="mfa-step-title">Enter your code</h2>
+        <p class="hint" id="mfa-step-hint">Open your authenticator app and enter the 6-digit code for <b id="mfa-account">your account</b>.</p>
+        <div id="mfa-error" class="form-error hidden"></div>
+        <div class="field" style="margin-bottom:10px">
+          <label for="mfa-code" id="mfa-code-label">Authentication code</label>
+          <input class="input mfa-code-input" id="mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="9" placeholder="123456">
+        </div>
+        <div id="mfa-resend-row" class="row-between hidden" style="margin-bottom:12px;font-size:13px">
+          <span class="muted tiny" id="mfa-resend-timer"></span>
+          <button type="button" class="btn btn-sm btn-ghost" id="mfa-resend-btn" style="padding:2px 8px">Resend code</button>
+        </div>
+        <label class="mfa-login-trust" for="mfa-trust-month">
+          <input type="checkbox" id="mfa-trust-month" checked>
+          Trust this device for 1 month <span class="muted">(no code on this browser for 30 days)</span>
+        </label>
+        <button class="btn btn-accent" type="button" id="mfa-submit" style="width:100%;height:42px">Verify &amp; sign in</button>
+        <button class="btn btn-ghost" type="button" id="mfa-back" style="width:100%;margin-top:8px">Back to sign in</button>
+        <div class="mfa-login-alt">Lost your device? Type one of your recovery codes in the box above instead.</div>
+      </div>
+
+      <div class="demo-list">
+        <div class="demo-head">Demo accounts — click to fill</div>
+        <div class="demo-item" data-email="ama.mensah@meridian.gh" data-pass="Admin@123">
+          <div class="avatar avatar-sm" style="background:#c2703d">AM</div>
+          <div><div class="role">Super Admin</div><div class="email">ama.mensah@meridian.gh</div></div>
+          <div class="key">Admin@123</div>
+        </div>
+        <div class="demo-item" data-email="kwame.boateng@meridian.gh" data-pass="Hr@123">
+          <div class="avatar avatar-sm" style="background:#0f766e">KB</div>
+          <div><div class="role">HR Admin</div><div class="email">kwame.boateng@meridian.gh</div></div>
+          <div class="key">Hr@123</div>
+        </div>
+        <div class="demo-item" data-email="kofi.adjei@meridian.gh" data-pass="Manager@123">
+          <div class="avatar avatar-sm" style="background:#2c5d8f">KA</div>
+          <div><div class="role">Manager</div><div class="email">kofi.adjei@meridian.gh</div></div>
+          <div class="key">Manager@123</div>
+        </div>
+        <div class="demo-item" data-email="abena.sarpong@meridian.gh" data-pass="Employee@123">
+          <div class="avatar avatar-sm" style="background:#6b4a86">AS</div>
+          <div><div class="role">Employee</div><div class="email">abena.sarpong@meridian.gh</div></div>
+          <div class="key">Employee@123</div>
+        </div>
+        <div class="demo-item" data-email="akosua.darko@meridian.gh" data-pass="Payroll@123">
+          <div class="avatar avatar-sm" style="background:#a97316">AD</div>
+          <div><div class="role">Payroll</div><div class="email">akosua.darko@meridian.gh</div></div>
+          <div class="key">Payroll@123</div>
+        </div>
+      </div>
+      <div class="login-foot">Meridian HR v1.0 &middot; SQLite-backed demo environment</div>
+    </div>
+  </section>
+</div>
+
+<div id="app-view" class="app-shell hidden">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="glyph{% if brand.logo_url %} has-logo{% endif %}" id="brand-glyph">{% if brand.logo_url %}<img src="{{ brand.logo_url }}" alt="{{ brand.name }} logo" onerror="this.parentElement.classList.remove('has-logo');this.parentElement.textContent='{{ brand.initial }}'">{% else %}{{ brand.initial }}{% endif %}</div>
+      <div class="brand-text">
+        <div class="name" id="brand-name">{{ brand.name }}</div>
+        <div class="sub" id="brand-sub">{{ brand.tagline }}</div>
+      </div>
+      <button class="sidebar-toggle" id="sidebar-toggle" title="Collapse sidebar" aria-label="Collapse sidebar"></button>
+    </div>
+    <div class="site-pill" id="site-pill"><span class="dot"></span> <span id="site-pill-text">{{ brand.location_label }}</span></div>
+    <nav class="nav-scroll" id="nav"></nav>
+    <div class="sidebar-foot">
+      <div class="side-user" id="side-user">
+        <div class="avatar avatar-sm" id="side-avatar">--</div>
+        <div class="meta">
+          <b id="side-name">Loading</b>
+          <span id="side-role">&nbsp;</span>
+        </div>
+        <button class="out" id="logout-btn" title="Sign out" aria-label="Sign out"></button>
+      </div>
+    </div>
+  </aside>
+  <div class="sidebar-scrim" id="sidebar-scrim"></div>
+
+  <div class="main" id="main-wrap">
+    <header class="topbar">
+      <div class="topbar-start">
+        <button class="icon-btn menu-btn" id="menu-btn" aria-label="Toggle menu"></button>
+        <div class="crumb"><span class="crumb-logo{% if brand.logo_url %} has-logo{% endif %}" id="crumb-logo">{% if brand.logo_url %}<img src="{{ brand.logo_url }}" alt="{{ brand.name }} logo" onerror="this.parentElement.classList.remove('has-logo');this.parentElement.textContent='{{ brand.initial }}'">{% else %}{{ brand.initial }}{% endif %}</span><span id="crumb-company">{{ brand.name }}</span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg><b id="crumb-current">Dashboard</b></div>
+      </div>
+      <div class="topbar-center">
+        <div class="global-search" id="global-search-trigger" title="Quick jump to people, modules & actions (Ctrl+K / ⌘K)">
+          <span id="search-icon"></span>
+          <input id="global-search" placeholder="Search people, modules, actions…" aria-label="Search" readonly style="cursor:pointer">
+          <kbd class="search-kbd">⌘K</kbd>
+        </div>
+      </div>
+      <div class="topbar-end">
+        <div class="position-rel">
+          <button class="icon-btn" id="theme-btn" aria-label="Theme" title="Change theme"></button>
+          <div class="dropdown hidden" id="theme-dropdown">
+            <div class="dropdown-head">Theme</div>
+            <div id="theme-menu-list"></div>
+            <div class="dropdown-foot">
+              <span class="link" data-go-theme="settings/appearance">All appearance settings →</span>
+            </div>
+          </div>
+        </div>
+        <div class="position-rel">
+          <button class="icon-btn" id="notif-btn" aria-label="Notifications" title="Notifications">
+            <span id="bell-icon"></span>
+            <span class="dot-badge hidden" id="notif-count">0</span>
+          </button>
+          <div class="dropdown hidden" id="notif-dropdown">
+            <div class="dropdown-head">Notifications <span class="link" id="mark-all-read">Mark all read</span></div>
+            <div id="notif-list"></div>
+            <div class="dropdown-foot">
+              <span class="link" data-go-notif="notifications">Notification Centre →</span>
+              <span class="link" data-go-notif="notifications/preferences">Preferences</span>
+            </div>
+          </div>
+        </div>
+        <button class="icon-btn" id="settings-btn" aria-label="Settings" title="Settings & Preferences"></button>
+        <button class="icon-btn" id="help-btn" aria-label="Help" title="Help">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 115 0c0 1.5-2.5 2-2.5 3.5"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg>
+        </button>
+        <div class="position-rel">
+          <div class="side-user" id="top-user" style="padding:4px">
+            <div class="avatar" id="top-avatar" style="border-radius:10px;width:32px;height:32px">--</div>
+          </div>
+          <div class="dropdown hidden" id="user-dropdown" style="width:230px">
+            <div style="padding:14px;border-bottom:1px solid var(--line)">
+              <b id="dd-name" style="font-size:13px">—</b>
+              <div id="dd-email" class="tiny muted">—</div>
+              <div id="dd-role" class="tiny" style="margin-top:5px;color:var(--accent)">—</div>
+            </div>
+            <div class="dropdown-item" data-go="profile">My profile</div>
+            <div class="dropdown-item" data-go="employment-letters">My employment letter</div>
+            <div class="dropdown-item" data-go="notifications">Notifications</div>
+            <div class="dropdown-item" data-go="settings/appearance">Appearance</div>
+            <div class="dropdown-item" data-go="settings">Settings & preferences</div>
+            <div class="dropdown-item" id="dd-logout">Sign out</div>
+          </div>
+        </div>
+      </div>
+    </header>
+    <main class="content" id="view"></main>
+  </div>
+</div>
+
+<div class="modal-root" id="modal-root">
+  <div class="modal-backdrop" data-close-modal></div>
+  <div class="modal-card" id="modal-card" role="dialog" aria-modal="true"></div>
+</div>
+<div class="drawer-root" id="drawer-root">
+  <div class="drawer-backdrop" data-close-drawer></div>
+  <div class="drawer-panel" id="drawer-panel"></div>
+</div>
+<div class="toast-root" id="toast-root"></div>
+
+<script src="/static/js/api.js?v=1.0.26"></script>
+<script src="/static/js/theme.js?v=1.0.26"></script>
+<script src="/static/js/theme-settings.js?v=1.0.26"></script>
+<script src="/static/js/ui.js?v=1.0.26"></script>
+<script src="/static/js/datatable.js?v=1.0.26"></script>
+<script src="/static/js/views.js?v=1.0.26"></script>
+<script src="/static/js/records.js?v=1.0.26"></script>
+<script src="/static/js/views2.js?v=1.0.26"></script>
+<script src="/static/js/views3.js?v=1.0.26"></script>
+<script src="/static/js/reports.js?v=1.1.0"></script>
+<script src="/static/js/profile.js?v=1.0.26"></script>
+<script src="/static/js/settings_notifications.js?v=1.0.26"></script>
+<script src="/static/js/letters.js?v=1.0.26"></script>
+<script src="/static/js/operations.js?v=1.0.26"></script>
+<script src="/static/js/backups.js?v=1.0.26"></script>
+<script src="/static/js/mfa.js?v=1.0.26"></script>
+<script src="/static/js/app.js?v=1.0.26"></script>
 </body>
 </html>

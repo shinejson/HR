@@ -3,6 +3,9 @@ from datetime import date, datetime
 import sqlite3
 import unittest
 
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_finance_crud as finance
 from app import (
     app, db, User, Employee, Department, Company, Attendance, LeaveBalance,

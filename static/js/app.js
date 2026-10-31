@@ -78,9 +78,10 @@ const NAV = [
     ],
   },
   {
-    label: "Insight", icon: "chart",
+    label: "Reports", icon: "chart",
     items: [
-      { id: "reports", label: "Reports & analytics", icon: "chart" },
+      { id: "reports", label: "Report centre", icon: "chart" },
+      { id: "reports", label: "Workforce analytics", icon: "chart", subTab: "analytics", roles: ["super_admin", "hr_admin", "hr_officer", "payroll", "manager", "auditor"] },
     ],
   },
   {
@@ -162,7 +163,7 @@ function renderNav() {
                 + i.children.map(c => '<button class="nav-item nav-sub-item" data-nav="' + esc(c.id) + '"' + (c.subTab ? ' data-subtab="' + esc(c.subTab) + '"' : "") + '><span>' + icon("dot", 10) + '</span><span>' + esc(c.label) + '</span></button>').join("")
                 + '</div>';
             }
-            return '<button class="nav-item" data-nav="' + esc(i.id) + '">' + icon(i.icon, 17) + '<span>' + esc(i.label) + '</span>' + itemBadge(i.id) + '</button>';
+            return '<button class="nav-item" data-nav="' + esc(i.id) + '"' + (i.subTab ? ' data-subtab="' + esc(i.subTab) + '"' : "") + '>' + icon(i.icon, 17) + '<span>' + esc(i.label) + '</span>' + itemBadge(i.id) + '</button>';
           }).join("")
         + '</div>';
     }
