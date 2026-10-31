@@ -506,6 +506,13 @@ function logout() {
     document.getElementById("login-view").classList.remove("hidden");
     document.getElementById("login-password").value = "";
     document.getElementById("login-form").reset();
+    const step = document.getElementById("mfa-step");
+    if (step) step.classList.add("hidden");
+    const mfaForm = document.getElementById("login-form");
+    if (mfaForm) mfaForm.classList.remove("hidden");
+    const demoList = document.querySelector(".demo-list");
+    if (demoList) demoList.classList.remove("hidden");
+    if (typeof MfaUI !== "undefined") MfaUI.resetPrompt();
   });
 }
 
@@ -763,6 +770,43 @@ function bindLogin() {
   const form = document.getElementById("login-form");
   const errorBox = document.getElementById("login-error");
   const btn = document.getElementById("login-submit");
+  const mfaStep = document.getElementById("mfa-step");
+  const demoList = document.querySelector(".demo-list");
+  const mfaCodeInput = document.getElementById("mfa-code");
+  const mfaError = document.getElementById("mfa-error");
+  const mfaSubmit = document.getElementById("mfa-submit");
+  let challenge = null;
+
+  function showMfaStep(data) {
+    challenge = data.challenge;
+    const account = document.getElementById("mfa-account");
+    if (account) account.textContent = data.account || "your account";
+    if (mfaError) mfaError.classList.add("hidden");
+    if (mfaCodeInput) mfaCodeInput.value = "";
+    form.classList.add("hidden");
+    if (demoList) demoList.classList.add("hidden");
+    if (mfaStep) mfaStep.classList.remove("hidden");
+    setTimeout(() => { if (mfaCodeInput) mfaCodeInput.focus(); }, 60);
+  }
+
+  function backToPassword() {
+    challenge = null;
+    if (mfaStep) mfaStep.classList.add("hidden");
+    form.classList.remove("hidden");
+    if (demoList) demoList.classList.remove("hidden");
+    const pw = document.getElementById("login-password");
+    if (pw) pw.focus();
+  }
+
+  async function finishLogin(data) {
+    Store.user = data.user;
+    await Store.loadMeta();
+    if (!location.hash || location.hash === '#/' || location.hash === '#') location.hash = '#/dashboard';
+    showApp();
+    // Anyone who has not enrolled in 2FA yet is asked once per sign-in.
+    if (typeof MfaUI !== "undefined") MfaUI.promptAfterLogin();
+  }
+
   form.onsubmit = async (e) => {
     e.preventDefault();
     errorBox.classList.add("hidden");
@@ -771,10 +815,15 @@ function bindLogin() {
     const email = document.getElementById("login-email").value.trim();
     const password = document.getElementById("login-password").value.trim();
     try {
-      Store.user = await API.login(email, password);
-      await Store.loadMeta();
-      if (!location.hash || location.hash === '#/' || location.hash === '#') location.hash = '#/dashboard';
-      showApp();
+      const trusted = (typeof MfaUI !== "undefined") ? MfaUI.getTrustedDevice() : null;
+      const data = await API.login(email, password, trusted);
+      if (data && data.mfa_required) {
+        // The saved "trusted device" token is no longer valid — drop it.
+        if (trusted && typeof MfaUI !== "undefined") MfaUI.setTrustedDevice(null);
+        showMfaStep(data);
+        return;
+      }
+      await finishLogin(data);
     } catch (err) {
       errorBox.textContent = err.message;
       errorBox.classList.remove("hidden");
@@ -783,6 +832,57 @@ function bindLogin() {
       btn.textContent = "Sign in to Meridian";
     }
   };
+
+  if (mfaSubmit) {
+    const verify = async () => {
+      const code = (mfaCodeInput.value || "").trim();
+      mfaError.classList.add("hidden");
+      if (!code) {
+        mfaError.textContent = "Enter the code from your authenticator app.";
+        mfaError.classList.remove("hidden");
+        return;
+      }
+      mfaSubmit.disabled = true;
+      mfaSubmit.textContent = "Verifying…";
+      try {
+        const remember = document.getElementById("mfa-trust-month").checked;
+        const data = await API.verifyMfa(challenge, code, remember);
+        if (data.trusted_device && typeof MfaUI !== "undefined") MfaUI.setTrustedDevice(data.trusted_device);
+        backToPassword();
+        await finishLogin(data);
+        if (data.used_recovery_code) {
+          toast("Recovery code used — " + data.recovery_codes_remaining + " left. Generate new codes in Settings.", "warning");
+        }
+      } catch (err) {
+        mfaError.textContent = err.message;
+        mfaError.classList.remove("hidden");
+        if (err.status === 401) {
+          // Challenge expired — start again from the password step.
+          backToPassword();
+          errorBox.textContent = err.message;
+          errorBox.classList.remove("hidden");
+        } else if (mfaCodeInput) {
+          mfaCodeInput.select();
+        }
+      } finally {
+        mfaSubmit.disabled = false;
+        mfaSubmit.textContent = "Verify & sign in";
+      }
+    };
+    mfaSubmit.onclick = verify;
+    if (mfaCodeInput) {
+      mfaCodeInput.addEventListener("input", () => {
+        const clean = mfaCodeInput.value.replace(/[^0-9a-zA-Z-]/g, "").slice(0, 9);
+        if (clean !== mfaCodeInput.value) mfaCodeInput.value = clean;
+      });
+      mfaCodeInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); verify(); }
+      });
+    }
+    const backBtn = document.getElementById("mfa-back");
+    if (backBtn) backBtn.onclick = backToPassword;
+  }
+
   const togglePw = document.getElementById("toggle-pw-visibility");
   if (togglePw) {
     togglePw.onclick = () => {
@@ -816,6 +916,7 @@ async function boot() {
   if (ok) {
     if (!location.hash) history.replaceState(null, "", location.pathname + "#/dashboard");
     showApp();
+    if (typeof MfaUI !== "undefined") MfaUI.promptAfterLogin();
   } else {
     document.getElementById("login-view").classList.remove("hidden");
     document.getElementById("app-view").classList.add("hidden");
