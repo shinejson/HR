@@ -519,11 +519,11 @@ Views.settings = async function (root, params) {
           + '<div class="section-title" style="margin-bottom:8px">Recent Sign-in Activity</div>'
           + renderTable({
               columns: [
-                { label: "Timestamp", render: r => fmtDateTime(r.created_at) },
-                { label: "Status", render: r => r.success !== false ? '<span class="chip green">Success</span>' : '<span class="chip red">Failed</span>' },
-                { label: "Method", render: r => r.mfa_used ? '<span class="chip teal">Password + 2FA</span>' : '<span class="chip chip-grey">Password</span>' },
-                { label: "IP Address", render: r => '<span class="mono tiny">' + esc(r.ip || "127.0.0.1") + '</span>' },
-                { label: "Browser / Client", render: r => '<span class="tiny muted">' + esc((r.user_agent || "Web session").slice(0, 85)) + '</span>' },
+                { label: "Timestamp", render: r => fmtDateTime(r.created_at), class: "signin-timestamp" },
+                { label: "Status", render: r => r.success !== false ? '<span class="chip green">Success</span>' : '<span class="chip red">Failed</span>', class: "signin-status" },
+                { label: "Method", render: r => r.mfa_used ? '<span class="chip teal">Password + 2FA</span>' : '<span class="chip chip-grey">Password</span>', class: "signin-method" },
+                { label: "IP Address", render: r => '<span class="mono tiny">' + esc(r.ip || "127.0.0.1") + '</span>', class: "signin-ip" },
+                { label: "Browser / Client", render: r => '<div class="signin-browser-text">' + esc((r.user_agent || "Web session").slice(0, 100)) + '</div>', class: "signin-browser" },
               ],
               rows: history,
               emptyTitle: "No recent sign-in logs",
