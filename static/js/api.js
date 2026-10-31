@@ -111,9 +111,26 @@ const Store = {
   isRole(...roles) { return roles.includes(this.role()); },
   isAdmin() { return this.isRole("super_admin", "hr_admin"); },
   isReadOnly() { return this.isRole("auditor"); },
-  canManage() { return this.isRole("super_admin", "hr_admin", "hr_officer"); },
-  canPayroll() { return this.isRole("super_admin", "hr_admin", "payroll"); },
+  hasPermission(module, privilege) {
+    if (!this.user) return false;
+    if (this.user.role_slug === "super_admin") return true;
+    const raw = String(this.user.permissions || "").trim();
+    if (!raw) return false;
+    if (raw === "*") return true;
+    const perms = raw.split(",").map(p => p.trim()).filter(Boolean);
+    if (perms.includes("*")) return true;
+    if (!privilege) {
+      return perms.includes(module) || perms.includes(module + ".*") || perms.some(p => p.startsWith(module + "."));
+    }
+    return perms.includes(module) || perms.includes(module + ".*") || perms.includes(module + "." + privilege);
+  },
+  hasPrivilege(module, privilege) {
+    return this.hasPermission(module, privilege);
+  },
+  canManage() { return this.isRole("super_admin", "hr_admin", "hr_officer") || this.hasPermission("employees", "edit") || this.hasPermission("employees"); },
+  canPayroll() { return this.isRole("super_admin", "hr_admin", "payroll") || this.hasPermission("payroll", "calculate") || this.hasPermission("payroll"); },
   canAdmin() { return this.isRole("super_admin"); },
+  canRecruit() { return this.isRole("super_admin", "hr_admin", "hr_officer", "recruiter") || this.hasPermission("recruitment"); },
   canOperations() {
     if (!this.user) return false;
     if (this.user.can_access_operations !== undefined) return Boolean(this.user.can_access_operations);

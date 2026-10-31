@@ -992,7 +992,162 @@ Views.reports = async function (root) {
 
 /* ============================================================ ADMIN */
 const adminState = { tab: "users" };
-const ADMIN_PERMISSIONS = ["employees", "org", "leave", "attendance", "payroll", "recruitment", "documents", "reports", "settings", "audit", "ess", "operations"];
+const PERMISSION_MODULES = [
+  {
+    id: "employees",
+    name: "Employees & Directory",
+    icon: "users",
+    description: "Employee records, profiles, onboarding and personal information",
+    privileges: [
+      { id: "view", name: "View Directory & Profiles", desc: "Browse employee directory, org chart, contact cards" },
+      { id: "create", name: "Create / Onboard Employees", desc: "Add new employees, hire details, probation terms" },
+      { id: "edit", name: "Edit Employee Details", desc: "Update personal, employment, and job details" },
+      { id: "delete", name: "Delete / Terminate Employees", desc: "Terminate, delete, and archive employee records" },
+      { id: "sensitive", name: "View Sensitive Compensation & IDs", desc: "Access basic salary, bank accounts, SSNIT/TIN & personal IDs" },
+      { id: "export", name: "Export Employee Data", desc: "Download employee records to Excel and CSV" },
+    ],
+  },
+  {
+    id: "org",
+    name: "Organisation Structure & Leadership",
+    icon: "layers",
+    description: "Departments, designations, salary grades, branches, and leadership",
+    privileges: [
+      { id: "view", name: "View Structure", desc: "View departments, designations, branches, and grades" },
+      { id: "create", name: "Create Structure Elements", desc: "Add new departments, branches, designations" },
+      { id: "edit", name: "Edit Structure & Bands", desc: "Modify department settings, salary bands, locations" },
+      { id: "delete", name: "Delete Structure Elements", desc: "Delete departments, branches, designations, grades" },
+      { id: "manage_heads", name: "Manage Department Heads & Leadership", desc: "Appoint and configure departmental heads and assistants" },
+    ],
+  },
+  {
+    id: "leave",
+    name: "Leave & Absences",
+    icon: "calendar",
+    description: "Leave applications, 3-tier approvals, holiday policies, and carry-over",
+    privileges: [
+      { id: "view", name: "View Leave Records & Calendar", desc: "View department leave calendar and staff absence requests" },
+      { id: "apply", name: "Apply on Behalf of Staff", desc: "Submit leave applications for other team members" },
+      { id: "approve_hod", name: "Approve as Department Head (HoD)", desc: "Level 1 departmental leave authorization" },
+      { id: "approve_acc", name: "Approve as Accountant / Finance", desc: "Level 2 financial leave authorization" },
+      { id: "approve_md", name: "Approve as Managing Director (MD)", desc: "Level 3 executive final leave authorization" },
+      { id: "manage_types", name: "Manage Leave Policies & Types", desc: "Configure paid leave types, statutory accruals, carry-forward" },
+      { id: "carry_over", name: "Execute Annual Carry-Over", desc: "Run year-end carry-over and balance adjustments" },
+    ],
+  },
+  {
+    id: "attendance",
+    name: "Attendance & Shift Rosters",
+    icon: "clock",
+    description: "Time clocking, timesheets, shift scheduling, and overtime",
+    privileges: [
+      { id: "view", name: "View Attendance Logs & Timesheets", desc: "View daily check-ins, punch logs, and timesheet reports" },
+      { id: "clock", name: "Manual Punch & Overtime Logging", desc: "Log manual attendance, overtime hours, and adjust punches" },
+      { id: "approve", name: "Approve Timesheets & Overtime", desc: "Sign off on department weekly/monthly timesheets" },
+      { id: "shifts", name: "Manage Shifts & Rosters", desc: "Configure shift timings, schedules, and staff rosters" },
+    ],
+  },
+  {
+    id: "payroll",
+    name: "Payroll & Compensation",
+    icon: "dollarSign",
+    description: "Monthly payroll processing, allowances, taxes, SSNIT, and payslips",
+    privileges: [
+      { id: "view", name: "View Payroll Dashboard & Summaries", desc: "View previous payroll periods and summaries" },
+      { id: "calculate", name: "Process & Calculate Payroll Runs", desc: "Initiate monthly payroll, tax, SSNIT calculations" },
+      { id: "approve", name: "Approve & Finalize Payroll", desc: "Finalize and lock payroll runs for disbursement" },
+      { id: "export", name: "Export Bank Schedules & GRA Reports", desc: "Generate bank payment advice, GRA tax schedules" },
+      { id: "structures", name: "Manage Salary Components & Structures", desc: "Configure basic salaries, allowances, and deductions" },
+    ],
+  },
+  {
+    id: "recruitment",
+    name: "Recruitment & Applicant Tracking",
+    icon: "briefcase",
+    description: "Job vacancies, candidate pipeline, interviews, and offer letters",
+    privileges: [
+      { id: "view", name: "View Jobs & Applications", desc: "Review open positions and incoming applications" },
+      { id: "create", name: "Post Job Openings", desc: "Create and publish new job vacancies and requisitions" },
+      { id: "pipeline", name: "Manage Candidate Stages", desc: "Screen candidates, advance through hiring stages, change status" },
+      { id: "interviews", name: "Schedule & Score Interviews", desc: "Assign interview panels, log feedback and ratings" },
+      { id: "offers", name: "Issue Offers & Appointment Letters", desc: "Generate offer packages and official letters" },
+    ],
+  },
+  {
+    id: "documents",
+    name: "Employment Letters & Official Documents",
+    icon: "fileText",
+    description: "Word/PDF document templates, tag extraction, and letter generation",
+    privileges: [
+      { id: "view", name: "View Generated Documents & Letters", desc: "Access official letters and staff document repository" },
+      { id: "generate", name: "Generate Official Letters", desc: "Create appointment, promotion, confirmation letters" },
+      { id: "templates", name: "Manage Templates & Word/PDF Uploads", desc: "Upload Word/PDF templates and configure dynamic tags" },
+      { id: "delete", name: "Delete Letters & Templates", desc: "Remove templates and archived documents" },
+    ],
+  },
+  {
+    id: "operations",
+    name: "Hotel Operations & Assets",
+    icon: "box",
+    description: "Fixed assets, storeroom inventory, and maintenance work orders",
+    privileges: [
+      { id: "view", name: "View Operations & Asset Register", desc: "Inspect asset register, stock items, and work orders" },
+      { id: "assets", name: "Create & Edit Assets", desc: "Add, update, revalue, and retire hotel assets" },
+      { id: "inventory", name: "Manage Storeroom & Stock Items", desc: "Maintain storeroom items, minimum thresholds, categories" },
+      { id: "stock_adjust", name: "Approve Stock Movements & Adjustments", desc: "Record receiving, issues, write-offs, transfers" },
+      { id: "work_orders", name: "Create & Assign Maintenance Orders", desc: "Raise maintenance requests, assign technicians" },
+      { id: "delete", name: "Delete Operations Records", desc: "Delete asset, inventory, and work order records" },
+    ],
+  },
+  {
+    id: "reports",
+    name: "Reports & Analytics",
+    icon: "barChart",
+    description: "Executive dashboards, operational analytics, and data exports",
+    privileges: [
+      { id: "view", name: "View Standard Reports", desc: "Headcount, turnover, leave, operations summaries" },
+      { id: "payroll", name: "Access Sensitive Payroll Analytics", desc: "Gross wage analysis, tax deductions, cost breakdown" },
+      { id: "export", name: "Export Reports (Excel / PDF / CSV)", desc: "Download formatted tabular and graphical reports" },
+    ],
+  },
+  {
+    id: "settings",
+    name: "System Administration & Settings",
+    icon: "settings",
+    description: "Company profile, user accounts, roles, backups, and security",
+    privileges: [
+      { id: "view", name: "View System Configuration", desc: "View company profile, currency, timezone, settings" },
+      { id: "company", name: "Update Company & Branding", desc: "Update company details, logo, colors, location" },
+      { id: "users", name: "Manage User Accounts & Access", desc: "Create, invite, lock, and reset user credentials" },
+      { id: "roles", name: "Manage Roles & Granular Privileges", desc: "Create roles and customize granular permissions" },
+      { id: "backups", name: "Manage Database Backups & Recovery", desc: "Take manual snapshots, download, and restore database" },
+      { id: "notifications", name: "Configure Notification Channels", desc: "Set up email alerts, delivery settings, and templates" },
+    ],
+  },
+  {
+    id: "audit",
+    name: "Security & Audit Trail",
+    icon: "shield",
+    description: "Security logging, system audit trails, and compliance history",
+    privileges: [
+      { id: "view", name: "View Audit Log Events", desc: "Inspect who performed which action and timestamp" },
+      { id: "export", name: "Export Audit Trail", desc: "Export tamper-evident audit records" },
+    ],
+  },
+  {
+    id: "ess",
+    name: "Employee Self-Service (ESS)",
+    icon: "user",
+    description: "Individual employee personal portal capabilities",
+    privileges: [
+      { id: "profile", name: "Personal Profile & Signature", desc: "View & edit personal info, upload digital signature" },
+      { id: "leave", name: "Apply for Personal Leave", desc: "Submit own leave requests and view balances" },
+      { id: "payslips", name: "View Personal Payslips", desc: "Access and download personal payslips" },
+      { id: "tickets", name: "Submit Internal Requests", desc: "Raise service tickets and maintenance requests" },
+    ],
+  },
+];
+const ADMIN_PERMISSIONS = PERMISSION_MODULES.map(m => m.id);
 const ADMIN_SETTING_GROUPS = ["general", "hr", "attendance", "payroll", "branding", "security", "notifications"];
 
 function reloadAdmin() {
@@ -1130,7 +1285,52 @@ function openRoleDrawer(role) {
 
   const head = isEdit
     ? '<div><h3>Edit role</h3><div class="sub">' + esc(role.name) + (role.is_system ? " · system role" : " · custom role") + '</div></div>'
-    : '<div><h3>Add role</h3><div class="sub">Define a new role and its permissions</div></div>';
+    : '<div><h3>Add role</h3><div class="sub">Define a new role and its granular privileges</div></div>';
+
+  // Build modular permissions & privileges list
+  const modulesHTML = PERMISSION_MODULES.map(mod => {
+    const hasModFull = allPerms || current.includes(mod.id) || current.includes(mod.id + ".*");
+    const privItems = mod.privileges.map(p => {
+      const pKey = mod.id + "." + p.id;
+      const isChecked = hasModFull || current.includes(pKey);
+      return '<div class="perm-priv-item' + (isChecked ? " checked" : "") + '" data-item-mod="' + mod.id + '" data-item-priv="' + p.id + '">'
+        + '<label>'
+        + '<input type="checkbox" class="dr-priv-checkbox" data-mod="' + mod.id + '" data-priv="' + p.id + '" value="' + pKey + '"'
+        + (isChecked ? " checked" : "") + (allPerms ? " disabled" : "") + '>'
+        + '<div style="flex:1;min-width:0">'
+        + '<span class="perm-priv-name">' + esc(p.name) + '</span>'
+        + '<span class="perm-priv-desc">' + esc(p.desc) + '</span>'
+        + '</div>'
+        + '</label>'
+        + '</div>';
+    }).join("");
+
+    return '<div class="perm-module-card" data-mod="' + mod.id + '" id="card-' + mod.id + '">'
+      + '<div class="perm-module-head" data-toggle-mod="' + mod.id + '">'
+      + '<input type="checkbox" class="dr-mod-checkbox" data-mod="' + mod.id + '"' + (allPerms ? " disabled" : "") + ' style="cursor:pointer">'
+      + '<div class="avatar-sm" style="background:var(--paper-2);color:var(--teal);display:flex;align-items:center;justify-content:center;border:1px solid var(--line);border-radius:6px">'
+      + icon(mod.icon || "box", 14)
+      + '</div>'
+      + '<div class="perm-module-info">'
+      + '<div class="perm-module-title">' + esc(mod.name) + '</div>'
+      + '<div class="perm-module-desc">' + esc(mod.description) + '</div>'
+      + '</div>'
+      + '<div class="perm-module-meta">'
+      + '<span class="chip tiny gray" id="badge-' + mod.id + '">0 / ' + mod.privileges.length + ' privileges</span>'
+      + '<button type="button" class="btn btn-xs btn-ghost dr-chevron-btn" data-chevron-mod="' + mod.id + '" title="Toggle privileges list">' + icon("chevronDown", 13) + '</button>'
+      + '</div>'
+      + '</div>'
+      + '<div class="perm-priv-panel hidden" id="panel-' + mod.id + '" data-panel-mod="' + mod.id + '">'
+      + '<div class="perm-priv-actions">'
+      + '<span class="muted tiny" style="margin-right:auto">Check privileges granted to this role:</span>'
+      + '<button type="button" class="btn btn-xs btn-soft" data-act="all" data-mod="' + mod.id + '">Select all</button>'
+      + '<button type="button" class="btn btn-xs btn-soft" data-act="view" data-mod="' + mod.id + '">View only</button>'
+      + '<button type="button" class="btn btn-xs btn-ghost" data-act="clear" data-mod="' + mod.id + '">Clear</button>'
+      + '</div>'
+      + '<div class="perm-priv-grid">' + privItems + '</div>'
+      + '</div>'
+      + '</div>';
+  }).join("");
 
   const body = drawerErrBox()
     + '<div class="drawer-section">Role details</div>'
@@ -1139,59 +1339,267 @@ function openRoleDrawer(role) {
     + drawerField("dr-slug", "Slug", '<input class="input" type="text" id="dr-slug" value="' + esc(isEdit ? role.slug : "") + '" placeholder="hr_assistant"' + (isEdit && role.is_system ? " readonly" : "") + '>', isEdit && role.is_system ? "System role slugs are locked." : "Lowercase identifier used by the API.")
     + drawerField("dr-desc", "Description", '<input class="input" type="text" id="dr-desc" value="' + esc(isEdit ? role.description : "") + '" placeholder="What this role is responsible for">', "", true)
     + '</div>'
-    + '<div class="drawer-section">Permissions</div>'
-    + '<label class="row" style="gap:8px;font-size:12.5px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card)">'
-    + '<input type="checkbox" id="dr-all" ' + (allPerms ? "checked" : "") + '> <b style="font-weight:500">All permissions</b>'
-    + '<span class="tiny muted" style="margin-left:auto">Super Admin</span></label>'
-    + '<div class="drawer-check-grid">'
-    + ADMIN_PERMISSIONS.map(p => '<label class="row" style="gap:7px;font-size:12px"><input type="checkbox" class="dr-perm" value="' + p + '"'
-        + (allPerms || current.includes(p) ? " checked" : "") + (allPerms ? " disabled" : "") + '> ' + p + '</label>').join("")
-    + '</div>'
-    + (isEdit && role.is_system ? '<div class="drawer-note" style="margin-top:14px">' + icon("lock", 13) + ' System roles cannot be deleted. Permissions stay editable.</div>' : '');
+    + '<div class="drawer-section" style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
+    + '<div><b style="font-size:13.5px;color:var(--ink-1)">Permissions &amp; Privileges</b>'
+    + '<div class="tiny muted" style="margin-top:2px">Check a permission module to expand and grant specific privileges. Different users with the same module can have distinct privileges.</div>'
+    + '</div></div>'
+    + '<label class="row" style="gap:10px;font-size:12.5px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:var(--paper-2);margin-bottom:12px;cursor:pointer">'
+    + '<input type="checkbox" id="dr-all" ' + (allPerms ? "checked" : "") + '> '
+    + '<div style="flex:1;min-width:0"><b style="font-weight:600;display:block">All permissions &amp; privileges (Full Super Admin)</b>'
+    + '<span class="tiny muted">Unrestricted administrative access to all modules, financial data, and configurations.</span></div>'
+    + '<span class="chip chip-amber tiny">Super Admin</span></label>'
+    + '<div class="perm-matrix-toolbar">'
+    + '<input class="input input-sm" id="dr-perm-search" type="search" placeholder="Search privileges (e.g. approve, view, delete, payroll)..." style="flex:1;min-width:180px;font-size:12px">'
+    + '<div class="row" style="gap:4px;flex-wrap:wrap">'
+    + '<button type="button" class="btn btn-xs btn-ghost" id="dr-btn-expand-all">Expand all</button>'
+    + '<button type="button" class="btn btn-xs btn-ghost" id="dr-btn-collapse-all">Collapse all</button>'
+    + '<button type="button" class="btn btn-xs btn-soft" id="dr-btn-view-only" title="Grant view-only access across all modules">View only (All)</button>'
+    + '<button type="button" class="btn btn-xs btn-soft" id="dr-btn-select-all">Select all</button>'
+    + '<button type="button" class="btn btn-xs btn-ghost" id="dr-btn-clear-all">Clear all</button>'
+    + '</div></div>'
+    + '<div class="perm-matrix-wrap" id="perm-modules-container">' + modulesHTML + '</div>'
+    + (isEdit && role.is_system ? '<div class="drawer-note" style="margin-top:14px">' + icon("lock", 13) + ' System roles cannot be deleted. Permissions &amp; privileges stay editable.</div>' : '');
 
   const footer = (isEdit && !role.is_system ? '<div class="left"><button class="btn btn-danger" id="dr-delete">' + icon("trash", 13) + ' Delete</button></div>' : '')
     + '<button class="btn btn-ghost" data-close-drawer>Cancel</button>'
     + '<button class="btn btn-accent" id="dr-save">' + (isEdit ? "Save role" : "Create role") + '</button>';
 
   openDrawer({
-    head: head, body: body, footer: footer,
+    wide: true, head: head, body: body, footer: footer,
     onMount(panel) {
       const allBox = panel.querySelector("#dr-all");
-      const permBoxes = Array.from(panel.querySelectorAll(".dr-perm"));
-      allBox.onchange = () => {
-        permBoxes.forEach(b => {
-          b.disabled = allBox.checked;
-          if (allBox.checked) b.checked = true;
+      const modCards = Array.from(panel.querySelectorAll(".perm-module-card"));
+
+      // Function to sync a module's header checkbox, badge, and styling
+      function syncModule(modId) {
+        const privBoxes = Array.from(panel.querySelectorAll('.dr-priv-checkbox[data-mod="' + modId + '"]'));
+        const checkedCount = privBoxes.filter(b => b.checked).length;
+        const totalCount = privBoxes.length;
+        const modBox = panel.querySelector('.dr-mod-checkbox[data-mod="' + modId + '"]');
+        const card = panel.querySelector('#card-' + modId);
+        const badge = panel.querySelector('#badge-' + modId);
+
+        if (checkedCount === 0) {
+          if (modBox) { modBox.checked = false; modBox.indeterminate = false; }
+          if (card) card.classList.remove("is-active");
+          if (badge) { badge.className = "chip gray tiny"; badge.textContent = "0 / " + totalCount + " privileges"; }
+        } else if (checkedCount === totalCount) {
+          if (modBox) { modBox.checked = true; modBox.indeterminate = false; }
+          if (card) card.classList.add("is-active");
+          if (badge) { badge.className = "chip teal tiny"; badge.textContent = "Full (" + totalCount + " privileges)"; }
+        } else {
+          if (modBox) { modBox.checked = true; modBox.indeterminate = true; }
+          if (card) card.classList.add("is-active");
+          if (badge) { badge.className = "chip teal tiny"; badge.textContent = checkedCount + " / " + totalCount + " privileges"; }
+        }
+
+        privBoxes.forEach(b => {
+          const item = b.closest(".perm-priv-item");
+          if (item) item.classList.toggle("checked", b.checked);
         });
+      }
+
+      // Initial sync of all modules & auto-expand active ones
+      PERMISSION_MODULES.forEach(mod => {
+        syncModule(mod.id);
+        const privBoxes = Array.from(panel.querySelectorAll('.dr-priv-checkbox[data-mod="' + mod.id + '"]'));
+        const checkedCount = privBoxes.filter(b => b.checked).length;
+        if (checkedCount > 0) {
+          const panelEl = panel.querySelector('#panel-' + mod.id);
+          const chevronBtn = panel.querySelector('[data-chevron-mod="' + mod.id + '"]');
+          if (panelEl) panelEl.classList.remove("hidden");
+          if (chevronBtn) chevronBtn.innerHTML = icon("chevronUp", 13);
+        }
+      });
+
+      // Toggle panel expand/collapse
+      function togglePanel(modId, forceOpen) {
+        const panelEl = panel.querySelector('#panel-' + modId);
+        const chevronBtn = panel.querySelector('[data-chevron-mod="' + modId + '"]');
+        if (!panelEl) return;
+        const willOpen = forceOpen !== undefined ? forceOpen : panelEl.classList.contains("hidden");
+        panelEl.classList.toggle("hidden", !willOpen);
+        if (chevronBtn) chevronBtn.innerHTML = icon(willOpen ? "chevronUp" : "chevronDown", 13);
+      }
+
+      // Header click delegation
+      panel.addEventListener("click", ev => {
+        const head = ev.target.closest("[data-toggle-mod]");
+        if (head && !ev.target.closest(".dr-mod-checkbox") && !ev.target.closest("button")) {
+          const modId = head.getAttribute("data-toggle-mod");
+          togglePanel(modId);
+          return;
+        }
+        const chev = ev.target.closest("[data-chevron-mod]");
+        if (chev) {
+          const modId = chev.getAttribute("data-chevron-mod");
+          togglePanel(modId);
+          return;
+        }
+        const actBtn = ev.target.closest("[data-act]");
+        if (actBtn) {
+          const act = actBtn.getAttribute("data-act");
+          const modId = actBtn.getAttribute("data-mod");
+          const privBoxes = Array.from(panel.querySelectorAll('.dr-priv-checkbox[data-mod="' + modId + '"]'));
+          if (act === "all") {
+            privBoxes.forEach(b => { if (!b.disabled) b.checked = true; });
+            togglePanel(modId, true);
+          } else if (act === "view") {
+            privBoxes.forEach(b => {
+              if (!b.disabled) b.checked = b.getAttribute("data-priv") === "view";
+            });
+            togglePanel(modId, true);
+          } else if (act === "clear") {
+            privBoxes.forEach(b => { if (!b.disabled) b.checked = false; });
+          }
+          syncModule(modId);
+        }
+      });
+
+      // Module checkbox change
+      panel.querySelectorAll(".dr-mod-checkbox").forEach(modBox => {
+        modBox.onchange = () => {
+          const modId = modBox.getAttribute("data-mod");
+          const privBoxes = Array.from(panel.querySelectorAll('.dr-priv-checkbox[data-mod="' + modId + '"]'));
+          if (modBox.checked) {
+            // Check all privileges for this module and open the panel
+            privBoxes.forEach(b => { if (!b.disabled) b.checked = true; });
+            togglePanel(modId, true);
+          } else {
+            // Uncheck all privileges and collapse panel
+            privBoxes.forEach(b => { if (!b.disabled) b.checked = false; });
+            togglePanel(modId, false);
+          }
+          syncModule(modId);
+        };
+      });
+
+      // Privilege checkbox change
+      panel.querySelectorAll(".dr-priv-checkbox").forEach(pBox => {
+        pBox.onchange = () => {
+          const modId = pBox.getAttribute("data-mod");
+          syncModule(modId);
+        };
+      });
+
+      // Master All Permissions checkbox
+      allBox.onchange = () => {
+        const isAll = allBox.checked;
+        panel.querySelectorAll(".dr-mod-checkbox, .dr-priv-checkbox").forEach(b => {
+          b.disabled = isAll;
+          if (isAll) b.checked = true;
+        });
+        PERMISSION_MODULES.forEach(mod => syncModule(mod.id));
       };
+
+      // Search filter
+      const searchInput = panel.querySelector("#dr-perm-search");
+      if (searchInput) {
+        searchInput.oninput = () => {
+          const q = searchInput.value.toLowerCase().trim();
+          PERMISSION_MODULES.forEach(mod => {
+            const card = panel.querySelector('#card-' + mod.id);
+            const panelEl = panel.querySelector('#panel-' + mod.id);
+            if (!q) {
+              if (card) card.style.display = "";
+              panel.querySelectorAll('.perm-priv-item[data-item-mod="' + mod.id + '"]').forEach(it => it.style.display = "");
+              return;
+            }
+            const modMatch = mod.name.toLowerCase().includes(q) || mod.description.toLowerCase().includes(q);
+            let privMatchCount = 0;
+            mod.privileges.forEach(p => {
+              const item = panel.querySelector('.perm-priv-item[data-item-mod="' + mod.id + '"][data-item-priv="' + p.id + '"]');
+              const match = modMatch || p.name.toLowerCase().includes(q) || p.desc.toLowerCase().includes(q);
+              if (item) item.style.display = match ? "" : "none";
+              if (match) privMatchCount++;
+            });
+            if (modMatch || privMatchCount > 0) {
+              if (card) card.style.display = "";
+              togglePanel(mod.id, true);
+            } else {
+              if (card) card.style.display = "none";
+            }
+          });
+        };
+      }
+
+      // Presets Toolbar
+      const btnExpandAll = panel.querySelector("#dr-btn-expand-all");
+      if (btnExpandAll) btnExpandAll.onclick = () => {
+        PERMISSION_MODULES.forEach(mod => togglePanel(mod.id, true));
+      };
+      const btnCollapseAll = panel.querySelector("#dr-btn-collapse-all");
+      if (btnCollapseAll) btnCollapseAll.onclick = () => {
+        PERMISSION_MODULES.forEach(mod => togglePanel(mod.id, false));
+      };
+      const btnSelectAll = panel.querySelector("#dr-btn-select-all");
+      if (btnSelectAll) btnSelectAll.onclick = () => {
+        panel.querySelectorAll(".dr-priv-checkbox").forEach(b => { if (!b.disabled) b.checked = true; });
+        PERMISSION_MODULES.forEach(mod => { syncModule(mod.id); togglePanel(mod.id, true); });
+      };
+      const btnViewOnly = panel.querySelector("#dr-btn-view-only");
+      if (btnViewOnly) btnViewOnly.onclick = () => {
+        panel.querySelectorAll(".dr-priv-checkbox").forEach(b => {
+          if (!b.disabled) b.checked = b.getAttribute("data-priv") === "view";
+        });
+        PERMISSION_MODULES.forEach(mod => { syncModule(mod.id); togglePanel(mod.id, true); });
+      };
+      const btnClearAll = panel.querySelector("#dr-btn-clear-all");
+      if (btnClearAll) btnClearAll.onclick = () => {
+        panel.querySelectorAll(".dr-priv-checkbox").forEach(b => { if (!b.disabled) b.checked = false; });
+        PERMISSION_MODULES.forEach(mod => { syncModule(mod.id); togglePanel(mod.id, false); });
+      };
+
+      // Save handler
       panel.querySelector("#dr-save").onclick = async () => {
         const val = id => (panel.querySelector("#" + id).value || "").trim();
         const name = val("dr-name");
         const slug = val("dr-slug");
         if (!name) return adminDrawerError(panel, "Role name is required");
         if (!slug) return adminDrawerError(panel, "Role slug is required");
+
         const all = allBox.checked;
-        const chosen = permBoxes.filter(b => b.checked).map(b => b.value);
-        if (!all && !chosen.length) return adminDrawerError(panel, "Select at least one permission (or grant all)");
+        const chosen = [];
+        if (!all) {
+          PERMISSION_MODULES.forEach(mod => {
+            const privBoxes = Array.from(panel.querySelectorAll('.dr-priv-checkbox[data-mod="' + mod.id + '"]'));
+            const checkedBoxes = privBoxes.filter(b => b.checked);
+            if (checkedBoxes.length === privBoxes.length && privBoxes.length > 0) {
+              // Full module access: store module token as well as individual privileges for seamless compatibility
+              chosen.push(mod.id);
+              checkedBoxes.forEach(b => chosen.push(b.value));
+            } else if (checkedBoxes.length > 0) {
+              // Granular access: store individual module.privilege tokens
+              checkedBoxes.forEach(b => chosen.push(b.value));
+            }
+          });
+        }
+
+        if (!all && !chosen.length) {
+          return adminDrawerError(panel, "Select at least one permission or privilege (or grant all permissions)");
+        }
+
         const payload = {
           name: name,
           slug: slug.toLowerCase().replace(/\s+/g, "_"),
           description: val("dr-desc"),
-          permissions: all ? "*" : chosen.join(","),
+          permissions: all ? "*" : Array.from(new Set(chosen)).join(","),
         };
         if (!isEdit) payload.is_system = false;
+
         const btn = panel.querySelector("#dr-save");
         btn.disabled = true; btn.textContent = "Saving…";
         try {
           if (isEdit) await API.put("/roles/" + role.id, payload);
           else await API.post("/roles", payload);
           closeDrawer();
-          toast(isEdit ? "Role updated" : "Role created", "success");
+          toast(isEdit ? "Role updated successfully" : "Role created successfully", "success");
           await Store.loadMeta();
           reloadAdmin();
         } catch (e) { adminDrawerError(panel, e.message); }
         finally { btn.disabled = false; btn.textContent = isEdit ? "Save role" : "Create role"; }
       };
+
       const del = panel.querySelector("#dr-delete");
       if (del) del.onclick = () => confirmDialog("Delete role",
         "Delete the role “" + role.name + "”? Roles still assigned to users cannot be deleted.",
@@ -1326,9 +1734,30 @@ Views.admin = async function (root) {
           { label: "Role", sortKey: "name", render: r => '<div><b>' + esc(r.name) + '</b><div class="tiny muted">' + esc(r.description || "—") + '</div></div>' },
           { label: "Slug", key: "slug", render: r => '<span class="mono tiny">' + esc(r.slug) + '</span>' },
           {
-            label: "Permissions", sortable: false, render: r => r.permissions === "*"
-              ? '<span class="chip chip-amber">All permissions</span>'
-              : '<div class="row wrap" style="gap:4px">' + (String(r.permissions || "").split(",").filter(Boolean).map(p => '<span class="pill-tag">' + esc(p) + '</span>').join("") || '<span class="tiny muted">None</span>') + '</div>'
+            label: "Permissions & Privileges", sortable: false, render: r => {
+              if (r.permissions === "*") return '<span class="chip chip-amber">All permissions &amp; privileges</span>';
+              const raw = String(r.permissions || "").split(",").map(p => p.trim()).filter(Boolean);
+              if (!raw.length) return '<span class="tiny muted">No privileges assigned</span>';
+              const grouped = {};
+              raw.forEach(token => {
+                const parts = token.split(".");
+                const mod = parts[0];
+                const priv = parts[1] || "all";
+                if (!grouped[mod]) grouped[mod] = new Set();
+                grouped[mod].add(priv);
+              });
+              const chips = Object.keys(grouped).map(mod => {
+                const privs = Array.from(grouped[mod]);
+                const modDef = PERMISSION_MODULES.find(m => m.id === mod);
+                const modName = modDef ? modDef.name.split(" ")[0] : mod;
+                const isFull = privs.includes("all") || (modDef && privs.length >= modDef.privileges.length);
+                const titleStr = isFull ? (modName + ": Full access") : (modName + ": " + privs.join(", "));
+                return isFull
+                  ? '<span class="chip teal tiny" title="' + esc(titleStr) + '">✓ ' + esc(modName) + ' (Full)</span>'
+                  : '<span class="chip gray tiny" title="' + esc(titleStr) + '">' + esc(modName) + ' (' + privs.filter(p => p !== "all").length + ' priv)</span>';
+              });
+              return '<div class="row wrap" style="gap:4px">' + chips.join(" ") + '</div>';
+            }
           },
           { label: "Type", sortable: false, render: r => r.is_system ? '<span class="chip chip-teal">System</span>' : '<span class="chip chip-grey">Custom</span>' },
           { label: "", class: "right", sortable: false, render: r => '<button class="btn btn-sm btn-ghost" data-role-edit="' + r.id + '">' + icon("edit", 12) + ' Edit</button>' },

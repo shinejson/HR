@@ -2478,3 +2478,135 @@ html[data-dt-density="compact"] .avatar-sm { width: 25px; height: 25px; font-siz
   justify-content: flex-end;
   gap: 6px;
 }
+
+
+/* ============================================================ Granular Permissions & Privileges Matrix */
+.perm-matrix-wrap {
+  margin-top: 14px;
+}
+.perm-matrix-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.perm-module-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  margin-bottom: 10px;
+  overflow: hidden;
+  transition: all .15s ease;
+}
+.perm-module-card:hover {
+  border-color: var(--teal, #0f766e);
+}
+.perm-module-card.is-active {
+  border-color: rgba(15, 118, 110, 0.45);
+  box-shadow: 0 2px 8px rgba(15, 118, 110, 0.05);
+}
+.perm-module-head {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--paper-1);
+  cursor: pointer;
+  user-select: none;
+}
+.perm-module-card.is-active .perm-module-head {
+  background: var(--paper-2);
+}
+.perm-module-info {
+  flex: 1;
+  min-width: 0;
+}
+.perm-module-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-1);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.perm-module-desc {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.perm-module-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.perm-priv-panel {
+  padding: 12px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--card);
+}
+.perm-priv-panel.hidden {
+  display: none;
+}
+.perm-priv-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--line);
+  font-size: 11px;
+  color: var(--muted);
+}
+.perm-priv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px;
+}
+.perm-priv-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--paper-1);
+  transition: all .12s;
+}
+.perm-priv-item:hover {
+  background: var(--paper-2);
+  border-color: var(--line-strong, #cbd5e1);
+}
+.perm-priv-item.checked {
+  background: rgba(15, 118, 110, 0.05);
+  border-color: rgba(15, 118, 110, 0.4);
+}
+.perm-priv-item label {
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+}
+.perm-priv-item input[type="checkbox"] {
+  margin-top: 2px;
+  cursor: pointer;
+}
+.perm-priv-name {
+  font-weight: 500;
+  color: var(--ink-1);
+  display: block;
+}
+.perm-priv-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.35;
+  display: block;
+  margin-top: 1px;
+}

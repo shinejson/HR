@@ -40,6 +40,8 @@ import models
 import messaging
 import letters
 import hotel_ops
+import permissions
+from permissions import PERMISSION_MODULES, has_permission, user_permissions
 from seed import seed, _paye
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -7193,6 +7195,13 @@ def org_chart():
     return jsonify({"data": roots})
 
 
+@app.get("/api/v1/permissions")
+@login_required
+def get_permissions_catalog():
+    """Retrieve full catalog of system modules and granular privileges."""
+    return jsonify({"data": PERMISSION_MODULES})
+
+
 @app.get("/api/v1/meta")
 @login_required
 def meta():
@@ -7241,7 +7250,10 @@ def meta():
                        "hod_id": e.hod_id, "accountant_id": e.accountant_id, "md_id": e.md_id}
                       for e in Employee.query.filter(Employee.deleted_at.is_(None), Employee.status == "active")
                       .order_by(Employee.first_name)],
-        "roles": [{"id": r.id, "name": r.name, "slug": r.slug} for r in Role.query.order_by(Role.id)],
+        "roles": [{"id": r.id, "name": r.name, "slug": r.slug, "permissions": r.permissions,
+                   "description": r.description, "is_system": bool(r.is_system)}
+                  for r in Role.query.order_by(Role.id)],
+        "permission_modules": PERMISSION_MODULES,
         "leave_types": [{"id": t.id, "name": t.name, "color": t.color, "paid": t.paid}
                         for t in LeaveType.query.all()],
         "expense_categories": [{"id": c.id, "name": c.name} for c in ExpenseCategory.query.all()],
