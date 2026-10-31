@@ -80,7 +80,7 @@ const NAV = [
   {
     label: "Insight", icon: "chart",
     items: [
-      { id: "reports", label: "Reports & analytics", icon: "chart", roles: ["super_admin", "hr_admin", "hr_officer", "payroll", "manager", "auditor"] },
+      { id: "reports", label: "Reports & analytics", icon: "chart" },
     ],
   },
   {

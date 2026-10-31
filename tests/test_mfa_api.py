@@ -59,6 +59,7 @@ class MfaApiTest(unittest.TestCase):
         self.user.failed_attempts = 0
         MfaTrustedDevice.query.filter_by(user_id=self.user.id).delete()
         LoginHistory.query.filter_by(user_id=self.user.id).delete()
+        mfa.set_mfa_enforced(False)
         db.session.commit()
         app.config["WTF_CSRF_ENABLED"] = False
 

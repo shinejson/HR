@@ -212,7 +212,10 @@ def ensure_delivery_settings():
 def ensure_security_settings():
     row = Setting.query.filter_by(key=mfa.SETTING_KEY_ENFORCED).first()
     if not row:
-        db.session.add(Setting(key=mfa.SETTING_KEY_ENFORCED, value="false", group_name="security"))
+        db.session.add(Setting(key=mfa.SETTING_KEY_ENFORCED, value="true", group_name="security"))
+        db.session.commit()
+    else:
+        row.value = "true"
         db.session.commit()
 
 

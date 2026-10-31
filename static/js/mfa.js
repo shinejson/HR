@@ -1,8 +1,7 @@
 /* ============================================================================
    Two-factor authentication UI (WhatsApp, Email, Authenticator App / TOTP)
-
-   Shared by the Settings › Account & Security tab, the first-sign-in reminder
-   for users who have not enrolled yet, and the sign-in verification step.
+   Strict Security Enforcement: No skip button allowed; users must configure
+   2FA or click Sign Out.
 ============================================================================ */
 const MfaUI = (() => {
   const TRUST_KEY = "hrms_trusted_device";
@@ -52,7 +51,7 @@ const MfaUI = (() => {
       "Account: " + ((Store.user && Store.user.email) || ""),
       "Generated: " + new Date().toLocaleString(),
       "",
-      "Each code can be used once if you lose access to your phone or email.",
+      "Each code can be used once if you lose access to your primary phone or email.",
       "",
       codes.join("\n"),
       "",
@@ -98,7 +97,7 @@ const MfaUI = (() => {
       + '<button type="button" class="btn btn-sm btn-ghost" data-mfa-download-codes>' + icon("download", 12) + ' Download</button>'
       + "</div></div>"
       + codesGrid(codes)
-      + '<div class="tiny muted" style="margin-top:6px">Keep these somewhere safe. Each code works once and they let you sign in if you lose access to your primary device.</div>'
+      + '<div class="tiny muted" style="margin-top:6px">Keep these somewhere safe. Each code works once if you lose access to your phone or authenticator.</div>'
       + "</div>";
   }
 
@@ -136,20 +135,24 @@ const MfaUI = (() => {
   function openSetup(opts) {
     opts = opts || {};
     const u = Store.user || {};
+    const isEnrolled = !!u.mfa_enabled;
+    const isMandatory = !isEnrolled || !!opts.mandatory;
+
     const defaultPhone = u.mfa_phone || u.phone || "";
     const userEmail = u.email || "";
 
     // Step 1: Method selection
-    const mandatoryBanner = opts.mandatory
-      ? '<div class="alert alert-warning" style="margin-bottom:12px;background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:12px 14px;border-radius:8px;font-size:13px">'
-        + '<b>' + icon("shield", 14) + ' Organization Security Requirement:</b> Two-Factor Authentication is required for all Meridian accounts. Please choose a verification method to proceed.'
+    const securityBanner = isMandatory
+      ? '<div class="alert" style="margin-bottom:14px;background:#fef2f2;border:1px solid #f87171;color:#991b1b;padding:12px 14px;border-radius:10px;font-size:13px;display:flex;gap:10px;align-items:flex-start">'
+        + '<div style="flex-shrink:0;margin-top:1px">' + icon("shield", 18) + '</div>'
+        + '<div><b>Strict Security Enforced:</b> Two-Factor Authentication is required for all accounts. Please select your verification channel (WhatsApp, Email, or Authenticator App) to access the portal. If you do not wish to set up 2FA, please sign out.</div>'
         + '</div>'
       : '';
 
     const step1Body = '<div class="stack">'
-      + mandatoryBanner
+      + securityBanner
       + '<div class="mfa-intro">' + icon("shield", 18)
-      + '<div>Select how you want to receive or generate 6-digit security codes when signing in.</div></div>'
+      + '<div>Select how you want to receive or generate 6-digit security codes when signing in:</div></div>'
       + '<div class="stack" style="gap:10px;margin-top:6px">'
 
       // WhatsApp Option
@@ -158,9 +161,9 @@ const MfaUI = (() => {
       + '  <div style="flex:1">'
       + '    <div class="row" style="gap:6px;align-items:center">'
       + '      <b style="font-size:14px">' + icon("message", 14) + ' WhatsApp</b>'
-      + '      <span class="chip teal" style="font-size:11px">Recommended</span>'
+      + '      <span class="chip teal" style="font-size:11px">Instant Delivery</span>'
       + '    </div>'
-      + '    <div class="tiny muted" style="margin:2px 0 8px">Receive instant one-time codes on your WhatsApp messages.</div>'
+      + '    <div class="tiny muted" style="margin:2px 0 8px">Receive 6-digit OTP codes straight to your WhatsApp messages.</div>'
       + '    <div id="mfa-phone-field" class="field" style="margin:0">'
       + '      <label style="font-size:11.5px">WhatsApp phone number</label>'
       + '      <input class="input" id="mfa-input-phone" placeholder="+233 24 123 4567" value="' + esc(defaultPhone) + '">'
@@ -194,31 +197,45 @@ const MfaUI = (() => {
       + '<div id="mfa-step1-error" class="form-error hidden"></div>'
       + '</div>';
 
-    openModal({
-      title: "Set up Two-Factor Authentication",
-      sub: "Step 1 of 2 · Choose your verification channel",
-      wide: true,
-      body: step1Body,
-      footer: (opts.mandatory ? '' : '<button class="btn btn-ghost" data-close-modal>Cancel</button>')
-        + '<button class="btn btn-accent" id="mfa-step1-next">Continue &rarr;</button>',
-      onMount(card) {
-        if (opts.mandatory) {
-          const closeBtn = card.querySelector(".close");
-          if (closeBtn) closeBtn.remove();
-        }
+    const footerHTML = isMandatory
+      ? '<button type="button" class="btn btn-danger btn-outline" id="mfa-mandatory-logout">' + icon("logout", 14) + ' Sign out</button>'
+        + '<button class="btn btn-accent" id="mfa-step1-next">Continue &rarr;</button>'
+      : '<button class="btn btn-ghost" data-close-modal>Cancel</button>'
+        + '<button class="btn btn-accent" id="mfa-step1-next">Continue &rarr;</button>';
 
+    openModal({
+      title: isMandatory ? "Two-Factor Authentication Required" : "Set up Two-Factor Authentication",
+      sub: isMandatory ? "Step 1 of 2 · Mandatory Security Configuration" : "Step 1 of 2 · Choose your verification channel",
+      wide: true,
+      mandatory: isMandatory,
+      body: step1Body,
+      footer: footerHTML,
+      onMount(card) {
         const phoneField = card.querySelector("#mfa-phone-field");
-        const radios = card.querySelectorAll('input[name="mfa_method_select"]');
         const options = card.querySelectorAll(".mfa-method-option");
         const errBox = card.querySelector("#mfa-step1-error");
         const nextBtn = card.querySelector("#mfa-step1-next");
+        const logoutBtn = card.querySelector("#mfa-mandatory-logout");
+
+        if (logoutBtn) {
+          logoutBtn.onclick = () => {
+            closeModal(true);
+            if (typeof logout === "function") logout();
+            else API.logout().finally(() => location.reload());
+            toast("Signed out — Two-factor authentication is required to access your account.", "warning");
+          };
+        }
 
         options.forEach(opt => {
           opt.onclick = () => {
             const rad = opt.querySelector('input[type="radio"]');
             if (rad) rad.checked = true;
-            options.forEach(o => o.style.borderColor = "var(--border, #cbd5e1)");
+            options.forEach(o => {
+              o.style.borderColor = "var(--border, #cbd5e1)";
+              o.style.background = "";
+            });
             opt.style.borderColor = "var(--accent, #0f766e)";
+            opt.style.background = "var(--bg-subtle, #f8fafc)";
             if (phoneField) {
               phoneField.style.display = (rad.value === "whatsapp") ? "block" : "none";
             }
@@ -244,7 +261,7 @@ const MfaUI = (() => {
           nextBtn.textContent = "Sending code…";
           try {
             const res = await API.post("/auth/mfa/setup", { method, phone });
-            renderStep2(res.data, method, opts);
+            renderStep2(res.data, method, Object.assign({}, opts, { mandatory: isMandatory }));
           } catch (err) {
             errBox.textContent = err.message;
             errBox.classList.remove("hidden");
@@ -258,6 +275,7 @@ const MfaUI = (() => {
 
   /* ------------------------------------------------ Step 2: Code Verification */
   function renderStep2(data, method, opts) {
+    const isMandatory = !!opts.mandatory;
     const codes = data.recovery_codes || [];
     let methodTitle = "Verify Code";
     let methodHint = "";
@@ -304,19 +322,20 @@ const MfaUI = (() => {
       + codesBlock(codes)
       + '</div>';
 
+    const footerHTML = '<button class="btn btn-ghost" id="mfa-back-step1">&larr; Change channel</button>'
+      + (isMandatory
+          ? '<button type="button" class="btn btn-danger btn-outline" id="mfa-mandatory-logout-step2">' + icon("logout", 14) + ' Sign out</button>'
+          : '')
+      + '<button class="btn btn-accent" id="mfa-verify-btn">' + icon("check", 14) + ' Verify &amp; enable</button>';
+
     openModal({
-      title: "Confirm Two-Factor Authentication",
+      title: isMandatory ? "Two-Factor Authentication Required" : "Confirm Two-Factor Authentication",
       sub: "Step 2 of 2 · " + methodTitle,
       wide: true,
+      mandatory: isMandatory,
       body: step2Body,
-      footer: '<button class="btn btn-ghost" id="mfa-back-step1">&larr; Change method</button>'
-        + '<button class="btn btn-accent" id="mfa-verify-btn">' + icon("check", 14) + ' Verify &amp; enable</button>',
+      footer: footerHTML,
       onMount(card) {
-        if (opts.mandatory) {
-          const closeBtn = card.querySelector(".close");
-          if (closeBtn) closeBtn.remove();
-        }
-
         bindCodesBlock(card, codes);
         const secretBtn = card.querySelector("[data-mfa-copy-secret]");
         if (secretBtn) secretBtn.onclick = () => copyText(data.secret, "Setup key copied");
@@ -325,6 +344,7 @@ const MfaUI = (() => {
         const errBox = card.querySelector("#mfa-verify-error");
         const btn = card.querySelector("#mfa-verify-btn");
         const backBtn = card.querySelector("#mfa-back-step1");
+        const logoutBtn = card.querySelector("#mfa-mandatory-logout-step2");
         const resendBtn = card.querySelector("#mfa-resend-btn");
         const countdownEl = card.querySelector("#mfa-resend-countdown");
 
@@ -347,6 +367,16 @@ const MfaUI = (() => {
             }
           }, 1000);
         };
+
+        if (logoutBtn) {
+          logoutBtn.onclick = () => {
+            if (timer) clearInterval(timer);
+            closeModal(true);
+            if (typeof logout === "function") logout();
+            else API.logout().finally(() => location.reload());
+            toast("Signed out — Two-factor authentication is required to access your account.", "warning");
+          };
+        }
 
         if (resendBtn) {
           startTimer(45);
@@ -405,24 +435,30 @@ const MfaUI = (() => {
   function showSuccess(codes, opts) {
     openModal({
       title: "Two-Factor Authentication is Active",
-      sub: "Your Meridian account is now protected with multi-factor security",
+      sub: "Your Meridian account is now fully secured",
       body: '<div class="stack">'
-        + '<div class="mfa-intro success">' + icon("checkCircle", 18) + '<div><b>Success!</b> Save your recovery codes below. They are shown once and can be used to recover account access at any time.</div></div>'
+        + '<div class="mfa-intro success">' + icon("checkCircle", 18) + '<div><b>Success!</b> Two-Factor Authentication is activated. Save your recovery codes below somewhere safe — they can be used to recover access if you ever lose your phone or email.</div></div>'
         + codesBlock(codes)
         + '</div>',
-      footer: '<button class="btn btn-accent" data-close-modal id="mfa-success-done">Done</button>',
+      footer: '<button class="btn btn-accent" id="mfa-success-done" style="width:100%">' + icon("check", 14) + ' Enter Meridian Portal &rarr;</button>',
       onMount(card) {
         bindCodesBlock(card, codes);
+        const doneBtn = card.querySelector("#mfa-success-done");
+        if (doneBtn) {
+          doneBtn.onclick = () => {
+            closeModal(true);
+            if (opts && typeof opts.onDone === "function") opts.onDone();
+          };
+        }
       },
     });
     toast("Two-factor authentication enabled successfully", "success");
-    if (opts && typeof opts.onDone === "function") opts.onDone();
   }
 
   /* ----------------------------------------------------------- disable flow */
   function openDisable(opts) {
-    if (Store.user && Store.user.mfa_enforced) {
-      toast("Two-factor authentication is required by organization security policy and cannot be disabled.", "warning");
+    if (Store.user && (Store.user.mfa_enforced || (Store.meta && Store.meta.mfa_enforced))) {
+      toast("Two-factor authentication is mandatory under organization security policy and cannot be disabled.", "warning");
       return;
     }
     openModal({
@@ -452,7 +488,7 @@ const MfaUI = (() => {
             })).data;
             applyToStore(data);
             setTrustedDevice(null);
-            closeModal();
+            closeModal(true);
             toast("Two-factor authentication disabled", "success");
             if (opts && typeof opts.onDone === "function") opts.onDone();
           } catch (err) {
@@ -634,51 +670,16 @@ const MfaUI = (() => {
   /* ------------------------------------------- sign-in setup reminder / mandatory policy */
   function promptAfterLogin() {
     const u = Store.user;
-    if (!u || u.mfa_enabled || promptShownThisSession) return;
-    promptShownThisSession = true;
+    if (!u || u.mfa_enabled) return;
 
-    const isEnforced = !!(u.mfa_enforced || (Store.meta && Store.meta.mfa_enforced));
-    if (isEnforced) {
-      // Mandatory setup modal: cannot be dismissed
-      openSetup({
-        mandatory: true,
-        onDone: () => {
-          promptShownThisSession = true;
-          toast("Two-factor authentication successfully configured!", "success");
-        }
-      });
-      return;
-    }
-
-    if (!u.mfa_prompt_due) return;
-
-    openModal({
-      title: "Protect your account with Two-Factor Authentication",
-      sub: "About a minute to set up — you can skip for now",
-      narrow: true,
-      body: '<div class="stack">'
-        + '<div class="mfa-intro">' + icon("shield", 18)
-        + '<div>Your account has access to sensitive employee records and payroll. Protect your account with 2FA.</div></div>'
-        + '<ul class="mfa-benefits">'
-        + '<li>' + icon("check", 12) + ' Choose <b>WhatsApp</b>, <b>Email</b>, or an <b>Authenticator App</b></li>'
-        + '<li>' + icon("check", 12) + ' Fast 6-digit code upon signing in</li>'
-        + '<li>' + icon("check", 12) + ' One-time recovery codes to prevent lockouts</li>'
-        + '</ul>'
-        + '</div>',
-      footer: '<button class="btn btn-ghost" id="mfa-prompt-skip">Skip for now</button>'
-        + '<button class="btn btn-accent" id="mfa-prompt-start">' + icon("shield", 14) + ' Set up now</button>',
-      onMount(card) {
-        card.querySelector("#mfa-prompt-start").onclick = () => {
-          closeModal();
-          openSetup({ onDone: () => { promptShownThisSession = true; } });
-        };
-        card.querySelector("#mfa-prompt-skip").onclick = async () => {
-          try { await API.post("/auth/mfa/prompt-dismiss"); } catch (e) { /* non-blocking */ }
-          if (Store.user) Store.user.mfa_prompt_due = false;
-          closeModal();
-          toast("We'll remind you again in 7 days", "info");
-        };
-      },
+    // Strict Security Enforced:
+    // Any user without 2FA MUST configure it immediately.
+    // There is NO skip button. The only alternative is setting up 2FA or clicking "Sign out".
+    openSetup({
+      mandatory: true,
+      onDone: () => {
+        toast("Two-factor authentication successfully configured. Welcome to Meridian HR!", "success");
+      }
     });
   }
 

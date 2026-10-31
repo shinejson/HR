@@ -220,19 +220,29 @@ function toast(message, type) {
   setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .25s"; setTimeout(() => el.remove(), 260); }, 3800);
 }
 
-function closeModal() {
-  document.getElementById("modal-root").classList.remove("open");
-  document.getElementById("modal-card").innerHTML = "";
+let isModalLocked = false;
+
+function closeModal(force = false) {
+  if (isModalLocked && !force) return;
+  isModalLocked = false;
+  const root = document.getElementById("modal-root");
+  if (root) root.classList.remove("open");
+  const card = document.getElementById("modal-card");
+  if (card) card.innerHTML = "";
 }
 
 function openModal(opts) {
   const root = document.getElementById("modal-root");
   const card = document.getElementById("modal-card");
+  isModalLocked = !!(opts.mandatory || opts.locked);
   card.className = "modal-card" + (opts.wide ? " wide" : "") + (opts.narrow ? " narrow" : "");
+  const closeBtn = isModalLocked
+    ? ''
+    : '<button class="close" data-close-modal aria-label="Close">' + icon("x", 18) + '</button>';
   card.innerHTML = ''
     + '<div class="modal-head"><div><h3>' + esc(opts.title || "") + '</h3>'
     + (opts.sub ? '<div class="sub">' + esc(opts.sub) + '</div>' : '')
-    + '</div><button class="close" data-close-modal aria-label="Close">' + icon("x", 18) + '</button></div>'
+    + '</div>' + closeBtn + '</div>'
     + '<div class="modal-body" id="modal-body">' + (opts.body || "") + '</div>'
     + (opts.footer ? '<div class="modal-foot">' + opts.footer + '</div>' : '');
   root.classList.add("open");
@@ -262,12 +272,17 @@ function openDrawer(opts) {
 
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
+  if (isModalLocked) return;
   const drawer = document.getElementById("drawer-root");
   if (drawer && drawer.classList.contains("open")) closeDrawer();
+  else closeModal();
 });
 
 document.addEventListener("click", (e) => {
-  if (e.target.closest("[data-close-modal]")) closeModal();
+  if (e.target.closest("[data-close-modal]")) {
+    if (isModalLocked) return;
+    closeModal();
+  }
   if (e.target.closest("[data-close-drawer]")) closeDrawer();
 });
 
