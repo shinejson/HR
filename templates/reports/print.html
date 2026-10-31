@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{{ report.title }} — {{ report.scope.label }} | {{ report.company.name }}</title>
+  <style>
+    :root { color-scheme: light; --ink: #17332f; --muted: #596b65; --line: #d9e1dc; --accent: #0f766e; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #edf1ee; color: #202d28; font: 12px/1.55 Arial, sans-serif; }
+    .print-toolbar { max-width: 1120px; margin: 20px auto 12px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 16px; }
+    .print-toolbar p { margin: 0; color: var(--muted); }
+    .print-toolbar button { border: 0; border-radius: 7px; padding: 11px 18px; background: var(--ink); color: white; font-weight: 600; cursor: pointer; }
+    .paper { max-width: 1120px; margin: 0 auto 28px; padding: 30px; background: white; box-shadow: 0 4px 24px #17332f12; }
+    .print-layout { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .print-layout > thead { display: table-header-group; }
+    .print-layout > tfoot { display: table-footer-group; }
+    .print-layout > thead > tr > td, .print-layout > tfoot > tr > td, .print-layout > tbody > tr > td { padding: 0; }
+    .letterhead { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 0 0 18px; border-bottom: 3px solid var(--accent); margin-bottom: 22px; }
+    .company { display: flex; gap: 15px; align-items: center; min-width: 0; }
+    .company-logo { width: 78px; height: 66px; object-fit: contain; object-position: left center; flex-shrink: 0; }
+    .company-monogram { width: 60px; height: 60px; display: grid; place-items: center; background: var(--ink); color: white; font: 32px Georgia, serif; border-radius: 8px; flex-shrink: 0; }
+    .company-name { font-size: 20px; font-weight: 700; color: var(--ink); overflow-wrap: anywhere; }
+    .company-tagline { color: var(--muted); margin-top: 3px; }
+    .document-label { text-align: right; color: var(--accent); text-transform: uppercase; letter-spacing: .12em; font-size: 10px; flex-shrink: 0; }
+    .document-label strong { display: block; margin-top: 5px; color: var(--muted); font-weight: 400; letter-spacing: normal; text-transform: none; }
+    h1 { font: 700 27px/1.25 Georgia, serif; color: var(--ink); margin: 0 0 6px; }
+    .scope { font-size: 15px; margin: 0 0 15px; color: var(--muted); }
+    .report-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 20px; padding: 14px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+    .report-meta dt { font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 3px; }
+    .report-meta dd { margin: 0; overflow-wrap: anywhere; }
+    .summary { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 23px; }
+    .summary-item { flex: 1 1 130px; padding: 12px 14px; background: #f1f6f3; border-left: 3px solid var(--accent); }
+    .summary-item span { display: block; color: var(--muted); font-size: 10px; }
+    .summary-item strong { display: block; color: var(--ink); font-size: 19px; margin-top: 3px; overflow-wrap: anywhere; }
+    .report-section { margin: 0 0 24px; }
+    h2 { font-size: 15px; color: var(--ink); margin: 0 0 6px; break-after: avoid; }
+    .section-note { color: var(--muted); font-size: 10px; margin: 0 0 10px; }
+    .data-table { width: 100%; border-collapse: collapse; table-layout: auto; font-size: 10px; }
+    .data-table th { background: #eaf1ed; color: var(--ink); text-align: left; font-weight: 700; border-bottom: 2px solid #b9cec2; padding: 8px 7px; }
+    .data-table td { padding: 8px 7px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; white-space: pre-line; }
+    .data-table tbody tr:nth-child(even) { background: #fafcfb; }
+    .data-table thead { display: table-header-group; }
+    .data-table tr { break-inside: avoid; }
+    .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 26px; margin: 8px 0 0; }
+    .field { display: grid; grid-template-columns: 130px 1fr; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); break-inside: avoid; }
+    .field dt { color: var(--muted); }
+    .field dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+    .empty { padding: 25px; text-align: center; color: var(--muted); border: 1px dashed var(--line); }
+    .report-footer { border-top: 2px solid var(--accent); padding-top: 10px; margin-top: 20px; color: var(--muted); font-size: 9px; }
+    .footer-contact { display: flex; flex-wrap: wrap; gap: 3px 15px; margin: 4px 0 7px; }
+    .footer-bottom { display: flex; justify-content: space-between; gap: 16px; }
+    .confidential { font-weight: 700; letter-spacing: .06em; color: var(--ink); }
+    .print-note { color: var(--muted); font-size: 10px; margin-top: 16px; }
+    @page { size: A4 landscape; margin: 12mm; }
+    @media print {
+      html, body { background: white !important; margin: 0 !important; padding: 0 !important; }
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .print-toolbar, .print-note { display: none !important; }
+      .paper { max-width: none; width: 100%; margin: 0; padding: 0; box-shadow: none; }
+      .letterhead { padding-bottom: 10px; margin-bottom: 14px; }
+      .company-logo { height: 46px; width: 62px; }
+      .company-monogram { width: 44px; height: 44px; font-size: 26px; }
+      .company-name { font-size: 17px; }
+      .report-footer { margin-top: 12px; padding-top: 7px; }
+      .report-section { margin-bottom: 18px; }
+      .summary-item strong { font-size: 16px; }
+      a { color: inherit; text-decoration: none; }
+    }
+    @media screen and (max-width: 650px) {
+      .paper { padding: 18px; } .letterhead { align-items: flex-start; }
+      .document-label { display: none; } .report-meta, .fields { grid-template-columns: 1fr; }
+      .table-scroll { overflow-x: auto; } .data-table { min-width: 650px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="print-toolbar">
+    <p>Print-ready report · All matching records included</p>
+    <button type="button" onclick="window.print()">Print / Save as PDF</button>
+  </div>
+  <main class="paper">
+    {# Repeating table header/footer puts company branding on EVERY printed page. #}
+    <table class="print-layout" aria-label="{{ report.title }}">
+      <thead><tr><td>
+        <header class="letterhead">
+          <div class="company">
+            {% if report.company.logo_url %}
+              <img class="company-logo" src="{{ report.company.logo_url }}" alt="{{ report.company.name }} logo">
+            {% else %}
+              <div class="company-monogram" role="img" aria-label="{{ report.company.name }} monogram">{{ report.company.initial }}</div>
+            {% endif %}
+            <div><div class="company-name">{{ report.company.name }}</div><div class="company-tagline">{{ report.company.tagline or 'Human Resources' }}</div></div>
+          </div>
+          <div class="document-label">Official HR report<strong>{{ report.reference }}</strong></div>
+        </header>
+      </td></tr></thead>
+      <tfoot><tr><td>
+        <footer class="report-footer">
+          <strong>{{ report.company.legal_name or report.company.name }}</strong>
+          <div class="footer-contact">
+            {% for value in [report.company.address, report.company.city, report.company.country, report.company.phone, report.company.email, report.company.website] if value %}<span>{{ value }}</span>{% endfor %}
+          </div>
+          <div class="footer-bottom"><span class="confidential">CONFIDENTIAL · authorised personnel only</span><span>{{ report.reference }} · {{ report.generated_at }}</span></div>
+        </footer>
+      </td></tr></tfoot>
+      <tbody><tr><td>
+        <h1>{{ report.title }}</h1>
+        <p class="scope">{{ report.scope.label }}{% if report.scope.employee %} · {{ report.scope.employee.employee_no }}{% endif %}</p>
+        <dl class="report-meta">
+          <div><dt>Reporting period</dt><dd>{{ report.scope.period }}</dd></div>
+          <div><dt>Status filter</dt><dd>{{ report.scope.status }}</dd></div>
+          <div><dt>Matching records</dt><dd>{{ report.record_count }}</dd></div>
+          <div><dt>Generated by</dt><dd>{{ report.generated_by }}</dd></div>
+          <div><dt>Generated at</dt><dd>{{ report.generated_at }}</dd></div>
+          <div><dt>Search filter</dt><dd>{{ report.scope.search or 'None' }}</dd></div>
+        </dl>
+        <div class="summary">{% for item in report.summary %}<div class="summary-item"><span>{{ item.label }}</span><strong>{{ item.value }}</strong></div>{% endfor %}</div>
+        {% for section in report.sections %}
+          <section class="report-section">
+            <h2>{{ section.title }}</h2>
+            {% if section.description %}<p class="section-note">{{ section.description }}</p>{% endif %}
+            {% if section.kind == 'fields' %}
+              <dl class="fields">{% for field in section.fields %}<div class="field"><dt>{{ field.label }}</dt><dd>{{ field.value }}</dd></div>{% endfor %}</dl>
+            {% elif section.rows %}
+              <div class="table-scroll"><table class="data-table">
+                <thead><tr>{% for column in section.columns %}<th scope="col">{{ column.label }}</th>{% endfor %}</tr></thead>
+                <tbody>{% for row in section.rows %}<tr>{% for column in section.columns %}<td>{{ row.get(column.key, '—') }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+              </table></div>
+            {% else %}<div class="empty">No records match this report and its filters.</div>{% endif %}
+          </section>
+        {% endfor %}
+        <p class="print-note">This report reflects records available at generation time. Keep it secure and dispose of it according to your company's data retention policy.</p>
+      </td></tr></tbody>
+    </table>
+  </main>
+</body>
+</html>

@@ -41,6 +41,7 @@ import mfa
 import messaging
 import letters
 import hotel_ops
+from employee_reports import register_report_routes
 from seed import seed, _paye
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -8077,6 +8078,8 @@ def server_error(e):
     db.session.rollback()
     return error("An unexpected error occurred", 500)
 
+
+register_report_routes(app, login_required, error, audit)
 
 bootstrap_database()
 
