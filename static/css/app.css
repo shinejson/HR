@@ -418,11 +418,14 @@ tbody tr:hover { background: #fbf9f4; }
 tbody tr.clickable { cursor: pointer; }
 
 /* Sign-in activity table specific styles */
-td.signin-timestamp, th.signin-timestamp { white-space: nowrap; width: 160px; }
-td.signin-status, th.signin-status { white-space: nowrap; width: 90px; }
-td.signin-method, th.signin-method { white-space: nowrap; width: 170px; }
-td.signin-ip, th.signin-ip { white-space: nowrap; width: 130px; }
-td.signin-browser, th.signin-browser { max-width: 350px; width: auto; }
+td.signin-timestamp, th.signin-timestamp { white-space: nowrap; width: 175px; vertical-align: middle; }
+td.signin-status, th.signin-status { white-space: nowrap; width: 110px; vertical-align: middle; }
+td.signin-method, th.signin-method { white-space: nowrap; width: 170px; vertical-align: middle; }
+td.signin-ip, th.signin-ip { white-space: nowrap; width: 140px; vertical-align: middle; }
+td.signin-browser, th.signin-browser { min-width: 260px; vertical-align: middle; }
+.signin-client-cell { display: flex; flex-direction: column; gap: 2px; }
+.signin-client-title { font-size: 12.5px; font-weight: 500; color: var(--text); }
+.signin-client-raw { font-size: 11px; color: var(--muted-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 440px; }
 .signin-browser-text {
   font-size: 11.5px;
   color: var(--muted);

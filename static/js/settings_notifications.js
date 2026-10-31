@@ -1,3 +1,24 @@
+
+function formatClientDevice(ua) {
+  if (!ua || ua === "Web session") return { name: "Web Browser", detail: "Standard web session" };
+  let os = "Desktop";
+  if (/Windows NT 10/i.test(ua)) os = "Windows 10/11";
+  else if (/Windows/i.test(ua)) os = "Windows";
+  else if (/Macintosh|Mac OS X/i.test(ua)) os = "macOS";
+  else if (/iPhone|iPad/i.test(ua)) os = "iOS";
+  else if (/Android/i.test(ua)) os = "Android";
+  else if (/Linux/i.test(ua)) os = "Linux";
+
+  let browser = "Browser";
+  if (/Edg\//i.test(ua)) browser = "Microsoft Edge";
+  else if (/Chrome\//i.test(ua)) browser = "Google Chrome";
+  else if (/Firefox\//i.test(ua)) browser = "Mozilla Firefox";
+  else if (/Safari\//i.test(ua) && !/Chrome/i.test(ua)) browser = "Apple Safari";
+  else if (/Opera|OPR/i.test(ua)) browser = "Opera";
+
+  return { name: browser + " on " + os, detail: ua };
+}
+
 /* Notification Centre, Settings & Gateways, and Announcements & Events */
 
 function switchHTML(attrs, checked, labelText, disabled) {
@@ -515,18 +536,27 @@ Views.settings = async function (root, params) {
           + (u.mfa_enabled ? '<div class="right"><span class="chip green">' + icon("shield", 11) + ' Enabled</span> ' + (u.mfa_method ? '<span class="chip teal">' + esc(u.mfa_method.toUpperCase()) + '</span>' : '') + '</div>' : '<div class="right"><span class="chip chip-grey">Not enabled</span></div>')
           + '</div>'
           + '<div class="card-body" id="mfa-settings-panel"><div class="tiny muted">Loading 2FA status…</div></div></div>'
+          + '</div>'
 
-          + '<div class="section-title" style="margin-bottom:8px">Recent Sign-in Activity</div>'
           + renderTable({
+              title: "Recent Sign-in Activity",
+              sub: "Security audit log of recent account logins across devices, IP addresses, and authentication methods",
               columns: [
-                { label: "Timestamp", render: r => fmtDateTime(r.created_at), class: "signin-timestamp" },
-                { label: "Status", render: r => r.success !== false ? '<span class="chip green">Success</span>' : '<span class="chip red">Failed</span>', class: "signin-status" },
-                { label: "Method", render: r => r.mfa_used ? '<span class="chip teal">Password + 2FA</span>' : '<span class="chip chip-grey">Password</span>', class: "signin-method" },
-                { label: "IP Address", render: r => '<span class="mono tiny">' + esc(r.ip || "127.0.0.1") + '</span>', class: "signin-ip" },
-                { label: "Browser / Client", render: r => '<div class="signin-browser-text">' + esc((r.user_agent || "Web session").slice(0, 100)) + '</div>', class: "signin-browser" },
+                { label: "Date & Time", render: r => '<span class="mono" style="font-size:12px;font-weight:500">' + fmtDateTime(r.created_at) + '</span>', class: "signin-timestamp" },
+                { label: "Status", render: r => r.success !== false ? '<span class="chip green">' + icon("check", 11) + ' Success</span>' : '<span class="chip red">' + icon("x", 11) + ' Failed</span>', class: "signin-status" },
+                { label: "Auth Method", render: r => r.mfa_used ? '<span class="chip teal">' + icon("shield", 11) + ' Password + 2FA</span>' : '<span class="chip chip-grey">Password</span>', class: "signin-method" },
+                { label: "IP Address", render: r => '<span class="mono tiny" style="background:var(--paper-2);padding:2px 7px;border-radius:4px">' + esc(r.ip || "127.0.0.1") + '</span>', class: "signin-ip" },
+                { label: "Browser & Client Device", render: r => {
+                    const dev = formatClientDevice(r.user_agent);
+                    return '<div class="signin-client-cell" title="' + esc(dev.detail) + '">'
+                      + '<span class="signin-client-title">' + esc(dev.name) + '</span>'
+                      + '<span class="signin-client-raw tiny muted">' + esc(dev.detail.slice(0, 95)) + (dev.detail.length > 95 ? '…' : '') + '</span>'
+                      + '</div>';
+                  }, class: "signin-browser" },
               ],
               rows: history,
               emptyTitle: "No recent sign-in logs",
+              emptyText: "Your sign-in events will appear here automatically.",
             });
 
         const orgToggle = stage.querySelector("#mfa-org-enforce-toggle");
