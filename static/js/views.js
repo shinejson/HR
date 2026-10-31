@@ -399,8 +399,45 @@ async function drawEmployees(root) {
           className: "btn-soft",
           onAction: async (ids) => {
             await API.post("/bulk-action", { entity: "employees", action: "set_status", value: "active", ids });
-            toast("Marked " + ids.length + " employee(s) active", "success");
+            toast("Marked " + ids.length + " employee(s) active (login enabled)", "success");
+            await Store.loadMeta();
             drawEmployees(root);
+          },
+        },
+        {
+          label: "Mark Inactive",
+          icon: "alertTriangle",
+          className: "btn-ghost",
+          onAction: async (ids) => {
+            confirmDialog(
+              "Deactivate selected employees",
+              "Are you sure you want to set " + ids.length + " employee(s) to Inactive? Their portal login access will be immediately disabled.",
+              async () => {
+                await API.post("/bulk-action", { entity: "employees", action: "set_status", value: "inactive", ids });
+                toast("Marked " + ids.length + " employee(s) inactive (no login)", "success");
+                await Store.loadMeta();
+                drawEmployees(root);
+              },
+              { danger: true, confirmLabel: "Deactivate" }
+            );
+          },
+        },
+        {
+          label: "Delete Selected",
+          icon: "trash",
+          className: "btn-danger",
+          onAction: async (ids) => {
+            confirmDialog(
+              "Delete selected employees",
+              "Are you sure you want to delete " + ids.length + " selected employee(s)? Their portal accounts and active login sessions will be permanently deactivated.",
+              async () => {
+                await API.post("/bulk-action", { entity: "employees", action: "delete", ids });
+                toast("Deleted " + ids.length + " employee(s)", "success");
+                await Store.loadMeta();
+                drawEmployees(root);
+              },
+              { danger: true, confirmLabel: "Delete" }
+            );
           },
         },
       ] : [],
@@ -413,12 +450,19 @@ async function drawEmployees(root) {
         { label: "Work mode", key: "work_location", render: r => '<span class="pill-tag" style="text-transform:capitalize">' + esc(r.work_location || "office") + '</span>' },
         { label: "Category", key: "contract_type", render: r => '<span class="chip teal" style="font-size:10.5px">' + esc(r.category_label || (r.contract_type || "").replace("_", " ")) + '</span>' + (r.staff_category ? '<div class="tiny muted" style="margin-top:2px">' + esc(r.staff_category) + '</div>' : '') },
         { label: "Joined", key: "hire_date", render: r => fmtDate(r.hire_date) },
-        { label: "Status", key: "status", render: r => chip(r.status) },
+        {
+          label: "Status", key: "status",
+          render: r => canManage
+            ? '<button class="btn btn-sm btn-ghost" data-emp-status="' + r.id + '" title="Click to change employment status" style="padding:2px 8px;height:auto;gap:4px">' + chip(r.status) + ' ' + icon("refresh", 10) + '</button>'
+            : chip(r.status),
+        },
         {
           label: "", class: "right", sortable: false,
           render: r => '<div class="row" style="justify-content:flex-end;gap:4px">'
             + '<button class="btn btn-sm btn-soft" title="View & print category employment letter" data-emp-letter="' + r.id + '">' + icon("printer", 12) + ' Letter</button>'
+            + (canManage ? '<button class="btn btn-sm btn-ghost" title="Change employment status" data-emp-status="' + r.id + '">' + icon("refresh", 12) + ' Status</button>' : '')
             + (canManage ? '<button class="btn btn-sm btn-ghost" title="Send or reset portal username & password" data-emp-creds="' + r.id + '">' + icon("key", 12) + '</button>' : '')
+            + (canManage ? '<button class="icon-btn" style="width:28px;height:28px;color:var(--red)" title="Delete employee" data-emp-del="' + r.id + '">' + icon("trash", 13) + '</button>' : '')
             + '<button class="btn btn-sm btn-ghost" data-open-emp="' + r.id + '">360° ' + icon("arrowRight", 12) + '</button>'
             + '</div>',
         },
@@ -490,6 +534,16 @@ async function drawEmployees(root) {
     ev.stopPropagation();
     const row = rows.find(x => Number(x.id) === Number(el.dataset.empCreds));
     if (row) openSendCredentialsModal(row, () => drawEmployees(root));
+  });
+  onDelegate(root, "click", "[data-emp-status]", (el, ev) => {
+    ev.stopPropagation();
+    const row = rows.find(x => Number(x.id) === Number(el.dataset.empStatus));
+    if (row) openStatusForm(row, () => drawEmployees(root));
+  });
+  onDelegate(root, "click", "[data-emp-del]", (el, ev) => {
+    ev.stopPropagation();
+    const row = rows.find(x => Number(x.id) === Number(el.dataset.empDel));
+    if (row) deleteEmployee(row, () => drawEmployees(root));
   });
   const add = root.querySelector("#emp-add");
   if (add) add.onclick = () => openEmployeeForm();
@@ -622,23 +676,60 @@ function monthName(m) {
   return new Date(2020, Number(m) - 1, 1).toLocaleString("en-GB", { month: "long" });
 }
 
-function openStatusForm(e) {
+function deleteEmployee(emp, onSuccess) {
+  confirmDialog(
+    "Delete employee record",
+    'Are you sure you want to delete employee "' + (emp.full_name || emp.employee_name || emp.employee_no) + '"? Their system account and active login sessions will be permanently deactivated. This action is recorded in the audit trail.',
+    async () => {
+      await API.delete("/employees/" + emp.id);
+      toast("Employee deleted successfully", "success");
+      await Store.loadMeta();
+      if (typeof onSuccess === "function") onSuccess();
+      else go("employees");
+    },
+    { danger: true, confirmLabel: "Delete employee" }
+  );
+}
+
+function openStatusForm(e, onSaved) {
+  const empName = e.full_name || e.employee_name || e.employee_no || "Employee";
   formModal({
     title: "Change employment status",
-    sub: e.full_name,
+    sub: empName + " · Current status: " + (e.status || "active").toUpperCase(),
     submitLabel: "Update status",
     fields: [
-      { name: "status", label: "New status", type: "select", options: ["active", "probation", "suspended", "resigned", "terminated"], value: e.status, required: true },
+      {
+        name: "status",
+        label: "Employment status",
+        type: "select",
+        options: [
+          { value: "active", label: "Active (Login access enabled)" },
+          { value: "probation", label: "Probation (Login access enabled)" },
+          { value: "inactive", label: "Inactive (No login access)" },
+          { value: "suspended", label: "Suspended (No login access)" },
+          { value: "resigned", label: "Resigned (No login access)" },
+          { value: "terminated", label: "Terminated (No login access)" },
+        ],
+        value: e.status || "active",
+        required: true,
+        hint: "Note: Inactive, suspended, resigned, and terminated employees cannot log into the system.",
+      },
       { name: "effective_date", label: "Effective date", type: "date", value: todayISO() },
     ],
     onSubmit: async (data) => {
       await API.put("/employees/" + e.id, { status: data.status });
-      await API.post("/employment-history", {
-        employee_id: e.id, event_type: "status_change", from_value: e.status,
-        to_value: data.status, effective_date: data.effective_date || todayISO(),
-      });
-      toast("Status updated to " + data.status, "success");
-      navigate();
+      try {
+        await API.post("/employment-history", {
+          employee_id: e.id, event_type: "status_change", from_value: e.status,
+          to_value: data.status, effective_date: data.effective_date || todayISO(),
+        });
+      } catch (err) {
+        // history is non-critical
+      }
+      toast("Status updated to " + data.status + (["active", "probation"].includes(data.status) ? " (Login enabled)" : " (No login access)"), "success");
+      await Store.loadMeta();
+      if (typeof onSaved === "function") onSaved();
+      else navigate();
     },
   });
 }

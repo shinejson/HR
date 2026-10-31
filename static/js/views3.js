@@ -531,7 +531,13 @@ Views.assets = async function (root) {
           { label: "Purchased", render: r => fmtDate(r.purchase_date) },
           { label: "Value", render: r => money(r.value) },
           { label: "Status", render: r => chip(r.status) },
-          { label: "", class: "right", render: r => canManage ? (r.status === "assigned" ? '<button class="btn btn-sm btn-ghost" data-return="' + r.id + '">Return</button>' : '<button class="btn btn-sm btn-soft" data-assign="' + r.id + '">Assign</button>') : "" },
+          { label: "", class: "right", render: r => canManage ? (
+            '<div class="row row-tight" style="justify-content:flex-end;gap:4px">' +
+            (r.status === "assigned" ? '<button class="btn btn-sm btn-ghost" data-return="' + r.id + '">Return</button>' : '<button class="btn btn-sm btn-soft" data-assign="' + r.id + '">Assign</button>') +
+            '<button class="icon-btn" style="width:28px;height:28px" data-edit-asset="' + r.id + '" title="Edit asset">' + icon("edit", 13) + '</button>' +
+            '<button class="icon-btn" style="width:28px;height:28px;color:var(--red)" data-del-asset="' + r.id + '" title="Delete asset">' + icon("trash", 13) + '</button>' +
+            '</div>'
+          ) : "" },
         ], rows: assets, emptyTitle: "No assets registered",
       });
     } else {
@@ -563,25 +569,87 @@ Views.assets = async function (root) {
     onDelegate(root, "click", "[data-return]", (b) => confirmDialog("Return asset", "Mark this asset as returned and available?", async () => {
       await API.post("/assets/" + b.dataset.return + "/return", { condition: "good" }); toast("Asset returned", "success"); Views.assets(root);
     }, { confirmLabel: "Return asset" }));
+    onDelegate(root, "click", "[data-edit-asset]", (b) => {
+      const a = assets.find(x => x.id === Number(b.dataset.editAsset));
+      if (a) openAssetForm(a);
+    });
+    onDelegate(root, "click", "[data-del-asset]", (b) => {
+      const a = assets.find(x => x.id === Number(b.dataset.delAsset));
+      if (a) deleteAsset(a);
+    });
   } catch (e) {
     root.innerHTML = pageHead("Assets", "Unavailable") + emptyState("Could not load assets", e.message, "alert");
   }
 };
 
-function openAssetForm() {
+function openAssetForm(existing) {
+  const isEdit = !!(existing && existing.id);
+  const a = existing || {};
   formModal({
-    title: "Register asset",
+    title: isEdit ? "Edit Asset" : "Register Asset",
     fields: [
-      { name: "name", label: "Asset name", required: true },
-      { name: "tag", label: "Asset tag", required: true, placeholder: "AST-LTP-0001" },
-      { name: "category", label: "Category", type: "select", options: ["laptop", "monitor", "phone", "furniture", "vehicle", "other"], value: "laptop" },
-      { name: "serial_no", label: "Serial number" },
-      { name: "purchase_date", label: "Purchase date", type: "date", value: todayISO() },
-      { name: "value", label: "Purchase value (GHS)", type: "number", value: 0, min: 0 },
-      { name: "notes", label: "Notes", type: "textarea", full: true },
+      { name: "name", label: "Asset name", required: true, value: a.name || "" },
+      { name: "tag", label: "Asset tag", required: true, placeholder: "AST-LTP-0001", value: a.tag || "" },
+      { name: "category", label: "Category", type: "select", options: [
+        "laptop", "monitor", "phone", "furniture", "vehicle", "kitchen", "laundry", "hvac", "pos", "it", "maintenance", "other"
+      ], value: a.category || "laptop" },
+      { name: "serial_no", label: "Serial number", value: a.serial_no || "" },
+      { name: "purchase_date", label: "Purchase date", type: "date", value: a.purchase_date || todayISO() },
+      { name: "value", label: "Purchase value (GHS)", type: "number", value: a.value !== undefined && a.value !== null ? a.value : 0, min: 0 },
+      { name: "status", label: "Status", type: "select", options: [
+        { value: "available", label: "Available" },
+        { value: "assigned", label: "Assigned" },
+        { value: "maintenance", label: "In Maintenance" },
+        { value: "damaged", label: "Damaged / Faulty" },
+        { value: "retired", label: "Retired / Decommissioned" },
+      ], value: a.status || "available" },
+      { name: "room_number", label: "Room / Location", placeholder: "e.g. Room 204, Laundry Bay", value: a.room_number || "" },
+      { name: "notes", label: "Notes", type: "textarea", full: true, value: a.notes || "" },
     ],
-    onSubmit: async (data) => { data.status = "available"; data.value = data.value || 0; await API.post("/assets", data); navigate(); },
+    extraFooter: isEdit && Store.canManage() ? `
+      <button type="button" class="btn btn-ghost" style="color:var(--red);margin-right:auto" id="modal-del-asset-views3">
+        ${icon("trash", 14)} Delete asset
+      </button>
+    ` : "",
+    onOpen: (modalEl) => {
+      const delBtn = modalEl.querySelector("#modal-del-asset-views3");
+      if (delBtn && isEdit) {
+        delBtn.onclick = () => {
+          modalEl.remove();
+          deleteAsset(existing);
+        };
+      }
+    },
+    onSubmit: async (data) => {
+      data.value = data.value !== null && data.value !== undefined && data.value !== "" ? Number(data.value) : 0;
+      if (isEdit) {
+        await API.put("/assets/" + existing.id, data);
+        toast("Asset updated successfully", "success");
+      } else {
+        data.status = data.status || "available";
+        await API.post("/assets", data);
+        toast("Asset registered successfully", "success");
+      }
+      navigate();
+    },
   });
+}
+
+function deleteAsset(asset) {
+  confirmDialog(
+    "Delete Asset",
+    'Are you sure you want to delete "' + esc(asset.name || asset.tag) + '" (' + esc(asset.tag || "") + ')? This action cannot be undone.',
+    async () => {
+      try {
+        await API.del("/assets/" + asset.id);
+        toast("Asset deleted successfully", "success");
+        navigate();
+      } catch (err) {
+        toast("Error deleting asset: " + (err.message || err), "error");
+      }
+    },
+    { confirmLabel: "Delete asset", danger: true }
+  );
 }
 
 function openAssignAssetForm(assetId) {

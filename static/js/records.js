@@ -30,8 +30,8 @@ const Records = (() => {
   }
   function buttons(resource, row) {
     const attrs = ' data-record-resource="' + resource + '" data-record-id="' + row.id + '"';
-    return '<button class="btn btn-sm btn-ghost" data-record-action="view"' + attrs + '>View</button> '
-      + (canWrite(resource, row) ? '<button class="btn btn-sm btn-soft" data-record-action="edit"' + attrs + '>Edit</button> <button class="btn btn-sm btn-danger" data-record-action="delete"' + attrs + '>Delete</button>' : '');
+    return '<button class="btn btn-sm btn-ghost" data-record-action="view"' + attrs + ' title="View">' + icon('eye', 14) + '</button> '
+      + (canWrite(resource, row) ? '<button class="btn btn-sm btn-soft" data-record-action="edit"' + attrs + ' title="Edit">' + icon('edit', 14) + '</button> <button class="btn btn-sm btn-danger" data-record-action="delete"' + attrs + ' title="Delete">' + icon('trash', 14) + '</button>' : '');
   }
   function column(resource) { return { label: 'Record actions', sortable: false, render: row => buttons(resource, row) }; }
   async function form(resource, record = {}) {

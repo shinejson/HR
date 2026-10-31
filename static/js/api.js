@@ -80,6 +80,7 @@ const API = (() => {
     put(path, data) { return request(path, { method: "PUT", body: JSON.stringify(data || {}) }); },
     patch(path, data) { return request(path, { method: "PATCH", body: JSON.stringify(data || {}) }); },
     del(path) { return request(path, { method: "DELETE" }); },
+    delete(path) { return request(path, { method: "DELETE" }); },
     upload(path, formData) { return request(path, { method: "POST", body: formData }); },
   };
 })();
