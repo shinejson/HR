@@ -1436,7 +1436,11 @@ Views.settings = async function (root) {
     + [["leave", "Leave decisions"], ["approvals", "Approval requests"], ["payroll", "Payslip availability"], ["announcements", "Company announcements"]].map(x =>
       '<div class="row-between" style="padding:8px 0;border-bottom:1px solid var(--line)"><span class="small">' + x[1] + '</span><input type="checkbox" data-pref="' + x[0] + '" ' + (localStorage.getItem("hrms_pref_" + x[0]) !== "0" ? "checked" : "") + '></div>').join("")
     + '<div class="tiny muted" style="margin-top:10px">Email delivery is configured by your administrator.</div></div></div>'
-    + '<div class="card"><div class="card-head"><h3>Security</h3></div><div class="card-body"><div class="list-row">' + icon("shield", 18) + '<div class="body"><b>Two-factor authentication</b><span>Authenticator app (TOTP)</span></div><span class="chip chip-grey">Not enabled</span></div>'
+    + '<div class="card"><div class="card-head"><h3>Security</h3></div><div class="card-body"><div class="list-row">' + icon("shield", 18) + '<div class="body"><b>Two-factor authentication</b><span>Authenticator app (TOTP)</span></div>'
+    + (u.mfa_enabled
+        ? '<span class="chip green">Enabled</span>'
+        : '<button class="btn btn-sm btn-accent" id="settings-mfa-open">' + icon("shield", 12) + ' Set up</button>')
+    + '</div>'
     + '<div class="list-row">' + icon("clock", 18) + '<div class="body"><b>Last sign in</b><span>' + fmtDateTime(u.last_login_at) + '</span></div></div>'
     + '<div class="list-row">' + icon("logout", 18) + '<div class="body"><b>Active session</b><span>This browser</span></div><button class="btn btn-sm btn-danger" id="settings-logout">Sign out</button></div>'
     + '</div></div></div>';
@@ -1456,4 +1460,8 @@ Views.settings = async function (root) {
     toast("Preference saved", "success");
   });
   root.querySelector("#settings-logout").onclick = () => logout();
+  const mfaOpen = root.querySelector("#settings-mfa-open");
+  if (mfaOpen) mfaOpen.onclick = () => {
+    if (typeof MfaUI !== "undefined") MfaUI.openSetup({ onDone: () => Views.settings(root) });
+  };
 };

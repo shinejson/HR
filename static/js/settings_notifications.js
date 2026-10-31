@@ -487,10 +487,10 @@ Views.settings = async function (root, params) {
           + '<dt>Employee No.</dt><dd class="mono">' + esc(u.employee_no || "—") + '</dd>'
           + '<dt>Last Sign-in</dt><dd>' + fmtDateTime(u.last_login_at) + '</dd>'
           + '</dl>'
-          + '<div class="divider"></div>'
-          + '<div class="row-between"><div><b style="font-size:13px">Two-Factor Authentication (MFA)</b><div class="tiny muted">Require verification code on untrusted devices</div></div>'
-          + switchHTML('id="mfa-toggle"', !!u.mfa_enabled, "", Store.isReadOnly())
-          + '</div></div></div>'
+          + (u.mfa_enabled
+              ? '<div class="mfa-intro success" style="margin-top:14px">' + icon("shield", 16) + '<div><b>Two-factor authentication is on.</b> Sign-in on a new device asks for a code from your authenticator app.</div></div>'
+              : '<div class="mfa-intro" style="margin-top:14px">' + icon("shield", 16) + '<div><b>Your account is password-only.</b> Add an authenticator app so a stolen password alone cannot sign in.</div></div>')
+          + '</div></div>'
 
           + '<div class="card"><div class="card-head"><div><h3>Change Password</h3><div class="sub">Minimum 8 characters · Immediately active</div></div></div>'
           + '<div class="card-body"><form id="pw-change-form" class="stack">'
@@ -500,13 +500,19 @@ Views.settings = async function (root, params) {
           + '<div class="field"><label>Confirm new password</label><input class="input" type="password" name="confirm_password" minlength="8" required autocomplete="new-password"></div>'
           + '</div>'
           + '<div><button class="btn btn-accent" type="submit">' + icon("lock", 14) + ' Update password</button></div>'
-          + '</form></div></div></div>'
+          + '</form></div></div>'
+
+          + '<div class="card" style="grid-column:1/-1"><div class="card-head"><div><h3>Two-Factor Authentication</h3><div class="sub">Authenticator app &middot; recovery codes &middot; trusted devices</div></div>'
+          + (u.mfa_enabled ? '<div class="right"><span class="chip green">' + icon("shield", 11) + ' Enabled</span></div>' : '<div class="right"><span class="chip chip-grey">Not enabled</span></div>')
+          + '</div>'
+          + '<div class="card-body" id="mfa-settings-panel"><div class="tiny muted">Loading 2FA status…</div></div></div>'
 
           + '<div class="section-title" style="margin-bottom:8px">Recent Sign-in Activity</div>'
           + renderTable({
               columns: [
                 { label: "Timestamp", render: r => fmtDateTime(r.created_at) },
                 { label: "Status", render: r => r.success !== false ? '<span class="chip green">Success</span>' : '<span class="chip red">Failed</span>' },
+                { label: "Method", render: r => r.mfa_used ? '<span class="chip teal">Password + 2FA</span>' : '<span class="chip chip-grey">Password</span>' },
                 { label: "IP Address", render: r => '<span class="mono tiny">' + esc(r.ip || "127.0.0.1") + '</span>' },
                 { label: "Browser / Client", render: r => '<span class="tiny muted">' + esc((r.user_agent || "Web session").slice(0, 85)) + '</span>' },
               ],
@@ -514,13 +520,22 @@ Views.settings = async function (root, params) {
               emptyTitle: "No recent sign-in logs",
             });
 
-        const mfaToggle = stage.querySelector("#mfa-toggle");
-        if (mfaToggle) mfaToggle.onchange = async () => {
-          try {
-            await API.put("/auth/mfa", { enabled: mfaToggle.checked });
-            toast(mfaToggle.checked ? "Two-factor authentication enabled" : "Two-factor authentication disabled", "success");
-          } catch (err) { handleErr(err); }
-        };
+        const mfaPanel = stage.querySelector("#mfa-settings-panel");
+        if (mfaPanel && typeof MfaUI !== "undefined") {
+          MfaUI.mount(mfaPanel, {
+            // Re-render the tab so the header chip and the identity callout stay truthful.
+            onChange: async () => {
+              try {
+                const fresh = await MfaUI.status();
+                if (Store.user) {
+                  Store.user.mfa_enabled = fresh.enabled;
+                  Store.user.mfa_pending_setup = fresh.pending_setup;
+                }
+              } catch (e) { /* keep the previous state */ }
+              renderShell();
+            },
+          });
+        }
 
         stage.querySelector("#pw-change-form").onsubmit = async (ev) => {
           ev.preventDefault();

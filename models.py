@@ -39,6 +39,12 @@ class User(db.Model, TimestampMixin, SoftDeleteMixin):
     role_id = db.Column(db.Integer, db.ForeignKey("roles.id"), nullable=False)
     status = db.Column(db.String(20), default="active")
     mfa_enabled = db.Column(db.Boolean, default=False)
+    # TOTP enrolment. `mfa_secret` exists as soon as setup starts; `mfa_enabled`
+    # only flips once the user proves they can generate a valid code.
+    mfa_secret = db.Column(db.String(64))
+    mfa_recovery_codes = db.Column(db.Text)
+    mfa_confirmed_at = db.Column(db.DateTime)
+    mfa_prompt_snoozed_at = db.Column(db.DateTime)
     last_login_at = db.Column(db.DateTime)
     last_login_ip = db.Column(db.String(64))
     failed_attempts = db.Column(db.Integer, default=0)
@@ -958,6 +964,21 @@ class LoginHistory(db.Model):
     ip = db.Column(db.String(64))
     user_agent = db.Column(db.String(255))
     success = db.Column(db.Boolean, default=True)
+    mfa_used = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=now, nullable=False)
+
+
+class MfaTrustedDevice(db.Model):
+    """A browser that may skip the TOTP prompt until `expires_at` (1 month)."""
+    __tablename__ = "mfa_trusted_devices"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    token_hash = db.Column(db.String(128), unique=True, nullable=False, index=True)
+    label = db.Column(db.String(180))
+    ip = db.Column(db.String(64))
+    user_agent = db.Column(db.String(255))
+    last_used_at = db.Column(db.DateTime)
+    expires_at = db.Column(db.DateTime, nullable=False)
     created_at = db.Column(db.DateTime, default=now, nullable=False)
 
 

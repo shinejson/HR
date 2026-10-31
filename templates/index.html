@@ -8,8 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/css/app.css?v=1.0.21">
-  <link rel="stylesheet" href="/static/css/themes.css?v=1.0.21">
+  <link rel="stylesheet" href="/static/css/app.css?v=1.0.25">
+  <link rel="stylesheet" href="/static/css/themes.css?v=1.0.25">
   <link id="favicon-link" rel="icon" href="{{ brand.favicon_url }}">
 </head>
 <body>
@@ -63,6 +63,25 @@
         </div>
         <button class="btn btn-accent" type="submit" id="login-submit" style="width:100%;height:42px">Sign in to Meridian</button>
       </form>
+
+      <div id="mfa-step" class="hidden">
+        <div class="eyebrow">Step 2 of 2 &middot; Verification</div>
+        <h2>Enter your code</h2>
+        <p class="hint">Open your authenticator app and enter the 6-digit code for <b id="mfa-account">your account</b>.</p>
+        <div id="mfa-error" class="form-error hidden"></div>
+        <div class="field" style="margin-bottom:10px">
+          <label for="mfa-code">Authentication code</label>
+          <input class="input mfa-code-input" id="mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="9" placeholder="123456">
+        </div>
+        <label class="mfa-login-trust" for="mfa-trust-month">
+          <input type="checkbox" id="mfa-trust-month" checked>
+          Trust this device for 1 month <span class="muted">(no code on this browser for 30 days)</span>
+        </label>
+        <button class="btn btn-accent" type="button" id="mfa-submit" style="width:100%;height:42px">Verify &amp; sign in</button>
+        <button class="btn btn-ghost" type="button" id="mfa-back" style="width:100%;margin-top:8px">Back to sign in</button>
+        <div class="mfa-login-alt">Lost your phone? Type one of your recovery codes in the box above instead.</div>
+      </div>
+
       <div class="demo-list">
         <div class="demo-head">Demo accounts — click to fill</div>
         <div class="demo-item" data-email="ama.mensah@meridian.gh" data-pass="Admin@123">
@@ -197,20 +216,21 @@
 </div>
 <div class="toast-root" id="toast-root"></div>
 
-<script src="/static/js/api.js?v=1.0.24"></script>
-<script src="/static/js/theme.js?v=1.0.24"></script>
-<script src="/static/js/theme-settings.js?v=1.0.24"></script>
-<script src="/static/js/ui.js?v=1.0.24"></script>
-<script src="/static/js/datatable.js?v=1.0.24"></script>
-<script src="/static/js/views.js?v=1.0.24"></script>
-<script src="/static/js/records.js?v=1.0.24"></script>
-<script src="/static/js/views2.js?v=1.0.24"></script>
-<script src="/static/js/views3.js?v=1.0.24"></script>
-<script src="/static/js/profile.js?v=1.0.24"></script>
-<script src="/static/js/settings_notifications.js?v=1.0.24"></script>
-<script src="/static/js/letters.js?v=1.0.24"></script>
-<script src="/static/js/operations.js?v=1.0.24"></script>
-<script src="/static/js/backups.js?v=1.0.24"></script>
-<script src="/static/js/app.js?v=1.0.24"></script>
+<script src="/static/js/api.js?v=1.0.25"></script>
+<script src="/static/js/theme.js?v=1.0.25"></script>
+<script src="/static/js/theme-settings.js?v=1.0.25"></script>
+<script src="/static/js/ui.js?v=1.0.25"></script>
+<script src="/static/js/datatable.js?v=1.0.25"></script>
+<script src="/static/js/views.js?v=1.0.25"></script>
+<script src="/static/js/records.js?v=1.0.25"></script>
+<script src="/static/js/views2.js?v=1.0.25"></script>
+<script src="/static/js/views3.js?v=1.0.25"></script>
+<script src="/static/js/profile.js?v=1.0.25"></script>
+<script src="/static/js/settings_notifications.js?v=1.0.25"></script>
+<script src="/static/js/letters.js?v=1.0.25"></script>
+<script src="/static/js/operations.js?v=1.0.25"></script>
+<script src="/static/js/backups.js?v=1.0.25"></script>
+<script src="/static/js/mfa.js?v=1.0.25"></script>
+<script src="/static/js/app.js?v=1.0.25"></script>
 </body>
 </html>

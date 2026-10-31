@@ -53,10 +53,21 @@ const API = (() => {
   return {
     get token() { return token; },
     setToken,
-    async login(email, password) {
-      const body = await request("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
-      setToken(body.data.token);
-      return body.data.user;
+    async login(email, password, trustedDevice) {
+      const payload = { email, password };
+      if (trustedDevice) payload.trusted_device = trustedDevice;
+      const body = await request("/auth/login", { method: "POST", body: JSON.stringify(payload) });
+      // Either a session (`token` + `user`) or a 2FA challenge (`mfa_required`).
+      if (body.data && body.data.token) setToken(body.data.token);
+      return body.data;
+    },
+    async verifyMfa(challenge, code, rememberDevice) {
+      const body = await request("/auth/mfa/verify", {
+        method: "POST",
+        body: JSON.stringify({ challenge, code, remember_device: !!rememberDevice }),
+      });
+      if (body.data && body.data.token) setToken(body.data.token);
+      return body.data;
     },
     logout() {
       return request("/auth/logout", { method: "POST" }).catch(() => {}).finally(() => setToken(null));

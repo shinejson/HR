@@ -149,6 +149,15 @@ Views.dashboard = async function (root) {
         + '</div></div>'
       : '';
 
+    const mfaBanner = (!user.mfa_enabled && user.mfa_prompt_due && typeof MfaUI !== "undefined")
+      ? '<div class="callout-banner amber" id="dash-mfa-banner" style="margin-bottom:16px;flex-wrap:wrap">'
+        + '<div><b>Two-factor authentication is off.</b> Add a 6-digit code from your phone so a stolen password alone cannot reach payroll or employee records.</div>'
+        + '<div class="row" style="gap:8px">'
+        + '  <button class="btn btn-sm btn-accent" id="dash-mfa-setup">' + icon("shield", 13) + ' Set up 2FA</button>'
+        + '  <button class="btn btn-sm btn-ghost" id="dash-mfa-skip">Remind me later</button>'
+        + '</div></div>'
+      : '';
+
     const quickLaunch = '<div class="quick-launch-bar" style="margin-bottom:18px">'
       + '<button class="quick-tile" id="ql-profile"><span class="qt-icon teal">' + icon("user", 16) + '</span><div><b>My 360° File</b><span>Contracts & skills</span></div></button>'
       + '<button class="quick-tile" id="ql-letter"><span class="qt-icon accent">' + icon("file", 16) + '</span><div><b>Employment Letter</b><span>View, sign & print PDF</span></div></button>'
@@ -159,6 +168,7 @@ Views.dashboard = async function (root) {
 
     root.innerHTML = pageHead("Overview", greeting + ", " + user.name.split(" ")[0] + " — here is the people pulse for today.", "", "Workspace")
       + onboardingBanner
+      + mfaBanner
       + '<div class="hero-strip" style="margin-bottom:16px"><div class="row-between wrap" style="gap:16px"><div>'
       + '<div class="eyebrow">' + new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) + '</div>'
       + '<h2>' + esc(d.company.name) + ' · people at a glance</h2>'
@@ -199,6 +209,16 @@ Views.dashboard = async function (root) {
     if (dashLet) dashLet.onclick = () => go("employment-letters");
     const dashPw = root.querySelector("#dash-change-pw");
     if (dashPw) dashPw.onclick = () => go("settings/account");
+    const mfaSetupBtn = root.querySelector("#dash-mfa-setup");
+    if (mfaSetupBtn) mfaSetupBtn.onclick = () => MfaUI.openSetup({ onDone: () => Views.dashboard(root) });
+    const mfaSkipBtn = root.querySelector("#dash-mfa-skip");
+    if (mfaSkipBtn) mfaSkipBtn.onclick = async () => {
+      try { await API.post("/auth/mfa/prompt-dismiss"); } catch (e) { /* keep quiet */ }
+      if (Store.user) Store.user.mfa_prompt_due = false;
+      const banner = root.querySelector("#dash-mfa-banner");
+      if (banner) banner.remove();
+      toast("We'll remind you again in 7 days", "info");
+    };
     root.querySelector("#ql-leave").onclick = () => openLeaveForm();
     root.querySelector("#ql-payslips").onclick = () => { if (typeof payState !== "undefined") payState.tab = "payslips"; go("payroll"); };
     root.querySelector("#ql-cmd").onclick = () => { if (typeof openCommandPalette === "function") openCommandPalette(""); };
