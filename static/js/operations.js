@@ -65,7 +65,7 @@ Views.operations = async function (root, params) {
   }
 
   const sub = params && params[0];
-  const validTabs = ["dashboard", "inventory", "workorders", "maintenance", "storerooms", "readiness", "assets", "safety", "settings"];
+  const validTabs = ["dashboard", "inventory", "workorders", "maintenance", "storerooms", "rooms", "readiness", "assets", "safety", "settings"];
   opsState.tab = (sub && validTabs.includes(sub)) ? sub : "dashboard";
 
   root.innerHTML = pageHead("Hotel Operations", "Loading operations workspace…", "", "Department") + spinners(4);
@@ -102,6 +102,7 @@ Views.operations = async function (root, params) {
       ["workorders", "Work Orders"],
       ["maintenance", "Maintenance"],
       ["storerooms", "Storerooms & Hubs"],
+      ["rooms", "Rooms"],
       ["readiness", "Wings & Readiness"],
       ["assets", "Assets Register"],
       ["safety", "Health & Safety"],
@@ -569,6 +570,16 @@ Views.operations = async function (root, params) {
           + renderMaintenanceTable(maintenanceWorks, maintenanceCategories);
       }
 
+    } else if (opsState.tab === "rooms") {
+      const rooms = storerooms.flatMap(h => (h.sections || []).filter(r => r.section_type === "room" || r.room_number).map(r => Object.assign({}, r, { hub_name: h.name })));
+      const counts = { total: rooms.length, available: rooms.filter(r => ["clean", "inspected", "vacant", "in_sell"].includes(r.room_status)).length, occupied: rooms.filter(r => r.room_status === "occupied").length, maintenance: rooms.filter(r => r.room_status === "maintenance").length };
+      body = '<div class="grid grid-4" style="margin:16px 0">'
+        + kpiCard({label:"Total Rooms",value:counts.total,icon:"layers",tone:"teal",foot:"Registered guest rooms"})
+        + kpiCard({label:"Available",value:counts.available,icon:"checkCircle",tone:"blue",foot:"Ready or for sale"})
+        + kpiCard({label:"Occupied",value:counts.occupied,icon:"users",tone:"purple",foot:"Currently in use"})
+        + kpiCard({label:"Under Maintenance",value:counts.maintenance,icon:"tool",tone:"amber",foot:"Out of service"})
+        + '</div><div class="card card-pad"><div class="row" style="justify-content:space-between;margin-bottom:14px"><div><h3>Hotel Rooms</h3><div class="sub">Manage room details and live availability</div></div><button class="btn btn-accent" id="ops-room-add">' + icon("plus",13) + ' Add room</button></div>'
+        + (rooms.length ? '<div class="table-wrap"><table><thead><tr><th>Room</th><th>Type</th><th>Capacity</th><th>Location</th><th>Status</th><th>Actions</th></tr></thead><tbody>' + rooms.map(r => '<tr><td><b>' + esc(r.room_number || r.name) + '</b><div class="tiny muted">' + esc(r.name) + '</div></td><td>' + esc(r.room_type || "—") + '</td><td>' + esc(r.capacity || 2) + '</td><td>' + esc(r.hub_name) + '</td><td><select class="select" style="min-width:150px" data-section-status-id="' + r.id + '">' + [["clean","Available / In sale"],["occupied","Occupied"],["turnover_in_progress","Turnover"],["inspected","Inspected"],["maintenance","Under maintenance"]].map(x => '<option value="' + x[0] + '"' + (r.room_status === x[0] ? ' selected' : '') + '>' + x[1] + '</option>').join("") + '</select></td><td><button class="btn btn-sm btn-ghost" data-edit-section-id="' + r.id + '" data-parent-store-id="' + r.storeroom_id + '">Edit</button> <button class="btn btn-sm btn-ghost" data-del-section-id="' + r.id + '" data-section-name="' + esc(r.name) + '">Delete</button></td></tr>').join("") + '</tbody></table></div>' : '<div class="empty-state">No rooms yet. Add your first hotel room to get started.</div>') + '</div>';
     } else if (opsState.tab === "storerooms") {
       const allStorerooms = storerooms || [];
       const totalSections = allStorerooms.reduce((acc, s) => acc + (s.sections_count || (s.sections ? s.sections.length : 0)), 0);
@@ -1174,6 +1185,9 @@ Views.operations = async function (root, params) {
 
     // ---------------- STOREROOMS & ROOMS INTERACTIVE LISTENERS ----------------
     // Top Action Buttons
+    const btnRoomAdd = root.querySelector("#ops-room-add");
+    if (btnRoomAdd) btnRoomAdd.onclick = () => openSectionFormModal(null);
+
     const btnNewStore = root.querySelector("#ops-btn-new-storeroom");
     if (btnNewStore) btnNewStore.onclick = () => openStoreroomFormModal();
 
