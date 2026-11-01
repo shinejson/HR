@@ -996,6 +996,7 @@ class HotelStoreroom(db.Model, TimestampMixin):
     wing = db.Column(db.String(60), default="Central Facility")
     manager_name = db.Column(db.String(120))
     manager_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=True)
+    department_id = db.Column(db.Integer, db.ForeignKey("departments.id"), nullable=True)
     capacity_utilization = db.Column(db.Integer, default=0)
     max_capacity = db.Column(db.Integer, default=100)
     icon = db.Column(db.String(40), default="layers")
@@ -1003,6 +1004,7 @@ class HotelStoreroom(db.Model, TimestampMixin):
     status = db.Column(db.String(20), default="active")
 
     manager = db.relationship("Employee", foreign_keys=[manager_id])
+    department = db.relationship("Department", foreign_keys=[department_id], backref=db.backref("storerooms", lazy="select"))
     sections = db.relationship("HotelStoreroomSection", backref="storeroom", cascade="all, delete-orphan", lazy="select")
 
 

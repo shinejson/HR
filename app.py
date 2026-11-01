@@ -3596,6 +3596,9 @@ def _serialize_storeroom(s, include_sections=True):
         "wing": s.wing or "Central Facility",
         "manager_name": s.manager_name or "Operations Supervisor",
         "manager_id": s.manager_id,
+        "department_id": s.department_id,
+        "department_name": s.department.name if s.department else "General / Unassigned",
+        "department_code": s.department.code if s.department and s.department.code else "",
         "capacity_utilization": s.capacity_utilization or 0,
         "max_capacity": s.max_capacity or 100,
         "icon": s.icon or "layers",
@@ -4247,10 +4250,17 @@ def send_operations_maintenance_report():
 @app.get("/api/v1/operations/storerooms")
 @operations_required
 def get_operations_storerooms():
-    storerooms = HotelStoreroom.query.order_by(HotelStoreroom.id.asc()).all()
-    if not storerooms:
+    dept_id = request.args.get("department_id")
+    query = HotelStoreroom.query
+    if dept_id:
+        try:
+            query = query.filter_by(department_id=int(dept_id))
+        except (ValueError, TypeError):
+            pass
+    storerooms = query.order_by(HotelStoreroom.department_id.asc(), HotelStoreroom.id.asc()).all()
+    if not storerooms and not dept_id:
         hotel_ops.seed_hotel_operations(db, models)
-        storerooms = HotelStoreroom.query.order_by(HotelStoreroom.id.asc()).all()
+        storerooms = HotelStoreroom.query.order_by(HotelStoreroom.department_id.asc(), HotelStoreroom.id.asc()).all()
     return jsonify({"data": [_serialize_storeroom(s, include_sections=True) for s in storerooms]})
 
 
@@ -4269,6 +4279,15 @@ def create_operations_storeroom():
     if existing:
         code = f"{code}-{secrets.token_hex(2).upper()}"
 
+    dept_id = data.get("department_id")
+    if dept_id in (None, "", "null", 0, "0"):
+        dept_id = None
+    else:
+        try:
+            dept_id = int(dept_id)
+        except (ValueError, TypeError):
+            dept_id = None
+
     s = HotelStoreroom(
         name=name,
         code=code,
@@ -4278,6 +4297,7 @@ def create_operations_storeroom():
         floor=data.get("floor") or "Ground Floor",
         wing=data.get("wing") or "Central Facility",
         manager_name=data.get("manager_name") or "Operations Supervisor",
+        department_id=dept_id,
         capacity_utilization=int(data.get("capacity_utilization") or 0),
         max_capacity=int(data.get("max_capacity") or 100),
         icon=data.get("icon") or "layers",
@@ -4328,6 +4348,15 @@ def update_operations_storeroom(storeroom_id):
         s.wing = data["wing"].strip()
     if "manager_name" in data:
         s.manager_name = (data["manager_name"] or "").strip()
+    if "department_id" in data:
+        dept_id = data["department_id"]
+        if dept_id in (None, "", "null", 0, "0"):
+            s.department_id = None
+        else:
+            try:
+                s.department_id = int(dept_id)
+            except (ValueError, TypeError):
+                pass
     if "capacity_utilization" in data and data["capacity_utilization"] is not None:
         try:
             s.capacity_utilization = max(0, min(100, int(data["capacity_utilization"])))

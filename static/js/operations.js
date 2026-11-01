@@ -31,6 +31,7 @@ const opsState = {
   inventorySearch: "",
   workOrderFilter: "all",
   workOrderWing: "all",
+  storeroomDeptFilter: "all",
   storeroomFilter: "all",
   storeroomSearch: "",
   selectedHubId: null,
@@ -571,16 +572,25 @@ Views.operations = async function (root, params) {
 
     } else if (opsState.tab === "storerooms") {
       const allStorerooms = storerooms || [];
+      const allDepts = (Store && Store.meta && Store.meta.departments) || [];
       const totalSections = allStorerooms.reduce((acc, s) => acc + (s.sections_count || (s.sections ? s.sections.length : 0)), 0);
       const totalRooms = allStorerooms.reduce((acc, s) => acc + (s.rooms_count || (s.sections ? s.sections.filter(sec => sec.section_type === "room" || sec.room_number).length : 0)), 0);
       const totalEquipments = allStorerooms.reduce((acc, s) => acc + (s.equipment_count || 0), 0);
       const totalStockItems = allStorerooms.reduce((acc, s) => acc + (s.stock_count || 0), 0);
 
-      // Filtering by category / type
+      // Filtering by Department, Category & Search
+      const stDeptFilter = opsState.storeroomDeptFilter || "all";
       const stFilter = opsState.storeroomFilter || "all";
       const stSearch = (opsState.storeroomSearch || "").toLowerCase().trim();
 
       const filteredStorerooms = allStorerooms.filter(s => {
+        if (stDeptFilter !== "all") {
+          if (stDeptFilter === "unassigned") {
+            if (s.department_id) return false;
+          } else if (String(s.department_id) !== String(stDeptFilter)) {
+            return false;
+          }
+        }
         if (stFilter !== "all") {
           if (stFilter === "rooms_hub" && s.hub_type !== "rooms_hub" && !s.name.toLowerCase().includes("rooms")) return false;
           if (stFilter === "central_storeroom" && s.hub_type !== "central_storeroom" && !s.name.toLowerCase().includes("linen") && !s.name.toLowerCase().includes("central")) return false;
@@ -592,12 +602,13 @@ Views.operations = async function (root, params) {
           const matchName = (s.name || "").toLowerCase().includes(stSearch);
           const matchLoc = (s.location || "").toLowerCase().includes(stSearch);
           const matchCode = (s.code || "").toLowerCase().includes(stSearch);
+          const matchDept = (s.department_name || "").toLowerCase().includes(stSearch);
           const matchSec = (s.sections || []).some(sec => 
             (sec.name || "").toLowerCase().includes(stSearch) ||
             (sec.room_number || "").toLowerCase().includes(stSearch) ||
             (sec.equipments || []).some(e => (e.name || "").toLowerCase().includes(stSearch) || (e.tag || "").toLowerCase().includes(stSearch))
           );
-          if (!matchName && !matchLoc && !matchCode && !matchSec) return false;
+          if (!matchName && !matchLoc && !matchCode && !matchDept && !matchSec) return false;
         }
         return true;
       });
@@ -610,17 +621,41 @@ Views.operations = async function (root, params) {
         + kpiCard({ label: "Stocked Supplies", value: totalStockItems, icon: "box", tone: "green", foot: "Supplies in Hubs & Rooms" })
         + '</div>';
 
-      // 2. Controls Toolbar: Search, Filter Chips, and Action Buttons in a single card
+      // Department Counts for Quick Filtering
+      const deptCounts = {};
+      let unassignedCount = 0;
+      allStorerooms.forEach(s => {
+        if (s.department_id) {
+          deptCounts[s.department_id] = (deptCounts[s.department_id] || 0) + 1;
+        } else {
+          unassignedCount++;
+        }
+      });
+      const activeDepts = allDepts.filter(d => deptCounts[d.id] > 0);
+
+      // 2. Controls Toolbar: Department Filter, Hub Filter, Search & Actions
       const controlsHTML = '<div class="card ops-toolbar-card">'
+        + '<div class="dept-filter-chips">'
+        + '<span class="dept-filter-label">' + icon("building", 12) + ' Group by Department:</span>'
+        + '<button class="filter-chip ' + (stDeptFilter === "all" ? "active" : "") + '" data-store-dept-filter="all">All Departments (' + allStorerooms.length + ')</button>'
+        + activeDepts.map(d =>
+            '<button class="filter-chip ' + (String(stDeptFilter) === String(d.id) ? "active" : "") + '" data-store-dept-filter="' + d.id + '">'
+            + esc(d.name) + ' (' + (deptCounts[d.id] || 0) + ')'
+            + '</button>'
+          ).join("")
+        + (unassignedCount > 0
+            ? ('<button class="filter-chip ' + (stDeptFilter === "unassigned" ? "active" : "") + '" data-store-dept-filter="unassigned">Unassigned (' + unassignedCount + ')</button>')
+            : '')
+        + '</div>'
         + '<div class="ops-toolbar-row">'
         + '<div class="ops-toolbar-left">'
-        + '<div class="searchbox" style="flex:0 0 240px">'
+        + '<div class="searchbox" style="flex:0 0 230px">'
         + icon("search", 14)
         + '<input type="text" id="ops-storeroom-search" class="input" placeholder="Search storerooms, rooms, equipment…" value="' + esc(opsState.storeroomSearch || "") + '">'
         + '</div>'
         + '<div class="filter-chips">'
         + [
-            ["all", "All Hubs (" + allStorerooms.length + ")"],
+            ["all", "All Hub Types"],
             ["rooms_hub", "Rooms Hubs"],
             ["central_storeroom", "Central Stores"],
             ["pantry", "Housekeeping Pantries"],
@@ -656,7 +691,7 @@ Views.operations = async function (root, params) {
           + '<span class="pill-tag mono" style="font-size:11px">' + esc(selectedHub.code || "") + '</span>'
           + '<span class="chip teal">' + esc((selectedHub.hub_type || "hub").replace("_", " ").toUpperCase()) + '</span>'
           + '</div>'
-          + '<div class="tiny muted" style="margin-top:2px">' + esc(selectedHub.location) + ' · Floor: ' + esc(selectedHub.floor || "—") + ' · Supervisor: <b>' + esc(selectedHub.manager_name || "—") + '</b> · Utilization: <b>' + selectedHub.capacity_utilization + '%</b></div>'
+          + '<div class="tiny muted" style="margin-top:2px">' + 'Department: <b>' + esc(selectedHub.department_name || "General") + '</b> · ' + esc(selectedHub.location) + ' · Floor: ' + esc(selectedHub.floor || "—") + ' · Supervisor: <b>' + esc(selectedHub.manager_name || "—") + '</b> · Utilization: <b>' + selectedHub.capacity_utilization + '%</b></div>'
           + '</div>'
           + '</div>'
           + '<div class="row" style="gap:8px">'
@@ -747,60 +782,122 @@ Views.operations = async function (root, params) {
           + '</div>';
       }
 
-      // 4. Storeroom / Hub Cards Grid
-      const cardsHTML = '<div class="hub-grid">'
-        + filteredStorerooms.map(s => {
-            const isSelected = opsState.selectedHubId === s.id;
-            const secCount = s.sections_count || (s.sections ? s.sections.length : 0);
-            const eqCount = s.equipment_count || 0;
-            const stockCount = s.stock_count || 0;
-            const roomsCount = s.rooms_count || (s.sections ? s.sections.filter(sec => sec.section_type === "room" || sec.room_number).length : 0);
+      // Helper function to render an individual hub card
+      function renderHubCard(s) {
+        const isSelected = opsState.selectedHubId === s.id;
+        const secCount = s.sections_count || (s.sections ? s.sections.length : 0);
+        const eqCount = s.equipment_count || 0;
+        const stockCount = s.stock_count || 0;
+        const roomsCount = s.rooms_count || (s.sections ? s.sections.filter(sec => sec.section_type === "room" || sec.room_number).length : 0);
 
-            return '<div class="hub-card' + (isSelected ? ' selected' : '') + '">'
-              + '<div class="hub-card-header">'
-              + '<div class="row" style="gap:10px;min-width:0;flex:1;align-items:center">'
-              + '<div class="hub-icon-box">' + icon(s.icon || "layers", 20) + '</div>'
-              + '<div class="hub-title-box">'
-              + '<div class="row" style="gap:6px;align-items:center">'
-              + '<h3>' + esc(s.name) + '</h3>'
-              + '</div>'
-              + '<div class="row" style="gap:6px;align-items:center">'
-              + '<span class="pill-tag mono" style="font-size:10px">' + esc(s.code || "") + '</span>'
-              + '<span class="chip teal" style="font-size:9.5px;padding:1px 6px">' + esc((s.hub_type || "storeroom").replace("_", " ").toUpperCase()) + '</span>'
-              + '</div>'
-              + '</div>'
-              + '</div>'
-              + '<div class="row" style="gap:5px;flex-shrink:0">'
-              + '<button class="hub-action-btn" title="Edit Hub" data-edit-store-id="' + s.id + '">' + icon("edit", 13) + '</button>'
-              + '<button class="hub-action-btn danger" title="Delete Hub" data-del-store-id="' + s.id + '" data-store-name="' + esc(s.name) + '">' + icon("trash", 13) + '</button>'
-              + '</div>'
-              + '</div>'
-              + '<div class="hub-card-body">'
-              + '<div class="hub-meta-row"><span class="lbl">Location:</span><span class="val"><b>' + esc(s.location) + '</b></span></div>'
-              + '<div class="hub-meta-row"><span class="lbl">Wing & Floor:</span><span class="val">' + esc(s.wing || "Central Facility") + ' · ' + esc(s.floor || "—") + '</span></div>'
-              + '<div class="hub-meta-row"><span class="lbl">Supervisor:</span><span class="val"><b>' + esc(s.manager_name || "—") + '</b></span></div>'
-              + '<div class="hub-meter-box">'
-              + '<div class="row-between tiny" style="margin-bottom:4px">'
-              + '<span class="muted">Capacity Utilization</span>'
-              + '<b>' + (s.capacity_utilization || 0) + '%</b>'
-              + '</div>'
-              + '<div class="progress" style="height:6px"><i style="width:' + (s.capacity_utilization || 0) + '%;background:' + (s.capacity_utilization > 85 ? 'var(--amber)' : 'var(--teal)') + '"></i></div>'
-              + '</div>'
-              + '<div class="hub-stats-strip">'
-              + '<div><div class="stat-val">' + secCount + '</div><div class="stat-lbl">' + (roomsCount > 0 ? (roomsCount + ' Rooms') : 'Spaces') + '</div></div>'
-              + '<div><div class="stat-val">' + eqCount + '</div><div class="stat-lbl">Equipments</div></div>'
-              + '<div><div class="stat-val">' + stockCount + '</div><div class="stat-lbl">Stock Items</div></div>'
-              + '</div>'
-              + (s.description ? ('<p class="tiny muted" style="margin:2px 0 0;line-height:1.4">' + esc(s.description) + '</p>') : '')
-              + '</div>'
-              + '<div class="hub-card-actions">'
-              + '<button class="btn btn-sm ' + (isSelected ? 'btn-ghost' : 'btn-accent') + '" style="width:100%" data-select-hub-id="' + s.id + '">'
-              + icon(isSelected ? "chevronUp" : "layers", 13) + ' ' + (isSelected ? 'Hide Sub-Sections & Rooms' : ('Manage Rooms, Equipment & Stock (' + secCount + ') →'))
-              + '</button>'
-              + '</div>'
-              + '</div>';
-          }).join("")
-        + '</div>';
+        return '<div class="hub-card' + (isSelected ? ' selected' : '') + '">'
+          + '<div class="hub-card-header">'
+          + '<div class="row" style="gap:10px;min-width:0;flex:1;align-items:center">'
+          + '<div class="hub-icon-box">' + icon(s.icon || "layers", 20) + '</div>'
+          + '<div class="hub-title-box">'
+          + '<div class="row" style="gap:6px;align-items:center">'
+          + '<h3>' + esc(s.name) + '</h3>'
+          + '</div>'
+          + '<div class="row" style="gap:6px;align-items:center;flex-wrap:wrap">'
+          + '<span class="pill-tag mono" style="font-size:10px">' + esc(s.code || "") + '</span>'
+          + '<span class="chip teal" style="font-size:9.5px;padding:1px 6px">' + esc((s.hub_type || "storeroom").replace("_", " ").toUpperCase()) + '</span>'
+          + '<span class="chip purple" style="font-size:9.5px;padding:1px 6px"><span style="display:inline-flex;margin-right:2px">' + icon("building", 10) + '</span> ' + esc(s.department_name || "General") + '</span>'
+          + '</div>'
+          + '</div>'
+          + '</div>'
+          + '<div class="row" style="gap:5px;flex-shrink:0">'
+          + '<button class="hub-action-btn" title="Edit Hub" data-edit-store-id="' + s.id + '">' + icon("edit", 13) + '</button>'
+          + '<button class="hub-action-btn danger" title="Delete Hub" data-del-store-id="' + s.id + '" data-store-name="' + esc(s.name) + '">' + icon("trash", 13) + '</button>'
+          + '</div>'
+          + '</div>'
+          + '<div class="hub-card-body">'
+          + '<div class="hub-meta-row"><span class="lbl">Department:</span><span class="val"><b>' + esc(s.department_name || "General / Unassigned") + '</b></span></div>'
+          + '<div class="hub-meta-row"><span class="lbl">Location:</span><span class="val"><b>' + esc(s.location) + '</b></span></div>'
+          + '<div class="hub-meta-row"><span class="lbl">Wing & Floor:</span><span class="val">' + esc(s.wing || "Central Facility") + ' · ' + esc(s.floor || "—") + '</span></div>'
+          + '<div class="hub-meta-row"><span class="lbl">Supervisor:</span><span class="val"><b>' + esc(s.manager_name || "—") + '</b></span></div>'
+          + '<div class="hub-meter-box">'
+          + '<div class="row-between tiny" style="margin-bottom:4px">'
+          + '<span class="muted">Capacity Utilization</span>'
+          + '<b>' + (s.capacity_utilization || 0) + '%</b>'
+          + '</div>'
+          + '<div class="progress" style="height:6px"><i style="width:' + (s.capacity_utilization || 0) + '%;background:' + (s.capacity_utilization > 85 ? 'var(--amber)' : 'var(--teal)') + '"></i></div>'
+          + '</div>'
+          + '<div class="hub-stats-strip">'
+          + '<div><div class="stat-val">' + secCount + '</div><div class="stat-lbl">' + (roomsCount > 0 ? (roomsCount + ' Rooms') : 'Spaces') + '</div></div>'
+          + '<div><div class="stat-val">' + eqCount + '</div><div class="stat-lbl">Equipments</div></div>'
+          + '<div><div class="stat-val">' + stockCount + '</div><div class="stat-lbl">Stock Items</div></div>'
+          + '</div>'
+          + (s.description ? ('<p class="tiny muted" style="margin:2px 0 0;line-height:1.4">' + esc(s.description) + '</p>') : '')
+          + '</div>'
+          + '<div class="hub-card-actions">'
+          + '<button class="btn btn-sm ' + (isSelected ? 'btn-ghost' : 'btn-accent') + '" style="width:100%" data-select-hub-id="' + s.id + '">'
+          + icon(isSelected ? "chevronUp" : "layers", 13) + ' ' + (isSelected ? 'Hide Sub-Sections & Rooms' : ('Manage Rooms, Equipment & Stock (' + secCount + ') →'))
+          + '</button>'
+          + '</div>'
+          + '</div>';
+      }
+
+      // Group Storerooms by Department
+      const groupedByDept = {};
+      filteredStorerooms.forEach(s => {
+        const did = s.department_id ? String(s.department_id) : "unassigned";
+        if (!groupedByDept[did]) {
+          const dObj = s.department_id ? (allDepts.find(d => d.id === s.department_id) || {}) : {};
+          groupedByDept[did] = {
+            id: s.department_id || null,
+            name: s.department_name || dObj.name || (s.department_id ? ("Department #" + s.department_id) : "General / Unassigned"),
+            code: s.department_code || dObj.code || "",
+            items: [],
+          };
+        }
+        groupedByDept[did].items.push(s);
+      });
+
+      const deptGroups = Object.values(groupedByDept);
+
+      let cardsHTML = "";
+      if (filteredStorerooms.length === 0) {
+        cardsHTML = emptyState("No Storerooms Found", "No storerooms or hubs match the selected filters.", "layers");
+      } else {
+        cardsHTML = '<div class="dept-storerooms-container">'
+          + deptGroups.map(grp => {
+              const dStores = grp.items;
+              const dSections = dStores.reduce((acc, s) => acc + (s.sections_count || (s.sections ? s.sections.length : 0)), 0);
+              const dRooms = dStores.reduce((acc, s) => acc + (s.rooms_count || (s.sections ? s.sections.filter(sec => sec.section_type === "room" || sec.room_number).length : 0)), 0);
+              const dEquipments = dStores.reduce((acc, s) => acc + (s.equipment_count || 0), 0);
+              const dStock = dStores.reduce((acc, s) => acc + (s.stock_count || 0), 0);
+
+              return '<div class="dept-storeroom-section">'
+                + '<div class="dept-storeroom-header">'
+                + '<div class="dept-header-left">'
+                + '<span class="dept-header-icon">' + icon("building", 20) + '</span>'
+                + '<div>'
+                + '<div class="dept-header-title-row">'
+                + '<h3 class="dept-header-title">' + esc(grp.name) + '</h3>'
+                + (grp.code ? ('<span class="pill-tag mono" style="font-size:10px">' + esc(grp.code) + '</span>') : '')
+                + '<span class="chip teal">' + dStores.length + ' ' + (dStores.length === 1 ? 'Storeroom / Hub' : 'Storerooms & Hubs') + '</span>'
+                + '</div>'
+                + '<div class="dept-header-sub">'
+                + (dRooms > 0 ? (dRooms + ' Guest Rooms · ') : '')
+                + dSections + ' Total Spaces & Rooms · '
+                + dEquipments + ' Placed Equipments · '
+                + dStock + ' Stocked Supplies'
+                + '</div>'
+                + '</div>'
+                + '</div>'
+                + '<div class="dept-header-right">'
+                + '<button class="btn btn-xs btn-ghost" data-quick-add-dept-store="' + (grp.id || '') + '">'
+                + icon("plus", 12) + ' New Hub in ' + esc(grp.name)
+                + '</button>'
+                + '</div>'
+                + '</div>'
+                + '<div class="hub-grid">'
+                + dStores.map(s => renderHubCard(s)).join("")
+                + '</div>'
+                + '</div>';
+            }).join("")
+          + '</div>';
+      }
 
       body = kpisHTML + controlsHTML + drilldownHTML + cardsHTML;
 
@@ -1202,6 +1299,22 @@ Views.operations = async function (root, params) {
         Views.operations(root, [opsState.tab]);
       };
     }
+
+    // Department filter pills
+    root.querySelectorAll("[data-store-dept-filter]").forEach(b => {
+      b.onclick = () => {
+        opsState.storeroomDeptFilter = b.dataset.storeDeptFilter;
+        Views.operations(root, [opsState.tab]);
+      };
+    });
+
+    // Quick add storeroom for a department
+    root.querySelectorAll("[data-quick-add-dept-store]").forEach(b => {
+      b.onclick = () => {
+        const did = b.dataset.quickAddDeptStore ? Number(b.dataset.quickAddDeptStore) : null;
+        openStoreroomFormModal(null, did);
+      };
+    });
 
     // Category / Type filter pills
     root.querySelectorAll("[data-store-filter]").forEach(b => {
@@ -2005,14 +2118,39 @@ function openNewInventoryItemModal() {
 
 
 // ============================================================ MODAL: STOREROOM / HUB FORM (CREATE & EDIT)
-function openStoreroomFormModal(existing) {
+async function openStoreroomFormModal(existing, prefillDeptId) {
   const isEdit = Boolean(existing && existing.id);
+  let deptList = (Store && Store.meta && Store.meta.departments) || [];
+  if (!deptList || deptList.length === 0) {
+    try {
+      const res = await API.get("/departments");
+      deptList = res.data || [];
+    } catch (_) {}
+  }
+  const opsDept = deptList.find(d => (d.name || "").toLowerCase() === "operations");
+  const defaultDept = (existing && existing.department_id !== undefined && existing.department_id !== null)
+    ? String(existing.department_id)
+    : (prefillDeptId ? String(prefillDeptId) : (opsDept ? String(opsDept.id) : ""));
+
   openFormModal({
     title: isEdit ? ("Edit Storeroom / Hub: " + existing.name) : "Create Hotel Storeroom / Rooms Hub",
-    subtitle: isEdit ? "Update storeroom details, location, and capacity" : "Register a central storeroom, floor pantry, or guest room hub",
+    subtitle: isEdit ? "Update storeroom details, department, location, and capacity" : "Register a central storeroom, floor pantry, or guest room hub",
     fields: [
       { name: "name", label: "Storeroom / Hub Name", placeholder: "e.g. West Wing Executive Rooms Hub", default: existing ? existing.name : "", required: true },
       { name: "code", label: "Hub Code", placeholder: "e.g. HUB-WW-01", default: existing ? existing.code : "" },
+      {
+        name: "department_id", label: "Owning Department", type: "select",
+        options: [
+          { value: "", label: "— General / Unassigned —" },
+          ...deptList.map(d => ({
+            value: String(d.id),
+            label: d.name + (d.code ? (" (" + d.code + ")") : "")
+          }))
+        ],
+        default: defaultDept,
+        required: false,
+        hint: "Group this storeroom/hub under a specific hotel department"
+      },
       {
         name: "hub_type", label: "Hub Type", type: "select",
         options: [
@@ -2051,6 +2189,11 @@ function openStoreroomFormModal(existing) {
     ],
     submitLabel: isEdit ? "Update Storeroom / Hub" : "Create Storeroom / Hub",
     async onSubmit(vals) {
+      if (vals.department_id) {
+        vals.department_id = Number(vals.department_id);
+      } else {
+        vals.department_id = null;
+      }
       if (isEdit) {
         await API.put("/operations/storerooms/" + existing.id, vals);
         toast("Storeroom updated successfully", "success");
@@ -2075,7 +2218,7 @@ async function openSectionFormModal(prefillStoreroomId, existing) {
     const storerooms = storeRes.data || [];
     const storeOpts = storerooms.map(s => ({
       value: s.id,
-      label: s.name + " (" + (s.hub_type || "hub").replace("_", " ") + ")"
+      label: s.name + " (" + (s.department_name || "General") + " · " + (s.hub_type || "hub").replace("_", " ") + ")"
     }));
 
     const isEdit = Boolean(existing && existing.id);
