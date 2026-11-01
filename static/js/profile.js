@@ -809,9 +809,25 @@ async function viewEmployeeDetail(root, id, initialTab) {
                 + e.salary_structure.map(sc => '<div class="row-between small" style="padding:4px 0"><span>' + esc(sc.component_name || sc.code) + ' <span class="tiny muted">(' + esc(sc.kind) + ')</span></span><span class="mono">' + fmtMoney(sc.amount) + '</span></div>').join("")
               : '')
           + '<div class="divider"></div>'
-          + '<div class="tiny muted" style="text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Staff Loans & Advances</div>'
+          + '<div class="row-between" style="margin-bottom:8px;"><div class="tiny muted" style="text-transform:uppercase;letter-spacing:.1em">Staff Loans & Advances</div>'
+          + '<button class="btn btn-sm btn-ghost" id="profile-request-loan">' + icon("plus", 12) + ' Request Loan</button></div>'
           + ((e.loans && e.loans.length)
-              ? e.loans.map(l => '<div class="row-between" style="padding:6px 0;border-bottom:1px solid var(--line)"><div><b class="small">Principal ' + fmtMoney(l.principal) + '</b><div class="tiny muted">Instalment ' + fmtMoney(l.instalment) + '/mo</div></div><div class="right"><b class="mono small">' + fmtMoney(l.balance) + ' left</b><div>' + chip(l.status) + '</div></div></div>').join("")
+              ? e.loans.map(l => {
+                  const p = Number(l.principal || 0);
+                  const b = Number(l.balance !== undefined ? l.balance : p);
+                  const paid = Math.max(0, p - b);
+                  const pct = p > 0 ? Math.round((paid / p) * 100) : 0;
+                  return '<div style="padding:10px 0;border-bottom:1px solid var(--line)">'
+                    + '<div class="row-between"><div><b class="small" style="text-transform:capitalize">' + esc((l.loan_type || "").replace(/_/g, " ")) + ' &bull; <span class="mono">' + esc(l.reference_no || ("LOAN-" + l.id)) + '</span></b>'
+                    + '<div class="tiny muted">Principal ' + fmtMoney(l.principal) + ' &bull; ' + fmtMoney(l.instalment) + '/mo</div></div>'
+                    + '<div class="right"><b class="mono small" style="color:' + (b <= 0 ? 'var(--green)' : 'inherit') + '">' + fmtMoney(l.balance) + ' left</b><div>' + chip(l.status) + '</div></div></div>'
+                    + '<div class="loan-progress-wrap" style="margin-top:6px;max-width:100%"><div class="loan-progress-bar" style="width:' + pct + '%"></div></div>'
+                    + '<div class="row-between" style="margin-top:4px;font-size:11px"><span class="muted">' + pct + '% repaid (' + fmtMoney(paid) + ')</span>'
+                    + '<div style="display:flex;gap:6px">'
+                    + '<button class="btn btn-sm btn-ghost" data-profile-loan-track="' + l.id + '">' + icon("activity", 11) + ' Track</button>'
+                    + (l.status === 'active' || l.status === 'completed' || l.approved_at ? '<button class="btn btn-sm btn-soft" data-profile-loan-letter="' + l.id + '">' + icon("fileText", 11) + ' Agreement Letter</button>' : '')
+                    + '</div></div></div>';
+                }).join("")
               : '<div class="small muted">No active staff loans or salary advances.</div>')
           + '</div></div>'
 
@@ -867,7 +883,10 @@ async function viewEmployeeDetail(root, id, initialTab) {
           + '</div>';
 
         tabBody = '<div class="row-between" style="margin-bottom:12px"><div class="section-title">Current Year Leave Entitlements & Carry-Over</div>'
-          + (e.is_self && !Store.isReadOnly() ? '<button class="btn btn-sm btn-accent" id="profile-apply-leave">' + icon("calendar", 13) + ' Request leave</button>' : '') + '</div>'
+          + '<div class="row" style="gap:6px">'
+          + '<button class="btn btn-sm btn-soft" id="profile-sell-leave">' + icon("creditCard", 13) + ' Sell leaves</button>'
+          + (e.is_self && !Store.isReadOnly() ? '<button class="btn btn-sm btn-accent" id="profile-apply-leave">' + icon("calendar", 13) + ' Request leave</button>' : '')
+          + '</div></div>'
           + kpiRow
           + '<div class="grid grid-4" style="margin-bottom:18px">'
           + ((e.leave_balances && e.leave_balances.length)
@@ -877,18 +896,19 @@ async function viewEmployeeDetail(root, id, initialTab) {
                   const totalAlloc = alloc + carried;
                   const used = Number(b.taken || 0);
                   const pend = Number(b.pending || 0);
-                  const rem = Math.max(0, totalAlloc - used - pend);
-                  const pct = totalAlloc > 0 ? Math.min(100, Math.round(((used + pend) / totalAlloc) * 100)) : 0;
+                  const enc = Number(b.encashed || 0);
+                  const rem = Math.max(0, totalAlloc - used - pend - enc);
+                  const pct = totalAlloc > 0 ? Math.min(100, Math.round(((used + pend + enc) / totalAlloc) * 100)) : 0;
                   return '<div class="kpi"><div class="row-between"><div class="label">' + esc(b.leave_type_name) + '</div><span style="width:9px;height:9px;border-radius:50%;background:' + esc(b.color || "#0f766e") + '"></span></div>'
                     + '<div class="value">' + fmtNumber(rem) + ' <span class="tiny muted">days left</span></div>'
                     + '<div class="progress" style="margin-top:10px"><i style="width:' + pct + '%;background:' + esc(b.color || "var(--teal)") + '"></i></div>'
-                    + '<div class="sub">' + fmtNumber(alloc) + ' base' + (carried > 0 ? ' · +' + fmtNumber(carried) + ' carry' : '') + ' · ' + fmtNumber(used) + ' taken · ' + fmtNumber(pend) + ' pend</div>'
+                    + '<div class="sub">' + fmtNumber(alloc) + ' base' + (carried > 0 ? ' · +' + fmtNumber(carried) + ' carry' : '') + ' · ' + fmtNumber(used) + ' taken' + (enc > 0 ? ' · ' + fmtNumber(enc) + ' sold' : '') + ' · ' + fmtNumber(pend) + ' pend</div>'
                     + (b.code === "ANL" ? '<div class="tiny" style="color:var(--teal);margin-top:4px;font-weight:500">Carry-Over to Next Year: ' + fmtNumber(rem) + ' d</div>' : '')
                     + '</div>';
                 }).join("")
               : '<div class="card card-pad span-4 small muted">No leave balances initialised for this year.</div>')
           + '</div>'
-          + '<div class="grid grid-2">'
+          + '<div class="grid grid-3" style="gap:16px;">'
           + '<div><div class="section-title" style="margin-bottom:8px">Leave Requests</div>'
           + renderTable({
               columns: [
@@ -900,16 +920,26 @@ async function viewEmployeeDetail(root, id, initialTab) {
               rows: e.leave_requests || [],
               emptyTitle: "No leave requests",
             }) + '</div>'
-          + '<div><div class="section-title" style="margin-bottom:8px">Recent Attendance (Last 30 Days)</div>'
+          + '<div><div class="section-title" style="margin-bottom:8px">Leave Encashments (Sold Leaves)</div>'
+          + renderTable({
+              columns: [
+                { label: "Ref", render: r => '<span style="font-family:monospace;font-weight:700;color:var(--teal)">' + esc(r.reference_no || ("LENC-" + r.id)) + '</span>' },
+                { label: "Sold", class: "mono", render: r => '<span class="chip amber tiny font-bold">-' + fmtNumber(r.days_sold) + ' d</span>' },
+                { label: "Payout", class: "right mono", render: r => '<b>' + fmtMoney(r.total_amount) + '</b>' },
+                { label: "Status", render: r => chip(r.status) },
+                { label: "", class: "right", sortable: false, render: r => '<button class="btn btn-sm btn-ghost" data-profile-encash-letter="' + r.id + '">' + icon("fileText", 11) + '</button>' },
+              ],
+              rows: e.leave_encashments || [],
+              emptyTitle: "No leaves sold",
+            }) + '</div>'
+          + '<div><div class="section-title" style="margin-bottom:8px">Recent Attendance</div>'
           + renderTable({
               columns: [
                 { label: "Date", render: r => fmtDate(r.work_date) },
-                { label: "Clock In", render: r => fmtTime(r.clock_in) },
-                { label: "Clock Out", render: r => fmtTime(r.clock_out) },
-                { label: "Overtime", class: "right mono", render: r => r.overtime_minutes ? r.overtime_minutes + "m" : "—" },
+                { label: "In / Out", render: r => fmtTime(r.clock_in) + " → " + fmtTime(r.clock_out) },
                 { label: "Status", render: r => chip(r.status) },
               ],
-              rows: e.attendance || [],
+              rows: (e.attendance || []).slice(0, 10),
               emptyTitle: "No attendance records",
             }) + '</div></div>';
       }
@@ -1333,6 +1363,30 @@ async function viewEmployeeDetail(root, id, initialTab) {
             + '</dl></div>',
           footer: '<button class="btn btn-accent" data-close-modal>Close</button>',
         });
+      });
+
+      // Profile Loan Actions
+      const profReqLoan = root.querySelector("#profile-request-loan");
+      if (profReqLoan) profReqLoan.onclick = () => {
+        if (typeof window.openLoanRequestModal === "function") window.openLoanRequestModal(e.id);
+      };
+
+      onDelegate(pWrap, "click", "[data-profile-loan-track]", (b) => {
+        if (typeof window.openLoanTrackingModal === "function") window.openLoanTrackingModal(b.dataset.profileLoanTrack);
+      });
+
+      onDelegate(pWrap, "click", "[data-profile-loan-letter]", (b) => {
+        if (typeof window.openLoanLetterModal === "function") window.openLoanLetterModal(b.dataset.profileLoanLetter);
+      });
+
+      // Profile Sell Leaves
+      const profSellLeave = root.querySelector("#profile-sell-leave");
+      if (profSellLeave) profSellLeave.onclick = () => {
+        if (typeof window.openLeaveEncashmentModal === "function") window.openLeaveEncashmentModal(e.id);
+      };
+
+      onDelegate(pWrap, "click", "[data-profile-encash-letter]", (b) => {
+        if (typeof window.openLeaveEncashmentLetterModal === "function") window.openLeaveEncashmentLetterModal(b.dataset.profileEncashLetter);
       });
 
       // Apply Leave

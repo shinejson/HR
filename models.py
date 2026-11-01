@@ -529,6 +529,7 @@ class LeaveBalance(db.Model, TimestampMixin):
     taken = db.Column(db.Numeric(6, 2), default=0)
     pending = db.Column(db.Numeric(6, 2), default=0)
     carried_over = db.Column(db.Numeric(6, 2), default=0)
+    encashed = db.Column(db.Numeric(6, 2), default=0)
     leave_type = db.relationship("LeaveType")
     employee = db.relationship("Employee")
 
@@ -560,6 +561,40 @@ class LeaveRequest(db.Model, TimestampMixin):
     hod_signature = db.Column(db.String(255))
     accountant_signature = db.Column(db.String(255))
     md_signature = db.Column(db.String(255))
+    employee = db.relationship("Employee", foreign_keys=[employee_id])
+    leave_type = db.relationship("LeaveType")
+    hod_approver = db.relationship("Employee", foreign_keys=[hod_approved_by])
+    accountant_approver = db.relationship("Employee", foreign_keys=[accountant_approved_by])
+    md_approver = db.relationship("Employee", foreign_keys=[md_approved_by])
+
+
+class LeaveEncashment(db.Model, TimestampMixin):
+    __tablename__ = "leave_encashments"
+    id = db.Column(db.Integer, primary_key=True)
+    reference_no = db.Column(db.String(60), unique=True, nullable=False)
+    employee_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=False)
+    leave_type_id = db.Column(db.Integer, db.ForeignKey("leave_types.id"), nullable=False)
+    year = db.Column(db.Integer, nullable=False)
+    days_sold = db.Column(db.Numeric(6, 2), nullable=False)
+    daily_rate = db.Column(db.Numeric(15, 2), nullable=False)
+    total_amount = db.Column(db.Numeric(15, 2), nullable=False)
+    accumulated_before = db.Column(db.Numeric(6, 2), default=0)
+    accumulated_after = db.Column(db.Numeric(6, 2), default=0)
+    reason = db.Column(db.Text)
+    status = db.Column(db.String(20), default="pending")  # pending, approved, rejected, paid
+    employee_signature = db.Column(db.String(255))
+    hod_approved_by = db.Column(db.Integer, db.ForeignKey("employees.id"))
+    hod_approved_at = db.Column(db.DateTime)
+    hod_signature = db.Column(db.String(255))
+    accountant_approved_by = db.Column(db.Integer, db.ForeignKey("employees.id"))
+    accountant_approved_at = db.Column(db.DateTime)
+    accountant_signature = db.Column(db.String(255))
+    md_approved_by = db.Column(db.Integer, db.ForeignKey("employees.id"))
+    md_approved_at = db.Column(db.DateTime)
+    md_signature = db.Column(db.String(255))
+    decided_at = db.Column(db.DateTime)
+    decision_note = db.Column(db.Text)
+
     employee = db.relationship("Employee", foreign_keys=[employee_id])
     leave_type = db.relationship("LeaveType")
     hod_approver = db.relationship("Employee", foreign_keys=[hod_approved_by])
@@ -652,15 +687,41 @@ class PayslipItem(db.Model, TimestampMixin):
 class Loan(db.Model, TimestampMixin):
     __tablename__ = "loans"
     id = db.Column(db.Integer, primary_key=True)
+    reference_no = db.Column(db.String(60), unique=True)
     employee_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=False)
     loan_type = db.Column(db.String(40), default="salary_advance")
     principal = db.Column(db.Numeric(15, 2), nullable=False)
     instalment = db.Column(db.Numeric(15, 2), default=0)
     balance = db.Column(db.Numeric(15, 2), default=0)
+    repayment_months = db.Column(db.Integer, default=1)
     start_date = db.Column(db.Date)
-    status = db.Column(db.String(20), default="pending")
+    end_date = db.Column(db.Date)
+    status = db.Column(db.String(20), default="pending")  # pending, active, completed, rejected
     reason = db.Column(db.Text)
-    employee = db.relationship("Employee")
+    approved_by = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=True)
+    approved_at = db.Column(db.DateTime)
+    employee_signature = db.Column(db.String(255))
+    approver_signature = db.Column(db.String(255))
+    disbursed_at = db.Column(db.DateTime)
+    approval_notes = db.Column(db.Text)
+
+    employee = db.relationship("Employee", foreign_keys=[employee_id])
+    approver = db.relationship("Employee", foreign_keys=[approved_by])
+    repayments = db.relationship("LoanRepayment", backref="loan", cascade="all, delete-orphan", lazy="select", order_by="LoanRepayment.id.asc()")
+
+
+class LoanRepayment(db.Model, TimestampMixin):
+    __tablename__ = "loan_repayments"
+    id = db.Column(db.Integer, primary_key=True)
+    loan_id = db.Column(db.Integer, db.ForeignKey("loans.id"), nullable=False)
+    amount = db.Column(db.Numeric(15, 2), nullable=False)
+    repayment_date = db.Column(db.Date, nullable=False)
+    source = db.Column(db.String(40), default="payroll_deduction")
+    balance_before = db.Column(db.Numeric(15, 2), default=0)
+    balance_after = db.Column(db.Numeric(15, 2), default=0)
+    notes = db.Column(db.Text)
+    recorded_by = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=True)
+    recorder = db.relationship("Employee", foreign_keys=[recorded_by])
 
 
 class Goal(db.Model, TimestampMixin):

@@ -2756,3 +2756,57 @@ html[data-dt-density="compact"] .avatar-sm { width: 25px; height: 25px; font-siz
   gap: 5px;
   margin-right: 4px;
 }
+
+/* ============================================================================
+   LOANS REAL-TIME TRACKING & LEAVE ENCASHMENT STYLES
+   ============================================================================ */
+.loan-progress-wrap {
+  width: 100%;
+  min-width: 90px;
+  max-width: 160px;
+  height: 7px;
+  background: var(--line, #e2e8f0);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.loan-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #0f766e, #14b8a6);
+  border-radius: 999px;
+  transition: width 0.3s ease;
+}
+.loan-tracking-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.loan-kpi-chip {
+  background: var(--card-bg, #ffffff);
+  border: 1px solid var(--line, #e2e8f0);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.loan-kpi-chip .lbl {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  color: var(--muted, #64748b);
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.loan-kpi-chip .val {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text, #0f172a);
+  font-family: var(--sans, sans-serif);
+}
+.official-doc-preview-container {
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 16px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid var(--line, #e2e8f0);
+}

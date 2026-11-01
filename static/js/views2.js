@@ -515,7 +515,7 @@ function openCorrectionForm() {
 
 /* ============================================================ LEAVE */
 const leaveState = { tab: "overview", month: new Date(), selectedEmployee: null };
-const leaveTabs = [["overview", "Balances & requests"], ["calendar", "Team calendar"], ["approvals", "Approvals"], ["config", "Types & holidays"]];
+const leaveTabs = [["overview", "Balances & requests"], ["encashment", "Sell Leaves (Encashment)"], ["calendar", "Team calendar"], ["approvals", "Approvals"], ["config", "Types & holidays"]];
 
 Views.leave = async function (root) {
   root.innerHTML = pageHead("Leave", "Loading leave position…") + spinners(3);
@@ -558,7 +558,7 @@ Views.leave = async function (root) {
         + '  <div class="tiny muted" style="margin-top:8px">Total Allocation: <b>' + anlTotal + ' days</b></div>'
         + '</div>'
         + '<div class="card card-pad">'
-        + '  <div class="row-between"><div><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.05em">Taken & Pending</div><div style="font-family:var(--serif);font-size:28px;line-height:1.2;font-weight:600;color:var(--amber)">' + anlTaken + '<span class="tiny muted" style="font-family:var(--sans);font-weight:400"> taken · ' + anlPending + ' pend</span></div></div><div class="kpi-icon amber">' + icon("clock", 16) + '</div></div>'
+        + '  <div class="row-between"><div><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.05em">Taken, Sold & Pending</div><div style="font-family:var(--serif);font-size:28px;line-height:1.2;font-weight:600;color:var(--amber)">' + anlTaken + '<span class="tiny muted" style="font-family:var(--sans);font-weight:400"> tk · ' + (metrics.encashed || 0) + ' sold · ' + anlPending + ' pend</span></div></div><div class="kpi-icon amber">' + icon("clock", 16) + '</div></div>'
         + '  <div class="tiny muted" style="margin-top:8px">' + (anlTaken + anlPending) + ' working days booked</div>'
         + '</div>'
         + '<div class="card card-pad" style="border:1.5px solid var(--teal);background:linear-gradient(135deg, var(--card-bg) 0%, rgba(15,118,110,0.06) 100%)">'
@@ -694,6 +694,63 @@ Views.leave = async function (root) {
           onRowClick: (r) => openLeaveFormPreviewModal(r.id),
           emptyTitle: "No leave requests", emptyText: "Apply for leave to see it here.",
         });
+    } else if (leaveState.tab === "encashment") {
+      const encRes = await API.get("/leave-encashments");
+      const encashments = encRes.data || [];
+      const totalSoldDays = encashments.filter(e => e.status === "approved" || e.status === "paid").reduce((sum, e) => sum + Number(e.days_sold || 0), 0);
+      const totalPayoutVal = encashments.filter(e => e.status === "approved" || e.status === "paid").reduce((sum, e) => sum + Number(e.total_amount || 0), 0);
+      const pendingCount = encashments.filter(e => e.status === "pending").length;
+      const anlAvail = metrics.available !== undefined ? metrics.available : (metrics.remaining || 0);
+
+      const encashKpis = '<div class="grid grid-4" style="margin-bottom:18px">'
+        + '<div class="card card-pad">'
+        + '  <div class="row-between"><div><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.05em">Total Leaves Sold</div><div style="font-family:var(--serif);font-size:28px;line-height:1.2;font-weight:700;color:var(--amber)">' + totalSoldDays.toFixed(1) + '<span class="tiny muted" style="font-family:var(--sans);font-weight:400"> days</span></div></div><div class="kpi-icon amber">' + icon("creditCard", 16) + '</div></div>'
+        + '  <div class="tiny muted" style="margin-top:8px">Deducted from accumulated leave balances</div>'
+        + '</div>'
+        + '<div class="card card-pad">'
+        + '  <div class="row-between"><div><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.05em">Total Cash Value</div><div style="font-family:var(--serif);font-size:26px;line-height:1.2;font-weight:700;color:var(--teal)">' + money(totalPayoutVal) + '</div></div><div class="kpi-icon teal">' + icon("wallet", 16) + '</div></div>'
+        + '  <div class="tiny muted" style="margin-top:8px">Commuted financial disbursement</div>'
+        + '</div>'
+        + '<div class="card card-pad">'
+        + '  <div class="row-between"><div><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.05em">Pending Requests</div><div style="font-family:var(--serif);font-size:28px;line-height:1.2;font-weight:700;color:var(--purple)">' + pendingCount + '</div></div><div class="kpi-icon purple">' + icon("clock", 16) + '</div></div>'
+        + '  <div class="tiny muted" style="margin-top:8px">Awaiting executive management approval</div>'
+        + '</div>'
+        + '<div class="card card-pad">'
+        + '  <div class="row-between"><div><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.05em">Available Leave to Sell</div><div style="font-family:var(--serif);font-size:28px;line-height:1.2;font-weight:700;color:var(--green)">' + anlAvail + '<span class="tiny muted" style="font-family:var(--sans);font-weight:400"> days</span></div></div><div class="kpi-icon green">' + icon("checkCircle", 16) + '</div></div>'
+        + '  <div class="tiny muted" style="margin-top:8px">Eligible for cash buyout</div>'
+        + '</div>'
+        + '</div>';
+
+      body = encashKpis + renderTable({
+        id: "leave-encashments-table",
+        title: "Leave Encashment (Sold Leaves) Register",
+        sub: "Employees selling accumulated leave for cash payout. Sold leaves are deducted from accumulated balances upon approval.",
+        exportName: "leave-encashments",
+        actions: '<button class="btn btn-accent" id="open-encash-modal-btn">' + icon("plus", 14) + ' Sell Leaves (Encashment)</button>',
+        filters: [
+          ...(isEmployee ? [] : [{ key: "department_name", label: "Department" }]),
+          { key: "status", label: "Status" },
+        ],
+        columns: [
+          { label: "Ref No", key: "reference_no", render: r => '<span style="font-family:monospace;font-weight:700;color:var(--teal)">' + esc(r.reference_no || "LENC-" + r.id) + '</span>' },
+          { label: "Employee", sortKey: "employee_name", render: r => personCell({ name: r.employee_name }, r.department_name) },
+          { label: "Days Sold", sortValue: r => Number(r.days_sold || 0), render: r => '<span class="chip amber font-bold">-' + Number(r.days_sold).toFixed(1) + ' days</span>' },
+          { label: "Daily Rate", sortValue: r => Number(r.daily_rate || 0), render: r => money(r.daily_rate) },
+          { label: "Total Payout", sortValue: r => Number(r.total_amount || 0), render: r => '<b style="color:var(--teal)">' + money(r.total_amount) + '</b>' },
+          { label: "Balance After Sale", sortValue: r => Number(r.accumulated_after || 0), render: r => '<span class="mono">' + Number(r.accumulated_after).toFixed(1) + ' days</span>' },
+          { label: "Status", key: "status", render: r => chip(r.status) },
+          { label: "", class: "right", sortable: false, render: r => {
+            let btns = '<button class="btn btn-sm btn-ghost" data-encash-letter="' + r.id + '">' + icon("fileText", 12) + ' Approval Letter</button> ';
+            if (canApprove && r.status === "pending") {
+              btns += '<button class="btn btn-sm btn-accent" data-encash-approve="' + r.id + '">Approve</button> '
+                    + '<button class="btn btn-sm btn-ghost" data-encash-reject="' + r.id + '">Reject</button>';
+            }
+            return btns;
+          }},
+        ],
+        rows: encashments,
+        emptyTitle: "No leave encashments recorded",
+      });
     } else if (leaveState.tab === "calendar") {
       body = monthCalendar(leaveState.month, requests.filter(r => r.status !== "rejected"), holidays, types);
     } else if (leaveState.tab === "approvals") {
@@ -770,7 +827,7 @@ Views.leave = async function (root) {
     }
 
     root.innerHTML = pageHead("Leave", "Policy-driven leave requests, approvals and balances.",
-      '<button class="btn btn-ghost" id="leave-team">' + icon("users", 15) + ' Who is away</button><button class="btn btn-accent" id="leave-apply">' + icon("plus", 15) + ' Apply for leave</button>', "Time & absence")
+      '<button class="btn btn-ghost" id="leave-team">' + icon("users", 15) + ' Who is away</button><button class="btn btn-soft" id="leave-sell-head">' + icon("creditCard", 14) + ' Sell leaves</button><button class="btn btn-accent" id="leave-apply">' + icon("plus", 15) + ' Apply for leave</button>', "Time & absence")
       + '<div class="leave-summary-strip" style="margin-bottom:18px">'
       + '<div class="card card-pad"><div class="tiny muted">Pending requests</div><b style="font-family:var(--serif);font-size:24px">' + requests.filter(r => r.status === "pending").length + '</b></div>'
       + '<div class="card card-pad"><div class="tiny muted">Approved this year</div><b style="font-family:var(--serif);font-size:24px">' + requests.filter(r => r.status === "approved").length + '</b></div>'
@@ -800,6 +857,30 @@ Views.leave = async function (root) {
 
     root.querySelectorAll("[data-ltab]").forEach(b => b.onclick = () => { leaveState.tab = b.dataset.ltab; Views.leave(root); });
     root.querySelector("#leave-apply").onclick = () => openLeaveForm();
+    const sellHead = root.querySelector("#leave-sell-head");
+    if (sellHead) sellHead.onclick = () => window.openLeaveEncashmentModal();
+    const openEncash = root.querySelector("#open-encash-modal-btn");
+    if (openEncash) openEncash.onclick = () => window.openLeaveEncashmentModal();
+
+    onDelegate(root, "click", "[data-encash-letter]", (b) => {
+      window.openLeaveEncashmentLetterModal(b.dataset.encashLetter);
+    });
+    onDelegate(root, "click", "[data-encash-approve]", async (b) => {
+      try {
+        await API.post("/leave-encashments/" + b.dataset.encashApprove + "/approve");
+        toast("Leave encashment approved & days deducted", "success");
+        Views.leave(root);
+      } catch (err) { handleErr(err); }
+    });
+    onDelegate(root, "click", "[data-encash-reject]", (b) => {
+      confirmDialog("Reject Encashment", "Reject this leave sale request?", async () => {
+        try {
+          await API.post("/leave-encashments/" + b.dataset.encashReject + "/reject");
+          toast("Leave encashment rejected", "success");
+          Views.leave(root);
+        } catch (err) { handleErr(err); }
+      }, { danger: true, confirmLabel: "Reject" });
+    });
     root.querySelector("#leave-team").onclick = () => { leaveState.tab = "calendar"; Views.leave(root); };
     onDelegate(root, "click", "[data-cancel-leave]", (b) => confirmDialog("Cancel leave request", "This will withdraw your pending request.", async () => {
       await API.post("/leave-requests/" + b.dataset.cancelLeave + "/cancel"); toast("Request cancelled", "success"); Views.leave(root);
@@ -1313,22 +1394,65 @@ Views.payroll = async function (root) {
         ], rows: slips, emptyTitle: "No payslips",
       });
     } else if (payState.tab === "loans") {
-      body = renderTable({
+      const activeCount = loans.filter(l => l.status === "active").length;
+      const totalPrincipal = loans.filter(l => l.status === "active" || l.status === "completed").reduce((sum, l) => sum + Number(l.principal || 0), 0);
+      const totalBalance = loans.filter(l => l.status === "active").reduce((sum, l) => sum + Number(l.balance || 0), 0);
+      const totalRepaid = Math.max(0, totalPrincipal - totalBalance);
+
+      const loanKpis = '<div class="grid grid-4" style="margin-bottom:18px">'
+        + '<div class="card card-pad">'
+        + '  <div class="row-between"><div><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.05em">Active Advances</div><div style="font-family:var(--serif);font-size:28px;line-height:1.2;font-weight:700;color:var(--accent)">' + activeCount + '</div></div><div class="kpi-icon accent">' + icon("wallet", 16) + '</div></div>'
+        + '  <div class="tiny muted" style="margin-top:8px">Currently running staff salary advances</div>'
+        + '</div>'
+        + '<div class="card card-pad">'
+        + '  <div class="row-between"><div><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.05em">Total Disbursed</div><div style="font-family:var(--serif);font-size:26px;line-height:1.2;font-weight:700;color:var(--teal)">' + money(totalPrincipal) + '</div></div><div class="kpi-icon teal">' + icon("creditCard", 16) + '</div></div>'
+        + '  <div class="tiny muted" style="margin-top:8px">All active and completed loans</div>'
+        + '</div>'
+        + '<div class="card card-pad">'
+        + '  <div class="row-between"><div><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.05em">Total Recovered</div><div style="font-family:var(--serif);font-size:26px;line-height:1.2;font-weight:700;color:var(--green)">' + money(totalRepaid) + '</div></div><div class="kpi-icon green">' + icon("checkCircle", 16) + '</div></div>'
+        + '  <div class="tiny muted" style="margin-top:8px">Recovered via payroll and payments</div>'
+        + '</div>'
+        + '<div class="card card-pad">'
+        + '  <div class="row-between"><div><div class="tiny muted" style="text-transform:uppercase;letter-spacing:0.05em">Outstanding Balance</div><div style="font-family:var(--serif);font-size:26px;line-height:1.2;font-weight:700;color:var(--amber)">' + money(totalBalance) + '</div></div><div class="kpi-icon amber">' + icon("clock", 16) + '</div></div>'
+        + '  <div class="tiny muted" style="margin-top:8px">Real-time unamortized balance</div>'
+        + '</div>'
+        + '</div>';
+
+      body = loanKpis + renderTable({
         id: "payroll-loans-table",
         exportName: "staff-loans-advances",
+        actions: '<button class="btn btn-accent" id="open-loan-modal-btn">' + icon("plus", 14) + ' Request Loan / Advance</button>',
         filters: [
           { key: "department_name", label: "Department" },
           { key: "loan_type", label: "Type" },
           { key: "status", label: "Status" },
         ],
         columns: [
+          { label: "Ref No", key: "reference_no", render: r => '<span style="font-family:monospace;font-weight:700;color:var(--teal)">' + esc(r.reference_no || 'LOAN-' + r.id) + '</span>' },
           { label: "Employee", sortKey: "employee_name", render: r => personCell({ name: r.employee_name }, r.department_name) },
           { label: "Type", key: "loan_type", render: r => '<span style="text-transform:capitalize">' + esc((r.loan_type || "").replace(/_/g, " ")) + '</span>' },
           { label: "Principal", sortValue: r => Number(r.principal || 0), render: r => money(r.principal) },
-          { label: "Instalment", sortValue: r => Number(r.instalment || 0), render: r => money(r.instalment) },
-          { label: "Balance", sortValue: r => Number(r.balance || 0), render: r => money(r.balance) },
+          { label: "Instalment", sortValue: r => Number(r.instalment || 0), render: r => money(r.instalment) + '/mo' },
+          { label: "Balance", sortValue: r => Number(r.balance || 0), render: r => '<b class="mono">' + money(r.balance) + '</b>' },
+          { label: "Repayment Progress", sortValue: r => Number(r.progress_pct || 0), render: r => {
+            const p = Number(r.principal || 0);
+            const b = Number(r.balance !== undefined ? r.balance : p);
+            const paid = Math.max(0, p - b);
+            const pct = p > 0 ? Math.round((paid / p) * 100) : 0;
+            return '<div class="loan-progress-wrap"><div class="loan-progress-bar" style="width:' + pct + '%"></div></div><div class="tiny muted">' + pct + '% (' + money(paid) + ')</div>';
+          }},
           { label: "Status", key: "status", render: r => chip(r.status) },
-          { label: "", class: "right", sortable: false, render: r => canRun && r.status === "pending" ? '<button class="btn btn-sm btn-soft" data-loan-approve="' + r.id + '">Approve</button>' : "" },
+          { label: "", class: "right", sortable: false, render: r => {
+            let btns = '<button class="btn btn-sm btn-ghost" data-loan-track="' + r.id + '">' + icon("activity", 12) + ' Track</button> ';
+            if (r.status === "active" || r.status === "completed" || r.approved_at) {
+              btns += '<button class="btn btn-sm btn-soft" data-loan-letter="' + r.id + '">' + icon("fileText", 12) + ' Letter</button> ';
+            }
+            if (canRun && r.status === "pending") {
+              btns += '<button class="btn btn-sm btn-accent" data-loan-approve="' + r.id + '">Approve</button> '
+                    + '<button class="btn btn-sm btn-ghost" data-loan-reject="' + r.id + '">Reject</button>';
+            }
+            return btns;
+          }},
         ], rows: loans, emptyTitle: "No loans or advances",
       });
     } else {
@@ -1386,8 +1510,22 @@ Views.payroll = async function (root) {
     onFinanceDelegate(root, "click", "[data-run-lock]", (b) => runAction("/payroll-runs/" + b.dataset.runLock + "/lock", "Payroll locked", root));
     onFinanceDelegate(root, "click", "[data-run-pay]", (b) => runAction("/payroll-runs/" + b.dataset.runPay + "/pay", "Payroll marked paid", root));
     onFinanceDelegate(root, "click", "[data-run-view]", (b) => openRunPayslips(Number(b.dataset.runView)));
+    const openLoanBtn = root.querySelector("#open-loan-modal-btn");
+    if (openLoanBtn) openLoanBtn.onclick = () => window.openLoanRequestModal();
+
+    onFinanceDelegate(root, "click", "[data-loan-track]", (b) => {
+      window.openLoanTrackingModal(b.dataset.loanTrack);
+    });
+    onFinanceDelegate(root, "click", "[data-loan-letter]", (b) => {
+      window.openLoanLetterModal(b.dataset.loanLetter);
+    });
     onFinanceDelegate(root, "click", "[data-loan-approve]", async (b) => {
       try { await API.post("/loans/" + b.dataset.loanApprove + "/approve"); toast("Loan approved", "success"); Views.payroll(root); } catch (e) { handleErr(e); }
+    });
+    onFinanceDelegate(root, "click", "[data-loan-reject]", (b) => {
+      confirmDialog("Reject Loan", "Reject this loan / advance request?", async () => {
+        try { await API.post("/loans/" + b.dataset.loanReject + "/reject"); toast("Loan rejected", "success"); Views.payroll(root); } catch (e) { handleErr(e); }
+      }, { danger: true, confirmLabel: "Reject" });
     });
   } catch (e) {
     root.innerHTML = pageHead("Payroll", "Unavailable") + emptyState("Could not load payroll", e.message, "alert");
@@ -1529,3 +1667,582 @@ async function openPayslipModal(pid) {
     });
   } catch (e) { handleErr(e); }
 }
+
+
+/* ============================================================================
+   GLOBAL MODALS: REAL-TIME LOAN TRACKING & LEAVE ENCASHMENT
+   ============================================================================ */
+
+window.openLoanRequestModal = function (prefillEmpId) {
+  const isEmployee = Store.isRole("employee");
+  const myEmpId = (Store.user && Store.user.employee_id) || null;
+  const targetEmpId = isEmployee ? myEmpId : (prefillEmpId || myEmpId);
+
+  const empOpts = (Store.meta && Store.meta.employees || []).map(e => ({
+    value: e.id,
+    label: e.full_name + " (" + (e.employee_no || "EMP") + ")"
+  }));
+
+  const loanTypes = [
+    { value: "salary_advance", label: "Salary Advance" },
+    { value: "staff_personal_loan", label: "Staff Personal Loan" },
+    { value: "emergency_advance", label: "Emergency Financial Advance" },
+    { value: "education_advance", label: "Education / School Fees Advance" },
+    { value: "medical_advance", label: "Medical Emergency Advance" },
+    { value: "housing_advance", label: "Rent / Housing Advance" },
+  ];
+
+  const html = `
+    <form id="loan-request-form" style="display:flex;flex-direction:column;gap:14px;">
+      <div id="loan-request-err" class="form-error hidden"></div>
+      
+      ${isEmployee ? `<input type="hidden" id="loan-emp-id" value="${targetEmpId || ''}">` : `
+        <div>
+          <label class="form-label" style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Employee</label>
+          <select class="input" id="loan-emp-id" required style="width:100%;">
+            ${empOpts.map(o => `<option value="${o.value}" ${o.value === targetEmpId ? 'selected' : ''}>${esc(o.label)}</option>`).join("")}
+          </select>
+        </div>
+      `}
+
+      <div class="grid grid-2" style="gap:12px;">
+        <div>
+          <label class="form-label" style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Loan / Advance Type</label>
+          <select class="input" id="loan-type" required style="width:100%;">
+            ${loanTypes.map(t => `<option value="${t.value}">${esc(t.label)}</option>`).join("")}
+          </select>
+        </div>
+        <div>
+          <label class="form-label" style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Principal Amount (GHS)</label>
+          <input type="number" step="0.01" min="1" class="input" id="loan-principal" placeholder="e.g. 1500.00" required style="width:100%;">
+        </div>
+      </div>
+
+      <div class="grid grid-2" style="gap:12px;">
+        <div>
+          <label class="form-label" style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Repayment Duration (Months)</label>
+          <select class="input" id="loan-months" required style="width:100%;">
+            <option value="1">1 Month (Next Payroll)</option>
+            <option value="2">2 Months</option>
+            <option value="3" selected>3 Months</option>
+            <option value="4">4 Months</option>
+            <option value="5">5 Months</option>
+            <option value="6">6 Months</option>
+            <option value="9">9 Months</option>
+            <option value="12">12 Months (1 Year)</option>
+            <option value="18">18 Months</option>
+            <option value="24">24 Months (2 Years)</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label" style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Monthly Deduction (GHS)</label>
+          <input type="number" step="0.01" class="input" id="loan-instalment" placeholder="Auto-calculated" style="width:100%;">
+          <div class="tiny muted" style="margin-top:2px;">Auto-calculated or adjust manually</div>
+        </div>
+      </div>
+
+      <div class="grid grid-2" style="gap:12px;">
+        <div>
+          <label class="form-label" style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Repayment Commencement Date</label>
+          <input type="date" class="input" id="loan-start-date" value="${todayISO()}" required style="width:100%;">
+        </div>
+        <div style="background:#f8fafc;padding:8px 12px;border-radius:6px;border:1px solid var(--line);display:flex;flex-direction:column;justify-content:center;">
+          <div class="tiny muted" style="text-transform:uppercase;font-weight:600;">Projected Total Deduction</div>
+          <div style="font-size:16px;font-weight:700;color:var(--teal);" id="loan-calc-preview">GHS 0.00 / month</div>
+        </div>
+      </div>
+
+      <div>
+        <label class="form-label" style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Reason &amp; Purpose of Loan</label>
+        <textarea class="input" id="loan-reason" rows="2" placeholder="e.g. School fees assistance, family medical emergency, rent advance" required style="width:100%;resize:vertical;"></textarea>
+      </div>
+
+      <div style="background:#f8fafc;border-left:3px solid var(--teal);padding:8px 12px;font-size:11px;color:var(--text);border-radius:0 6px 6px 0;">
+        <strong>Agreement:</strong> Submitting this request authorizes Meridian Ghana Ltd / Airport West Hotel to deduct the agreed installment from your monthly payroll upon approval.
+      </div>
+    </form>
+  `;
+
+  openModal({
+    title: "Request Staff Loan / Advance",
+    sub: "Submit request with real-time deduction schedule and agreement letter",
+    body: html,
+    footer: '<button class="btn btn-ghost" data-close-modal>Cancel</button><button class="btn btn-accent" id="loan-submit-btn">' + icon("send", 14) + ' Submit Request</button>',
+    onMount(card) {
+      const principalInput = card.querySelector("#loan-principal");
+      const monthsSelect = card.querySelector("#loan-months");
+      const instalmentInput = card.querySelector("#loan-instalment");
+      const preview = card.querySelector("#loan-calc-preview");
+      const errEl = card.querySelector("#loan-request-err");
+
+      function updateCalc() {
+        const p = parseFloat(principalInput.value) || 0;
+        const m = parseInt(monthsSelect.value, 10) || 1;
+        if (p > 0 && m > 0) {
+          const inst = (p / m).toFixed(2);
+          instalmentInput.value = inst;
+          preview.textContent = "GHS " + Number(inst).toLocaleString('en-US', { minimumFractionDigits: 2 }) + " / mo for " + m + " mo";
+        } else {
+          preview.textContent = "GHS 0.00 / month";
+        }
+      }
+
+      principalInput.oninput = updateCalc;
+      monthsSelect.onchange = updateCalc;
+
+      card.querySelector("#loan-submit-btn").onclick = async () => {
+        errEl.classList.add("hidden");
+        const empId = card.querySelector("#loan-emp-id").value;
+        const principal = parseFloat(principalInput.value) || 0;
+        const months = parseInt(monthsSelect.value, 10) || 1;
+        const instalment = parseFloat(instalmentInput.value) || 0;
+        const loanType = card.querySelector("#loan-type").value;
+        const startDate = card.querySelector("#loan-start-date").value;
+        const reason = card.querySelector("#loan-reason").value.trim();
+
+        if (!empId) {
+          errEl.textContent = "Please select an employee.";
+          errEl.classList.remove("hidden");
+          return;
+        }
+        if (principal <= 0) {
+          errEl.textContent = "Please enter a valid loan principal amount greater than 0.";
+          errEl.classList.remove("hidden");
+          return;
+        }
+        if (!reason) {
+          errEl.textContent = "Please provide the reason / purpose for this request.";
+          errEl.classList.remove("hidden");
+          return;
+        }
+
+        try {
+          const res = await API.post("/loans/request", {
+            employee_id: empId,
+            principal: principal,
+            repayment_months: months,
+            instalment: instalment,
+            loan_type: loanType,
+            start_date: startDate,
+            reason: reason,
+          });
+          toast("Loan request submitted successfully (" + res.data.reference_no + ")", "success");
+          closeModal();
+          navigate();
+        } catch (e) {
+          errEl.textContent = e.message || "Failed to submit loan request.";
+          errEl.classList.remove("hidden");
+        }
+      };
+    }
+  });
+};
+
+window.openLoanTrackingModal = async function (loanId) {
+  openModal({
+    title: "Real-Time Loan Tracker",
+    sub: "Live repayment tracking, ledger, and remaining balance",
+    wide: true,
+    body: spinners(3),
+    footer: '<button class="btn btn-ghost" data-close-modal>Close</button>',
+    async onMount(card) {
+      try {
+        const res = await API.get("/loans/" + loanId + "/tracking");
+        const l = res.data;
+        const canManage = Store.isRole("super_admin", "hr_admin", "payroll");
+
+        const repaymentsHtml = (l.repayments && l.repayments.length)
+          ? `<table class="data-table" style="width:100%;margin-top:8px;">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Amount</th>
+                  <th>Source / Method</th>
+                  <th>Balance Before</th>
+                  <th>Balance After</th>
+                  <th>Recorded By</th>
+                  <th>Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${l.repayments.map(r => `
+                  <tr>
+                    <td class="mono small">${fmtDate(r.repayment_date)}</td>
+                    <td><b class="mono" style="color:var(--green)">-${money(r.amount)}</b></td>
+                    <td><span class="chip tiny ${r.source === 'payroll_deduction' ? 'teal' : 'amber'}">${esc(r.source.replace(/_/g, ' '))}</span></td>
+                    <td class="mono small">${money(r.balance_before)}</td>
+                    <td class="mono small font-bold">${money(r.balance_after)}</td>
+                    <td class="small">${esc(r.recorded_by_name || 'System')}</td>
+                    <td class="small muted">${esc(r.notes || '—')}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>`
+          : `<div class="card card-pad small muted" style="text-align:center;padding:24px;">No repayments recorded yet. Automatic deductions occur during monthly payroll.</div>`;
+
+        const bodyHtml = `
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;background:#f8fafc;padding:10px 14px;border-radius:8px;border:1px solid var(--line);">
+            <div>
+              <div class="row" style="gap:8px;align-items:center;">
+                <span style="font-family:monospace;font-size:14px;font-weight:700;color:var(--teal);">${esc(l.reference_no)}</span>
+                <span class="chip tiny" style="text-transform:capitalize;">${esc(l.loan_type.replace(/_/g, ' '))}</span>
+              </div>
+              <div class="small muted" style="margin-top:2px;">Employee: <b>${esc(l.employee_name)}</b> (${esc(l.employee_no)}) &bull; ${esc(l.department_name)}</div>
+            </div>
+            <div>${chip(l.status)}</div>
+          </div>
+
+          <!-- Real-Time Progress Meter -->
+          <div class="card card-pad" style="margin-bottom:14px;background:linear-gradient(135deg, var(--card-bg) 0%, rgba(15,118,110,0.04) 100%);">
+            <div class="row-between" style="margin-bottom:6px;">
+              <span class="small font-bold">Repayment Progress</span>
+              <span class="mono font-bold" style="color:var(--teal);">${l.progress_pct}% (${money(l.total_paid)} of ${money(l.principal)})</span>
+            </div>
+            <div class="loan-progress-wrap" style="max-width:100%;height:10px;"><div class="loan-progress-bar" style="width:${l.progress_pct}%;"></div></div>
+            <div class="row-between tiny muted" style="margin-top:6px;">
+              <span>Commenced: ${fmtDate(l.start_date)}</span>
+              <span>Projected Maturity: ${l.end_date ? fmtDate(l.end_date) : 'Upon settlement'}</span>
+            </div>
+          </div>
+
+          <!-- KPI Chips -->
+          <div class="loan-tracking-kpis">
+            <div class="loan-kpi-chip">
+              <div class="lbl">Principal Amount</div>
+              <div class="val" style="color:var(--teal);">${money(l.principal)}</div>
+            </div>
+            <div class="loan-kpi-chip">
+              <div class="lbl">Total Repaid</div>
+              <div class="val" style="color:var(--green);">${money(l.total_paid)}</div>
+            </div>
+            <div class="loan-kpi-chip">
+              <div class="lbl">Remaining Balance</div>
+              <div class="val" style="color:${l.balance <= 0 ? 'var(--green)' : 'var(--amber)'};">${money(l.balance)}</div>
+            </div>
+            <div class="loan-kpi-chip">
+              <div class="lbl">Monthly Deduction</div>
+              <div class="val">${money(l.instalment)} / mo</div>
+            </div>
+            <div class="loan-kpi-chip">
+              <div class="lbl">Instalments</div>
+              <div class="val">${l.months_paid} paid / ${l.months_remaining} left</div>
+            </div>
+          </div>
+
+          <!-- Repayments History Section -->
+          <div class="row-between" style="margin-top:16px;margin-bottom:8px;">
+            <div class="section-title">Repayment Ledger &amp; History</div>
+            ${(canManage && (l.status === 'active' || l.status === 'pending') && l.balance > 0)
+              ? `<button class="btn btn-sm btn-accent" id="record-repay-btn">${icon("plus", 12)} Record Repayment</button>`
+              : ''}
+          </div>
+          <div id="repay-form-slot"></div>
+          ${repaymentsHtml}
+        `;
+
+        card.querySelector(".modal-body").innerHTML = bodyHtml;
+
+        card.querySelector(".modal-foot").innerHTML = `
+          ${(l.status === 'active' || l.status === 'completed' || l.approved_at)
+            ? `<button class="btn btn-ghost" id="open-loan-letter-btn">${icon("fileText", 14)} Official Agreement Letter</button>`
+            : ''}
+          <button class="btn btn-accent" data-close-modal>Close</button>
+        `;
+
+        const letterBtn = card.querySelector("#open-loan-letter-btn");
+        if (letterBtn) {
+          letterBtn.onclick = () => {
+            closeModal();
+            window.openLoanLetterModal(loanId);
+          };
+        }
+
+        const recordBtn = card.querySelector("#record-repay-btn");
+        if (recordBtn) {
+          recordBtn.onclick = () => {
+            const slot = card.querySelector("#repay-form-slot");
+            slot.innerHTML = `
+              <div class="card card-pad" style="margin-bottom:12px;background:#f0fdf4;border:1px solid #bbf7d0;">
+                <div class="row-between" style="margin-bottom:8px;"><b class="small" style="color:#166534;">Record Real-Time Payment / Deduction</b><button class="icon-btn" id="cancel-repay-slot">&times;</button></div>
+                <div class="grid grid-3" style="gap:10px;">
+                  <div><label class="tiny muted">Amount (GHS)</label><input type="number" step="0.01" class="input" id="repay-amt" value="${Math.min(l.balance, l.instalment || l.balance)}" max="${l.balance}" required></div>
+                  <div><label class="tiny muted">Payment Date</label><input type="date" class="input" id="repay-date" value="${todayISO()}"></div>
+                  <div><label class="tiny muted">Payment Source</label>
+                    <select class="input" id="repay-source">
+                      <option value="payroll_deduction">Payroll Deduction</option>
+                      <option value="manual_payment" selected>Direct / Cash Payment</option>
+                      <option value="bank_transfer">Bank Transfer</option>
+                    </select>
+                  </div>
+                </div>
+                <div style="margin-top:8px;"><input type="text" class="input" id="repay-notes" placeholder="Notes (optional, e.g. Early lump sum settlement)" style="width:100%;"></div>
+                <div class="row" style="justify-content:flex-end;margin-top:8px;gap:8px;">
+                  <button class="btn btn-sm btn-ghost" id="cancel-repay-btn">Cancel</button>
+                  <button class="btn btn-sm btn-accent" id="submit-repay-btn">${icon("check", 12)} Save Repayment</button>
+                </div>
+              </div>
+            `;
+            slot.querySelector("#cancel-repay-slot").onclick = () => { slot.innerHTML = ""; };
+            slot.querySelector("#cancel-repay-btn").onclick = () => { slot.innerHTML = ""; };
+            slot.querySelector("#submit-repay-btn").onclick = async () => {
+              const amt = parseFloat(slot.querySelector("#repay-amt").value) || 0;
+              const rDate = slot.querySelector("#repay-date").value;
+              const rSource = slot.querySelector("#repay-source").value;
+              const rNotes = slot.querySelector("#repay-notes").value.trim();
+              if (amt <= 0) return toast("Enter a valid amount", "error");
+              try {
+                await API.post("/loans/" + loanId + "/repay", { amount: amt, repayment_date: rDate, source: rSource, notes: rNotes });
+                toast("Repayment recorded successfully", "success");
+                window.openLoanTrackingModal(loanId);
+              } catch (e) {
+                toast(e.message || "Failed to record payment", "error");
+              }
+            };
+          };
+        }
+
+      } catch (err) {
+        card.querySelector(".modal-body").innerHTML = emptyState("Unable to load loan", err.message, "alert");
+      }
+    }
+  });
+};
+
+window.openLoanLetterModal = async function (loanId) {
+  openModal({
+    title: "Staff Loan Approval Agreement Letter",
+    sub: "Official agreement letter for forms submission and record keeping",
+    wide: true,
+    body: spinners(3),
+    footer: '<button class="btn btn-ghost" data-close-modal>Close</button>',
+    async onMount(card) {
+      try {
+        const res = await API.get("/loans/" + loanId + "/letter/preview");
+        const docHtml = res.data.html;
+
+        card.querySelector(".modal-body").innerHTML = `
+          <div class="official-doc-preview-container">
+            ${docHtml}
+          </div>
+        `;
+
+        card.querySelector(".modal-foot").innerHTML = `
+          <a href="/api/v1/loans/${loanId}/letter/print?token=${API.token}" target="_blank" class="btn btn-ghost">${icon("printer", 14)} Print Agreement Letter</a>
+          <a href="/api/v1/loans/${loanId}/letter/pdf?token=${API.token}" target="_blank" class="btn btn-accent">${icon("download", 14)} Download PDF</a>
+          <button class="btn btn-soft" data-close-modal>Close</button>
+        `;
+      } catch (e) {
+        card.querySelector(".modal-body").innerHTML = emptyState("Unable to load letter", e.message, "alert");
+      }
+    }
+  });
+};
+
+window.openLeaveEncashmentModal = async function (prefillEmpId) {
+  const isEmployee = Store.isRole("employee");
+  const myEmpId = (Store.user && Store.user.employee_id) || null;
+  const targetEmpId = isEmployee ? myEmpId : (prefillEmpId || myEmpId);
+
+  const empOpts = (Store.meta && Store.meta.employees || []).map(e => ({
+    value: e.id,
+    label: e.full_name + " (" + (e.employee_no || "EMP") + ")"
+  }));
+
+  const html = `
+    <form id="encash-form" style="display:flex;flex-direction:column;gap:14px;">
+      <div id="encash-err" class="form-error hidden"></div>
+      
+      ${isEmployee ? `<input type="hidden" id="encash-emp-id" value="${targetEmpId || ''}">` : `
+        <div>
+          <label class="form-label" style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Employee</label>
+          <select class="input" id="encash-emp-id" required style="width:100%;">
+            ${empOpts.map(o => `<option value="${o.value}" ${o.value === targetEmpId ? 'selected' : ''}>${esc(o.label)}</option>`).join("")}
+          </select>
+        </div>
+      `}
+
+      <div id="encash-bal-card" style="background:#f8fafc;padding:12px 14px;border-radius:8px;border:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div class="tiny muted" style="text-transform:uppercase;font-weight:600;">Available Accumulated Leave</div>
+          <div style="font-size:22px;font-weight:700;color:var(--teal);" id="encash-avail-days">Loading balance…</div>
+          <div class="tiny muted" id="encash-bal-sub">Checking entitlement for year ${new Date().getFullYear()}</div>
+        </div>
+        <div class="kpi-icon teal">${icon("calendar", 20)}</div>
+      </div>
+
+      <div class="grid grid-2" style="gap:12px;">
+        <div>
+          <label class="form-label" style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Days to Sell / Encash</label>
+          <input type="number" step="0.5" min="0.5" class="input" id="encash-days" placeholder="e.g. 5.0" required style="width:100%;">
+          <div class="tiny muted" style="margin-top:2px;">Deducted from accumulated balance upon approval</div>
+        </div>
+        <div>
+          <label class="form-label" style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Daily Commutation Rate (GHS)</label>
+          <input type="number" step="0.01" class="input" id="encash-rate" placeholder="Auto-calculated" required style="width:100%;">
+          <div class="tiny muted" style="margin-top:2px;">Basic monthly salary &divide; 22 working days</div>
+        </div>
+      </div>
+
+      <div style="background:#f0fdf4;padding:12px 14px;border-radius:8px;border:1px solid #bbf7d0;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div>
+          <div class="tiny" style="color:#166534;font-weight:600;text-transform:uppercase;">Gross Cash Payout Value</div>
+          <div style="font-size:20px;font-weight:800;color:#0f766e;" id="encash-total-payout">GHS 0.00</div>
+          <div class="tiny" style="color:#166534;">Disbursed in upcoming payroll</div>
+        </div>
+        <div>
+          <div class="tiny" style="color:#166534;font-weight:600;text-transform:uppercase;">Remaining Leave After Sale</div>
+          <div style="font-size:20px;font-weight:800;color:#166534;" id="encash-rem-preview">— days</div>
+          <div class="tiny" style="color:#166534;">Deduction applied to ledger</div>
+        </div>
+      </div>
+
+      <div>
+        <label class="form-label" style="font-weight:600;font-size:12px;margin-bottom:4px;display:block;">Reason / Justification for Sale</label>
+        <textarea class="input" id="encash-reason" rows="2" placeholder="e.g. Personal financial requirement, school fees, surplus annual leave commutation" required style="width:100%;resize:vertical;"></textarea>
+      </div>
+
+      <div style="background:#f8fafc;border-left:3px solid var(--amber);padding:8px 12px;font-size:11px;color:var(--text);border-radius:0 6px 6px 0;">
+        <strong>Notice:</strong> Once approved, the sold leave days are permanently debited from your accumulated statutory leave balance. An official approval letter will be generated for submission with your finance forms.
+      </div>
+    </form>
+  `;
+
+  openModal({
+    title: "Sell Leaves (Leave Encashment)",
+    sub: "Convert accumulated leave days to cash. Sold days are deducted from your balance.",
+    body: html,
+    footer: '<button class="btn btn-ghost" data-close-modal>Cancel</button><button class="btn btn-accent" id="encash-submit-btn">' + icon("creditCard", 14) + ' Submit Encashment Request</button>',
+    async onMount(card) {
+      const empSelect = card.querySelector("#encash-emp-id");
+      const daysInput = card.querySelector("#encash-days");
+      const rateInput = card.querySelector("#encash-rate");
+      const availEl = card.querySelector("#encash-avail-days");
+      const subEl = card.querySelector("#encash-bal-sub");
+      const payoutEl = card.querySelector("#encash-total-payout");
+      const remEl = card.querySelector("#encash-rem-preview");
+      const errEl = card.querySelector("#encash-err");
+
+      let currentAvail = 0;
+      let anlTypeId = null;
+
+      async function loadEmpLeave() {
+        const empId = empSelect ? empSelect.value : targetEmpId;
+        if (!empId) return;
+        try {
+          const res = await API.get("/leave/summary", { employee_id: empId });
+          const anl = (res.data || []).find(b => b.code === "ANL") || (res.data || [])[0];
+          anlTypeId = anl ? anl.leave_type_id : null;
+          currentAvail = anl ? (anl.available || anl.remaining || 0) : 0;
+          availEl.textContent = currentAvail + " working days";
+          subEl.textContent = (anl ? esc(anl.leave_type_name) : "Annual Leave") + " &bull; Base: " + (anl ? anl.entitled : 30) + " d" + (anl && anl.carried_over ? " (+" + anl.carried_over + " carry)" : "");
+          daysInput.max = currentAvail;
+
+          if (!rateInput.value) {
+            const empData = (Store.meta && Store.meta.employees || []).find(e => e.id === Number(empId));
+            const sal = empData && empData.basic_salary ? parseFloat(empData.basic_salary) : 2500;
+            const rate = (sal / 22.0).toFixed(2);
+            rateInput.value = rate;
+          }
+          updateCalc();
+        } catch (e) {
+          availEl.textContent = "Unavailable";
+        }
+      }
+
+      function updateCalc() {
+        const d = parseFloat(daysInput.value) || 0;
+        const r = parseFloat(rateInput.value) || 0;
+        const tot = (d * r).toFixed(2);
+        payoutEl.textContent = "GHS " + Number(tot).toLocaleString('en-US', { minimumFractionDigits: 2 });
+        const left = Math.max(0, currentAvail - d);
+        remEl.textContent = left.toFixed(1) + " days left";
+      }
+
+      daysInput.oninput = updateCalc;
+      rateInput.oninput = updateCalc;
+      if (empSelect) empSelect.onchange = loadEmpLeave;
+
+      await loadEmpLeave();
+
+      card.querySelector("#encash-submit-btn").onclick = async () => {
+        errEl.classList.add("hidden");
+        const empId = empSelect ? empSelect.value : targetEmpId;
+        const days = parseFloat(daysInput.value) || 0;
+        const rate = parseFloat(rateInput.value) || 0;
+        const reason = card.querySelector("#encash-reason").value.trim();
+
+        if (!empId) {
+          errEl.textContent = "Select an employee";
+          errEl.classList.remove("hidden");
+          return;
+        }
+        if (days <= 0) {
+          errEl.textContent = "Please enter days to sell greater than 0.";
+          errEl.classList.remove("hidden");
+          return;
+        }
+        if (days > currentAvail) {
+          errEl.textContent = "Cannot sell more than available balance (" + currentAvail + " days).";
+          errEl.classList.remove("hidden");
+          return;
+        }
+        if (rate <= 0) {
+          errEl.textContent = "Enter a valid daily commutation rate.";
+          errEl.classList.remove("hidden");
+          return;
+        }
+        if (!reason) {
+          errEl.textContent = "Please state the reason / justification for selling leave days.";
+          errEl.classList.remove("hidden");
+          return;
+        }
+
+        try {
+          const res = await API.post("/leave-encashments", {
+            employee_id: empId,
+            leave_type_id: anlTypeId,
+            days_sold: days,
+            daily_rate: rate,
+            reason: reason,
+          });
+          toast("Leave encashment requested (" + res.data.reference_no + "). " + days + " days reserved.", "success");
+          closeModal();
+          navigate();
+        } catch (e) {
+          errEl.textContent = e.message || "Failed to submit leave encashment request.";
+          errEl.classList.remove("hidden");
+        }
+      };
+    }
+  });
+};
+
+window.openLeaveEncashmentLetterModal = async function (encashmentId) {
+  openModal({
+    title: "Leave Encashment Approval & Balance Deduction Letter",
+    sub: "Official leave buyout certificate and accumulated balance deduction form",
+    wide: true,
+    body: spinners(3),
+    footer: '<button class="btn btn-ghost" data-close-modal>Close</button>',
+    async onMount(card) {
+      try {
+        const res = await API.get("/leave-encashments/" + encashmentId + "/letter/preview");
+        const docHtml = res.data.html;
+
+        card.querySelector(".modal-body").innerHTML = `
+          <div class="official-doc-preview-container">
+            ${docHtml}
+          </div>
+        `;
+
+        card.querySelector(".modal-foot").innerHTML = `
+          <a href="/api/v1/leave-encashments/${encashmentId}/letter/print?token=${API.token}" target="_blank" class="btn btn-ghost">${icon("printer", 14)} Print Encashment Letter</a>
+          <a href="/api/v1/leave-encashments/${encashmentId}/letter/pdf?token=${API.token}" target="_blank" class="btn btn-accent">${icon("download", 14)} Download PDF</a>
+          <button class="btn btn-soft" data-close-modal>Close</button>
+        `;
+      } catch (e) {
+        card.querySelector(".modal-body").innerHTML = emptyState("Unable to load letter", e.message, "alert");
+      }
+    }
+  });
+};

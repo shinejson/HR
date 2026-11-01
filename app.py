@@ -5,6 +5,7 @@ import json
 import secrets
 import csv
 import io
+import math
 import base64
 import hashlib
 import sqlite3
@@ -27,7 +28,7 @@ from models import (
     JobPosting, Candidate, Application, Interview, OnboardingTemplate, OnboardingTask,
     Offboarding, Shift, Attendance, AttendanceCorrection, LeaveType, LeaveBalance,
     LeaveRequest, Holiday, SalaryComponent, SalaryStructure, TaxBand, PayrollRun,
-    Payslip, PayslipItem, Loan, Goal, AppraisalCycle, Appraisal, Training,
+    Payslip, PayslipItem, Loan, LoanRepayment, LeaveEncashment, Goal, AppraisalCycle, Appraisal, Training,
     TrainingEnrolment, ExpenseCategory, ExpenseClaim, Asset, AssetAssignment,
     Ticket, TicketComment, Announcement, CompanyEvent, EventRsvp, Notification,
     NotificationPreference, NotificationDelivery, Approval, AuditLog, Setting,
@@ -859,6 +860,7 @@ READ_PERMS = {
     "salary-structures": {"super_admin", "hr_admin", "payroll", "auditor"},
     "payslips": {"super_admin", "hr_admin", "payroll", "auditor", "manager", "employee"},
     "loans": {"super_admin", "hr_admin", "payroll", "auditor", "manager", "employee"},
+    "leave-encashments": {"super_admin", "hr_admin", "payroll", "auditor", "manager", "employee"},
     "claims": {"super_admin", "hr_admin", "payroll", "auditor", "manager", "employee"},
     "requisitions": {"super_admin", "hr_admin", "hr_officer", "recruiter"},
     "job-postings": {"super_admin", "hr_admin", "hr_officer", "recruiter"},
@@ -921,7 +923,8 @@ WRITE_PERMS = {
     "salary-components": {"super_admin", "hr_admin", "payroll"},
     "salary-structures": {"super_admin", "hr_admin", "payroll"},
     "payroll-runs": {"super_admin", "hr_admin", "payroll"},
-    "loans": {"super_admin", "hr_admin", "payroll"},
+    "loans": {"super_admin", "hr_admin", "payroll", "employee"},
+    "leave-encashments": {"super_admin", "hr_admin", "payroll", "employee"},
     "goals": {"super_admin", "hr_admin", "hr_officer", "manager"},
     "appraisal-cycles": {"super_admin", "hr_admin", "hr_officer"},
     "appraisals": {"super_admin", "hr_admin", "hr_officer", "manager"},
@@ -1712,6 +1715,11 @@ RESOURCES = {
     "leave-balances": dict(model=LeaveBalance, order="id", search=[],
                            labels={"employee_name": "employee.full_name", "leave_type_name": "leave_type.name",
                                    "department_name": "employee.department.name"}),
+    "leave-encashments": dict(model=LeaveEncashment, order="id", search=["reference_no", "status", "reason"],
+                              labels={"employee_name": "employee.full_name", "leave_type_name": "leave_type.name",
+                                      "employee_no": "employee.employee_no", "department_name": "employee.department.name",
+                                      "hod_name": "hod_approver.full_name", "accountant_name": "accountant_approver.full_name",
+                                      "md_name": "md_approver.full_name"}),
     "leave-requests": dict(model=LeaveRequest, order="start_date", search=["status", "reason"],
                            labels={"employee_name": "employee.full_name", "leave_type_name": "leave_type.name",
                                    "employee_no": "employee.employee_no",
@@ -4959,13 +4967,15 @@ def employee_profile(eid):
             ps_item["items"] = [serialize(it) for it in PayslipItem.query.filter_by(payslip_id=p.id).all()]
             slips.append(ps_item)
         data["payslips"] = slips
-        data["loans"] = [serialize(l, "loans") for l in Loan.query.filter_by(employee_id=eid).order_by(Loan.id.desc()).all()]
+        data["loans"] = [_serialize_loan_full(l) for l in Loan.query.filter_by(employee_id=eid).order_by(Loan.id.desc()).all()]
+        data["leave_encashments"] = [_serialize_leave_encashment(le) for le in LeaveEncashment.query.filter_by(employee_id=eid).order_by(LeaveEncashment.id.desc()).all()]
         data["claims"] = [serialize(c, "claims") for c in ExpenseClaim.query.filter_by(employee_id=eid).order_by(ExpenseClaim.id.desc()).limit(10)]
     else:
         data["bank_accounts"] = []
         data["salary_structure"] = []
         data["payslips"] = []
         data["loans"] = []
+        data["leave_encashments"] = []
         data["claims"] = []
 
     all_assigns = (AssetAssignment.query.filter_by(employee_id=eid)
@@ -5969,21 +5979,24 @@ def leave_summary():
     anl_taken = 0.0
     anl_pending = 0.0
 
+    anl_encashed = 0.0
     for b in balances:
         item = serialize(b, "leave-balances")
         ent = float(b.entitled or 0)
         carr = float(b.carried_over or 0)
         tk = float(b.taken or 0)
         pd = float(b.pending or 0)
+        enc = float(getattr(b, "encashed", 0) or 0)
         tot = ent + carr
-        rem = max(0.0, tot - tk - pd)
-        avail = max(0.0, tot - tk)
+        rem = max(0.0, tot - tk - pd - enc)
+        avail = max(0.0, tot - tk - enc)
         carry_next = rem
         item["entitled"] = ent
         item["carried_over"] = carr
         item["total_allocation"] = tot
         item["taken"] = tk
         item["pending"] = pd
+        item["encashed"] = enc
         item["remaining"] = rem
         item["available"] = avail
         item["carry_over_next_year"] = carry_next
@@ -5997,11 +6010,12 @@ def leave_summary():
                 anl_carried = carr
                 anl_taken = tk
                 anl_pending = pd
+                anl_encashed = enc
         out.append(item)
 
     anl_total = anl_entitled + anl_carried
-    anl_remaining = max(0.0, anl_total - anl_taken - anl_pending)
-    anl_available = max(0.0, anl_total - anl_taken)
+    anl_remaining = max(0.0, anl_total - anl_taken - anl_pending - anl_encashed)
+    anl_available = max(0.0, anl_total - anl_taken - anl_encashed)
 
     metrics = {
         "annual_entitlement": anl_entitled,
@@ -6009,6 +6023,7 @@ def leave_summary():
         "total_allocation": anl_total,
         "taken": anl_taken,
         "pending": anl_pending,
+        "encashed": anl_encashed,
         "available": anl_available,
         "remaining": anl_remaining,
         "carry_over_to_next_year": anl_remaining,
@@ -6300,7 +6315,9 @@ def compute_payslip(emp, run):
     tax = _paye(taxable)
     other = Decimal("0")
     for loan in Loan.query.filter_by(employee_id=emp.id, status="active").all():
-        other += Decimal(str(loan.instalment or 0))
+        loan_inst = Decimal(str(loan.instalment or 0))
+        loan_bal = Decimal(str(loan.balance if loan.balance is not None else loan.principal or 0))
+        other += min(loan_bal, loan_inst) if loan_bal > 0 else Decimal("0")
     net = gross - ssnit - tax - other
     return gross, ssnit, tax, other, net, earnings
 
@@ -6398,9 +6415,25 @@ def pay_payroll(rid):
         if u:
             paid_users.append(u)
         for loan in Loan.query.filter_by(employee_id=ps.employee_id, status="active").all():
-            loan.balance = max(Decimal("0"), Decimal(loan.balance or 0) - Decimal(loan.instalment or 0))
-            if loan.balance == 0:
-                loan.status = "completed"
+            loan_inst = Decimal(str(loan.instalment or 0))
+            bal_before = Decimal(str(loan.balance if loan.balance is not None else loan.principal or 0))
+            deduct = min(bal_before, loan_inst) if bal_before > 0 else Decimal("0")
+            if deduct > 0:
+                bal_after = max(Decimal("0"), bal_before - deduct)
+                loan.balance = bal_after
+                rep = LoanRepayment(
+                    loan_id=loan.id,
+                    amount=deduct,
+                    repayment_date=date(run.period_year, run.period_month, 28),
+                    source="payroll_deduction",
+                    balance_before=bal_before,
+                    balance_after=bal_after,
+                    notes=f"Automatic payroll deduction ({period_label})",
+                    recorded_by=request.user.employee_id if getattr(request, "user", None) else None,
+                )
+                db.session.add(rep)
+                if bal_after == 0:
+                    loan.status = "completed"
     period_label = date(run.period_year, max(1, min(12, run.period_month)), 1).strftime("%B %Y")
     dispatch_event(
         "payroll_paid", paid_users,
@@ -6437,8 +6470,573 @@ def approve_loan(lid):
         return error("Not found", 404)
     loan.status = "active"
     loan.balance = loan.principal
+    loan.approved_by = request.user.employee_id
+    loan.approved_at = datetime.utcnow()
+    data = request.get_json(silent=True) or {}
+    loan.approval_notes = data.get("notes") or loan.approval_notes
+    if data.get("signature_url"):
+        loan.approver_signature = data.get("signature_url")
+    elif request.user.employee and request.user.employee.signature_url:
+        loan.approver_signature = request.user.employee.signature_url
     db.session.commit()
-    return jsonify({"data": serialize(loan, "loans")})
+    return jsonify({"data": _serialize_loan_full(loan)})
+
+# ============================================================================
+# LOANS REAL-TIME TRACKING & LEAVE ENCASHMENT HELPERS & APIS
+# ============================================================================
+
+def _serialize_loan_full(loan):
+    if not loan:
+        return None
+    principal = float(loan.principal or 0)
+    balance = float(loan.balance if loan.balance is not None else principal)
+    instalment = float(loan.instalment or 0)
+    total_paid = max(0.0, round(principal - balance, 2))
+    progress_pct = round((total_paid / principal * 100), 1) if principal > 0 else 0.0
+    months_paid = int(round(total_paid / instalment)) if instalment > 0 else 0
+    months_remaining = int(math.ceil(balance / instalment)) if instalment > 0 and balance > 0 else 0
+
+    emp = loan.employee
+    approver = loan.approver
+
+    repayments = []
+    for r in loan.repayments:
+        repayments.append({
+            "id": r.id,
+            "loan_id": r.loan_id,
+            "amount": float(r.amount or 0),
+            "repayment_date": r.repayment_date.isoformat() if r.repayment_date else None,
+            "source": r.source or "payroll_deduction",
+            "balance_before": float(r.balance_before or 0),
+            "balance_after": float(r.balance_after or 0),
+            "notes": r.notes or "",
+            "recorded_by_name": r.recorder.full_name if r.recorder else "System Payroll",
+            "created_at": conv(r.created_at),
+        })
+
+    return {
+        "id": loan.id,
+        "reference_no": loan.reference_no or f"LOAN-2026-{loan.id:04d}",
+        "employee_id": loan.employee_id,
+        "employee_name": emp.full_name if emp else "—",
+        "employee_no": emp.employee_no if emp else "—",
+        "department_name": emp.department.name if emp and emp.department else "—",
+        "designation_title": emp.designation.title if emp and emp.designation else "—",
+        "loan_type": loan.loan_type or "salary_advance",
+        "principal": principal,
+        "instalment": instalment,
+        "balance": balance,
+        "total_paid": total_paid,
+        "progress_pct": progress_pct,
+        "repayment_months": loan.repayment_months or (months_paid + months_remaining or 1),
+        "months_paid": months_paid,
+        "months_remaining": months_remaining,
+        "start_date": loan.start_date.isoformat() if loan.start_date else None,
+        "end_date": loan.end_date.isoformat() if loan.end_date else None,
+        "status": loan.status or "pending",
+        "reason": loan.reason,
+        "approved_by": loan.approved_by,
+        "approver_name": approver.full_name if approver else None,
+        "approved_at": conv(loan.approved_at),
+        "disbursed_at": conv(loan.disbursed_at),
+        "approval_notes": loan.approval_notes,
+        "employee_signature": loan.employee_signature,
+        "approver_signature": loan.approver_signature,
+        "created_at": conv(loan.created_at),
+        "repayments": repayments,
+    }
+
+
+def _serialize_leave_encashment(enc):
+    if not enc:
+        return None
+    emp = enc.employee
+    lt = enc.leave_type
+    return {
+        "id": enc.id,
+        "reference_no": enc.reference_no or f"LENC-2026-{enc.id:04d}",
+        "employee_id": enc.employee_id,
+        "employee_name": emp.full_name if emp else "—",
+        "employee_no": emp.employee_no if emp else "—",
+        "department_name": emp.department.name if emp and emp.department else "—",
+        "designation_title": emp.designation.title if emp and emp.designation else "—",
+        "leave_type_id": enc.leave_type_id,
+        "leave_type_name": lt.name if lt else "Annual Leave",
+        "year": enc.year,
+        "days_sold": float(enc.days_sold or 0),
+        "daily_rate": float(enc.daily_rate or 0),
+        "total_amount": float(enc.total_amount or 0),
+        "accumulated_before": float(enc.accumulated_before or 0),
+        "accumulated_after": float(enc.accumulated_after or 0),
+        "reason": enc.reason,
+        "status": enc.status or "pending",
+        "hod_approved_by": enc.hod_approved_by,
+        "hod_name": enc.hod_approver.full_name if enc.hod_approver else None,
+        "hod_approved_at": conv(enc.hod_approved_at),
+        "accountant_approved_by": enc.accountant_approved_by,
+        "accountant_name": enc.accountant_approver.full_name if enc.accountant_approver else None,
+        "accountant_approved_at": conv(enc.accountant_approved_at),
+        "md_approved_by": enc.md_approved_by,
+        "md_name": enc.md_approver.full_name if enc.md_approver else None,
+        "md_approved_at": conv(enc.md_approved_at),
+        "decided_at": conv(enc.decided_at),
+        "decision_note": enc.decision_note,
+        "employee_signature": enc.employee_signature,
+        "created_at": conv(enc.created_at),
+    }
+
+
+@app.get("/api/v1/loans/<int:lid>/tracking")
+@login_required
+def get_loan_tracking(lid):
+    loan = db.session.get(Loan, lid)
+    if not loan:
+        return error("Loan not found", 404)
+    if role_of(request.user) == "employee" and loan.employee_id != request.user.employee_id:
+        return error("Forbidden", 403)
+    return jsonify({"data": _serialize_loan_full(loan)})
+
+
+@app.post("/api/v1/loans/request")
+@login_required
+def request_loan():
+    user = request.user
+    role = role_of(user)
+    data = request.get_json(silent=True) or {}
+
+    emp_id = data.get("employee_id")
+    if role == "employee":
+        emp_id = user.employee_id
+    elif not emp_id:
+        emp_id = user.employee_id
+
+    emp = db.session.get(Employee, emp_id)
+    if not emp or emp.deleted_at is not None:
+        return error("Valid active employee is required", 422)
+
+    try:
+        principal = Decimal(str(data.get("principal", 0)))
+    except Exception:
+        return error("Invalid principal amount", 422)
+    if principal <= 0:
+        return error("Principal amount must be greater than zero", 422)
+
+    repayment_months = int(data.get("repayment_months") or 1)
+    repayment_months = max(1, min(60, repayment_months))
+
+    if data.get("instalment"):
+        try:
+            instalment = Decimal(str(data.get("instalment"))).quantize(Decimal("0.01"))
+        except Exception:
+            instalment = (principal / Decimal(repayment_months)).quantize(Decimal("0.01"))
+    else:
+        instalment = (principal / Decimal(repayment_months)).quantize(Decimal("0.01"))
+
+    start_date = date.today()
+    if data.get("start_date"):
+        try:
+            start_date = date.fromisoformat(str(data["start_date"])[:10])
+        except Exception:
+            pass
+
+    end_month = start_date.month + repayment_months - 1
+    end_year = start_date.year + (end_month - 1) // 12
+    end_month = ((end_month - 1) % 12) + 1
+    end_date = date(end_year, end_month, 28)
+
+    ref_no = f"LOAN-{date.today().year}-{secrets.token_hex(2).upper()}"
+    loan = Loan(
+        reference_no=ref_no,
+        employee_id=emp.id,
+        loan_type=data.get("loan_type") or "salary_advance",
+        principal=principal,
+        instalment=instalment,
+        balance=principal,
+        repayment_months=repayment_months,
+        start_date=start_date,
+        end_date=end_date,
+        status="pending",
+        reason=data.get("reason"),
+        employee_signature=data.get("employee_signature") or (emp.signature_url if emp else None),
+    )
+    db.session.add(loan)
+    db.session.commit()
+
+    audit(user, "loan_requested", "loans", loan.id, new={"principal": float(principal), "ref": ref_no})
+    return jsonify({"data": _serialize_loan_full(loan)})
+
+
+@app.post("/api/v1/loans/<int:lid>/repay")
+@login_required
+def record_loan_repayment(lid):
+    if role_of(request.user) not in ("super_admin", "hr_admin", "payroll"):
+        return error("Forbidden", 403)
+    loan = db.session.get(Loan, lid)
+    if not loan:
+        return error("Loan not found", 404)
+    data = request.get_json(silent=True) or {}
+    try:
+        amount = Decimal(str(data.get("amount", 0)))
+    except Exception:
+        return error("Invalid repayment amount", 422)
+    if amount <= 0:
+        return error("Repayment amount must be positive", 422)
+
+    rep_date = date.today()
+    if data.get("repayment_date"):
+        try:
+            rep_date = date.fromisoformat(str(data["repayment_date"])[:10])
+        except Exception:
+            pass
+
+    bal_before = Decimal(loan.balance if loan.balance is not None else loan.principal or 0)
+    bal_after = max(Decimal("0"), bal_before - amount)
+    loan.balance = bal_after
+    if bal_after == 0:
+        loan.status = "completed"
+    elif loan.status == "pending":
+        loan.status = "active"
+
+    repayment = LoanRepayment(
+        loan_id=loan.id,
+        amount=amount,
+        repayment_date=rep_date,
+        source=data.get("source") or "manual_payment",
+        balance_before=bal_before,
+        balance_after=bal_after,
+        notes=data.get("notes") or f"Payment recorded by {request.user.username}",
+        recorded_by=request.user.employee_id,
+    )
+    db.session.add(repayment)
+    db.session.commit()
+
+    audit(request.user, "loan_repayment_recorded", "loans", loan.id, new={"amount": float(amount), "balance": float(bal_after)})
+    return jsonify({"data": _serialize_loan_full(loan)})
+
+
+@app.post("/api/v1/loans/<int:lid>/reject")
+@login_required
+def reject_loan(lid):
+    if role_of(request.user) not in ("super_admin", "hr_admin", "payroll"):
+        return error("Forbidden", 403)
+    loan = db.session.get(Loan, lid)
+    if not loan:
+        return error("Not found", 404)
+    loan.status = "rejected"
+    data = request.get_json(silent=True) or {}
+    loan.approval_notes = data.get("notes") or loan.approval_notes
+    db.session.commit()
+    return jsonify({"data": _serialize_loan_full(loan)})
+
+
+@app.get("/api/v1/loans/<int:lid>/letter/preview")
+@login_required
+def preview_loan_letter(lid):
+    loan = db.session.get(Loan, lid)
+    if not loan:
+        return error("Not found", 404)
+    if role_of(request.user) == "employee" and loan.employee_id != request.user.employee_id:
+        return error("Forbidden", 403)
+    import loan_and_encashment_letters
+    html_str = loan_and_encashment_letters.build_loan_letter_html(loan, standalone=False)
+    return jsonify({
+        "data": {
+            "id": loan.id,
+            "reference_no": loan.reference_no,
+            "status": loan.status,
+            "html": html_str,
+        }
+    })
+
+
+@app.get("/api/v1/loans/<int:lid>/letter/print")
+@login_required
+def print_loan_letter(lid):
+    loan = db.session.get(Loan, lid)
+    if not loan:
+        return error("Not found", 404)
+    if role_of(request.user) == "employee" and loan.employee_id != request.user.employee_id:
+        return error("Forbidden", 403)
+    import loan_and_encashment_letters
+    auto_p = str(request.args.get("auto_print", "1")).lower() in ("1", "true", "yes")
+    html_page = loan_and_encashment_letters.build_loan_letter_html(loan, standalone=True, auto_print=auto_p)
+    resp = app.make_response(html_page)
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    return resp
+
+
+@app.get("/api/v1/loans/<int:lid>/letter/pdf")
+@login_required
+def download_loan_letter_pdf(lid):
+    loan = db.session.get(Loan, lid)
+    if not loan:
+        return error("Not found", 404)
+    if role_of(request.user) == "employee" and loan.employee_id != request.user.employee_id:
+        return error("Forbidden", 403)
+    import loan_and_encashment_letters
+    pdf_bytes = loan_and_encashment_letters.build_loan_letter_pdf(loan)
+    buffer = io.BytesIO(pdf_bytes)
+    filename = f"Loan_Agreement_{loan.reference_no or loan.id}.pdf"
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/pdf",
+    )
+
+
+# ---------------------------------------------------------------- leave encashment (selling leaves)
+
+@app.get("/api/v1/leave-encashments")
+@login_required
+def get_leave_encashments():
+    user = request.user
+    role = role_of(user)
+    query = LeaveEncashment.query
+    if role == "employee":
+        query = query.filter_by(employee_id=user.employee_id)
+    elif request.args.get("employee_id"):
+        try:
+            query = query.filter_by(employee_id=int(request.args["employee_id"]))
+        except Exception:
+            pass
+    if request.args.get("status"):
+        query = query.filter_by(status=request.args["status"])
+    encs = query.order_by(LeaveEncashment.id.desc()).all()
+    return jsonify({"data": [_serialize_leave_encashment(e) for e in encs]})
+
+
+@app.post("/api/v1/leave-encashments")
+@login_required
+def create_leave_encashment():
+    user = request.user
+    role = role_of(user)
+    data = request.get_json(silent=True) or {}
+
+    emp_id = data.get("employee_id")
+    if role == "employee":
+        emp_id = user.employee_id
+    elif not emp_id:
+        emp_id = user.employee_id
+
+    emp = db.session.get(Employee, emp_id)
+    if not emp or emp.deleted_at is not None:
+        return error("Valid active employee is required", 422)
+
+    year = int(data.get("year") or date.today().year)
+    try:
+        days_sold = Decimal(str(data.get("days_sold", 0)))
+    except Exception:
+        return error("Invalid number of days to sell", 422)
+    if days_sold <= 0:
+        return error("Days to sell must be greater than zero", 422)
+
+    leave_type_id = data.get("leave_type_id")
+    if not leave_type_id:
+        anl = LeaveType.query.filter_by(code="ANL").first() or LeaveType.query.first()
+        leave_type_id = anl.id if anl else None
+    if not leave_type_id:
+        return error("Valid leave type required", 422)
+
+    bal = LeaveBalance.query.filter_by(employee_id=emp.id, leave_type_id=leave_type_id, year=year).first()
+    if not bal:
+        lt = db.session.get(LeaveType, leave_type_id)
+        default_days = 30.0 if lt and lt.code == "ANL" else float(lt.days_per_year if lt else 0)
+        bal = LeaveBalance(employee_id=emp.id, leave_type_id=leave_type_id, year=year, entitled=default_days, taken=0, pending=0, carried_over=0, encashed=0)
+        db.session.add(bal)
+        db.session.flush()
+
+    ent = Decimal(str(bal.entitled or 0))
+    carr = Decimal(str(bal.carried_over or 0))
+    tk = Decimal(str(bal.taken or 0))
+    pd = Decimal(str(bal.pending or 0))
+    enc = Decimal(str(getattr(bal, "encashed", 0) or 0))
+    tot = ent + carr
+    available = max(Decimal("0"), tot - tk - pd - enc)
+
+    if days_sold > available:
+        return error(f"Insufficient leave balance. You requested to sell {days_sold} days, but only have {available} available days.", 422)
+
+    if data.get("daily_rate"):
+        try:
+            daily_rate = Decimal(str(data["daily_rate"])).quantize(Decimal("0.01"))
+        except Exception:
+            daily_rate = Decimal("100.00")
+    else:
+        monthly_salary = Decimal(str(emp.basic_salary or 0))
+        if monthly_salary <= 0:
+            monthly_salary = Decimal("2500.00")
+        daily_rate = (monthly_salary / Decimal("22.0")).quantize(Decimal("0.01"))
+
+    total_amount = (days_sold * daily_rate).quantize(Decimal("0.01"))
+
+    # Reserve days in pending
+    bal.pending = Decimal(bal.pending or 0) + days_sold
+
+    ref_no = f"LENC-{year}-{secrets.token_hex(2).upper()}"
+    enc_obj = LeaveEncashment(
+        reference_no=ref_no,
+        employee_id=emp.id,
+        leave_type_id=leave_type_id,
+        year=year,
+        days_sold=days_sold,
+        daily_rate=daily_rate,
+        total_amount=total_amount,
+        accumulated_before=available,
+        accumulated_after=available - days_sold,
+        reason=data.get("reason"),
+        status="pending",
+        employee_signature=data.get("employee_signature") or (emp.signature_url if emp else None),
+    )
+    db.session.add(enc_obj)
+    db.session.commit()
+
+    audit(user, "leave_encashment_requested", "leave_encashments", enc_obj.id, new={"days_sold": float(days_sold), "amount": float(total_amount), "ref": ref_no})
+    return jsonify({"data": _serialize_leave_encashment(enc_obj)})
+
+
+@app.post("/api/v1/leave-encashments/<int:eid>/approve")
+@login_required
+def approve_leave_encashment(eid):
+    if role_of(request.user) not in ("super_admin", "hr_admin", "payroll"):
+        return error("Forbidden", 403)
+    enc_obj = db.session.get(LeaveEncashment, eid)
+    if not enc_obj:
+        return error("Not found", 404)
+    if enc_obj.status == "approved":
+        return error("Request has already been approved", 409)
+
+    bal = LeaveBalance.query.filter_by(employee_id=enc_obj.employee_id, leave_type_id=enc_obj.leave_type_id, year=enc_obj.year).first()
+    if bal:
+        bal.pending = max(Decimal("0"), Decimal(bal.pending or 0) - Decimal(enc_obj.days_sold or 0))
+        bal.encashed = Decimal(getattr(bal, "encashed", 0) or 0) + Decimal(enc_obj.days_sold or 0)
+
+    enc_obj.status = "approved"
+    enc_obj.decided_at = datetime.utcnow()
+    enc_obj.md_approved_at = datetime.utcnow()
+    enc_obj.md_approved_by = request.user.employee_id
+    if request.user.employee and request.user.employee.signature_url:
+        enc_obj.md_signature = request.user.employee.signature_url
+    db.session.commit()
+
+    audit(request.user, "leave_encashment_approved", "leave_encashments", enc_obj.id)
+    return jsonify({"data": _serialize_leave_encashment(enc_obj)})
+
+
+@app.post("/api/v1/leave-encashments/<int:eid>/reject")
+@login_required
+def reject_leave_encashment(eid):
+    if role_of(request.user) not in ("super_admin", "hr_admin", "payroll", "manager"):
+        return error("Forbidden", 403)
+    enc_obj = db.session.get(LeaveEncashment, eid)
+    if not enc_obj:
+        return error("Not found", 404)
+
+    bal = LeaveBalance.query.filter_by(employee_id=enc_obj.employee_id, leave_type_id=enc_obj.leave_type_id, year=enc_obj.year).first()
+    if bal and enc_obj.status == "pending":
+        bal.pending = max(Decimal("0"), Decimal(bal.pending or 0) - Decimal(enc_obj.days_sold or 0))
+
+    enc_obj.status = "rejected"
+    enc_obj.decided_at = datetime.utcnow()
+    data = request.get_json(silent=True) or {}
+    enc_obj.decision_note = data.get("notes") or enc_obj.decision_note
+    db.session.commit()
+
+    audit(request.user, "leave_encashment_rejected", "leave_encashments", enc_obj.id)
+    return jsonify({"data": _serialize_leave_encashment(enc_obj)})
+
+
+@app.post("/api/v1/leave-encashments/<int:eid>/approve-level")
+@login_required
+def approve_leave_encashment_level(eid):
+    user = request.user
+    role = role_of(user)
+    enc_obj = db.session.get(LeaveEncashment, eid)
+    if not enc_obj:
+        return error("Not found", 404)
+
+    data = request.get_json(silent=True) or {}
+    level = data.get("level")
+    sig_url = data.get("signature_url") or (user.employee.signature_url if user.employee else None)
+
+    if level == "hod":
+        enc_obj.hod_approved_by = user.employee_id
+        enc_obj.hod_approved_at = datetime.utcnow()
+        if sig_url: enc_obj.hod_signature = sig_url
+    elif level == "accountant":
+        enc_obj.accountant_approved_by = user.employee_id
+        enc_obj.accountant_approved_at = datetime.utcnow()
+        if sig_url: enc_obj.accountant_signature = sig_url
+    elif level == "md":
+        enc_obj.md_approved_by = user.employee_id
+        enc_obj.md_approved_at = datetime.utcnow()
+        if sig_url: enc_obj.md_signature = sig_url
+        bal = LeaveBalance.query.filter_by(employee_id=enc_obj.employee_id, leave_type_id=enc_obj.leave_type_id, year=enc_obj.year).first()
+        if bal:
+            bal.pending = max(Decimal("0"), Decimal(bal.pending or 0) - Decimal(enc_obj.days_sold or 0))
+            bal.encashed = Decimal(getattr(bal, "encashed", 0) or 0) + Decimal(enc_obj.days_sold or 0)
+        enc_obj.status = "approved"
+        enc_obj.decided_at = datetime.utcnow()
+
+    db.session.commit()
+    return jsonify({"data": _serialize_leave_encashment(enc_obj)})
+
+
+@app.get("/api/v1/leave-encashments/<int:eid>/letter/preview")
+@login_required
+def preview_leave_encashment_letter(eid):
+    enc_obj = db.session.get(LeaveEncashment, eid)
+    if not enc_obj:
+        return error("Not found", 404)
+    if role_of(request.user) == "employee" and enc_obj.employee_id != request.user.employee_id:
+        return error("Forbidden", 403)
+    import loan_and_encashment_letters
+    html_str = loan_and_encashment_letters.build_encashment_letter_html(enc_obj, standalone=False)
+    return jsonify({
+        "data": {
+            "id": enc_obj.id,
+            "reference_no": enc_obj.reference_no,
+            "status": enc_obj.status,
+            "html": html_str,
+        }
+    })
+
+
+@app.get("/api/v1/leave-encashments/<int:eid>/letter/print")
+@login_required
+def print_leave_encashment_letter(eid):
+    enc_obj = db.session.get(LeaveEncashment, eid)
+    if not enc_obj:
+        return error("Not found", 404)
+    if role_of(request.user) == "employee" and enc_obj.employee_id != request.user.employee_id:
+        return error("Forbidden", 403)
+    import loan_and_encashment_letters
+    auto_p = str(request.args.get("auto_print", "1")).lower() in ("1", "true", "yes")
+    html_page = loan_and_encashment_letters.build_encashment_letter_html(enc_obj, standalone=True, auto_print=auto_p)
+    resp = app.make_response(html_page)
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    return resp
+
+
+@app.get("/api/v1/leave-encashments/<int:eid>/letter/pdf")
+@login_required
+def download_leave_encashment_letter_pdf(eid):
+    enc_obj = db.session.get(LeaveEncashment, eid)
+    if not enc_obj:
+        return error("Not found", 404)
+    if role_of(request.user) == "employee" and enc_obj.employee_id != request.user.employee_id:
+        return error("Forbidden", 403)
+    import loan_and_encashment_letters
+    pdf_bytes = loan_and_encashment_letters.build_encashment_letter_pdf(enc_obj)
+    buffer = io.BytesIO(pdf_bytes)
+    filename = f"Leave_Encashment_{enc_obj.reference_no or enc_obj.id}.pdf"
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/pdf",
+    )
+
 
 
 # ---------------------------------------------------------------- recruitment
@@ -6796,6 +7394,19 @@ def approvals_inbox():
             "detail": l.reason or "Staff loan / salary advance",
             "status": l.status, "amount": float(l.principal), "requested_at": conv(l.created_at),
         })
+    encash_q = LeaveEncashment.query.filter_by(status="pending") if role in ("super_admin", "hr_admin", "payroll") else LeaveEncashment.query.filter(LeaveEncashment.id < 0)
+    for enc in encash_q.all():
+        e_emp = enc.employee
+        items.append({
+            "type": "encashment", "id": enc.id, "uid": f"encashment:{enc.id}",
+            "employee_id": enc.employee_id,
+            "employee_name": e_emp.full_name if e_emp else "—",
+            "department_name": e_emp.department.name if e_emp and e_emp.department else "—",
+            "title": f"{e_emp.full_name if e_emp else 'Employee'} – Sell {float(enc.days_sold)} Leave Day(s)",
+            "subtitle": f"GHS {float(enc.total_amount):,.2f} · {enc.leave_type.name if enc.leave_type else 'Annual Leave'}",
+            "detail": f"Leave Encashment: {float(enc.days_sold)} days @ GHS {float(enc.daily_rate):,.2f}/day. Remaining balance after sale: {float(enc.accumulated_after)} days.",
+            "status": enc.status, "amount": float(enc.total_amount), "requested_at": conv(enc.created_at),
+        })
     for corr in corr_q.all():
         emp = corr.employee
         items.append({
@@ -6834,6 +7445,13 @@ def decide_approval():
         corr.status = "rejected"
         db.session.commit()
         return jsonify({"data": serialize(corr, "corrections")})
+    if kind in ("encashment", "leave_encashment"):
+        if role_of(request.user) not in ("super_admin", "hr_admin", "payroll"):
+            return error("Forbidden", 403)
+        if decision == "approved":
+            return approve_leave_encashment(int(rid))
+        else:
+            return reject_leave_encashment(int(rid))
     if kind == "loan":
         if role_of(request.user) not in ("super_admin", "hr_admin", "payroll"):
             return error("Forbidden", 403)
