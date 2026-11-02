@@ -15,7 +15,7 @@ from decimal import Decimal, InvalidOperation
 from functools import wraps
 
 from urllib.parse import quote as url_quote
-from flask import Flask, request, jsonify, render_template, send_file, send_from_directory, abort
+from flask import Flask, request, jsonify, render_template, send_file, send_from_directory, abort, Response
 from flask_cors import CORS
 from sqlalchemy import or_, func, false, text, inspect as sqla_inspect
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -6508,6 +6508,86 @@ def save_auto_run_settings():
 
     db.session.commit()
     return success(None, "Auto-run roster settings saved successfully")
+
+
+@app.get("/api/v1/roster/print")
+@login_required
+def print_roster_view():
+    """Printable view of shift roster with Landscape and Portrait switching"""
+    from datetime import datetime, timedelta, date
+
+    week_start_str = request.args.get("week_start")
+    dept_id = request.args.get("department_id", "all")
+    orientation = request.args.get("orientation", "landscape").lower()
+    auto_print = request.args.get("auto_print", "0") == "1"
+
+    if orientation not in ["landscape", "portrait"]:
+        orientation = "landscape"
+
+    if week_start_str:
+        try:
+            week_start = datetime.strptime(week_start_str, "%Y-%m-%d").date()
+        except ValueError:
+            week_start = date.today()
+    else:
+        today = date.today()
+        week_start = today - timedelta(days=today.weekday())
+
+    if week_start.weekday() != 0:
+        week_start = week_start - timedelta(days=week_start.weekday())
+
+    from roster_pdf import build_roster_html
+    html_content = build_roster_html(
+        week_start,
+        dept_param=dept_id,
+        orientation=orientation,
+        auto_print=auto_print,
+        current_user=request.user
+    )
+    return Response(html_content, mimetype="text/html")
+
+
+@app.get("/api/v1/roster/pdf")
+@login_required
+def download_roster_pdf():
+    """Download shift roster as PDF in landscape or portrait"""
+    from datetime import datetime, timedelta, date
+
+    week_start_str = request.args.get("week_start")
+    dept_id = request.args.get("department_id", "all")
+    orientation = request.args.get("orientation", "landscape").lower()
+    if orientation not in ["landscape", "portrait"]:
+        orientation = "landscape"
+
+    if week_start_str:
+        try:
+            week_start = datetime.strptime(week_start_str, "%Y-%m-%d").date()
+        except ValueError:
+            week_start = date.today()
+    else:
+        today = date.today()
+        week_start = today - timedelta(days=today.weekday())
+
+    if week_start.weekday() != 0:
+        week_start = week_start - timedelta(days=week_start.weekday())
+
+    from roster_pdf import build_roster_pdf
+    pdf_bytes = build_roster_pdf(
+        week_start,
+        dept_param=dept_id,
+        orientation=orientation
+    )
+    buffer = io.BytesIO(pdf_bytes)
+
+    dept_slug = "all_depts" if str(dept_id).lower() in ["all", "", "none"] else f"dept_{dept_id}"
+    filename = f"Shift_Roster_{week_start.isoformat()}_{dept_slug}_{orientation}.pdf"
+
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=filename,
+        mimetype="application/pdf",
+    )
 
 
 # ---------------------------------------------------------------- attendance actions

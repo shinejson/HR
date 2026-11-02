@@ -189,6 +189,7 @@ function renderRosterGrid(container, data, isEmbedded) {
     const headerActions = (RosterState.canEdit
         ? '<button class="btn btn-accent" id="btn-auto-roster" title="Automatically generate and balance shifts across departments">' + icon("zap", 14) + ' Auto-Run Roster</button>'
         : '')
+      + '<button class="btn btn-soft" id="btn-print-export" title="Print roster or download as PDF in Landscape/Portrait">' + icon("printer", 14) + ' Print / PDF</button>'
       + (RosterState.canEdit
         ? '<button class="btn btn-soft" id="btn-bulk-assign" style="display:none">' + icon("check", 14) + ' Assign Selected</button>'
         : '')
@@ -232,6 +233,7 @@ function renderRosterGrid(container, data, isEmbedded) {
     + (isEmbedded && RosterState.canEdit
         ? '<button class="btn btn-accent btn-sm" id="btn-auto-roster">' + icon("zap", 13) + ' Auto-Run Roster</button>'
         : '')
+    + '<button class="btn btn-soft btn-sm" id="btn-print-export" style="font-size:12px" title="Print roster or download as PDF in Landscape/Portrait">' + icon("printer", 13) + ' Print / PDF</button>'
     + (isEmbedded && RosterState.canEdit
         ? '<button class="btn btn-soft btn-sm" id="btn-bulk-assign" style="display:none">' + icon("check", 13) + ' Assign Selected</button>'
         : '')
@@ -280,11 +282,16 @@ function renderRosterGrid(container, data, isEmbedded) {
         + '<span class="roster-dept-title">' + esc(group.deptName) + '</span>'
         + '<span class="chip teal" style="font-size:11px;font-weight:600;padding:2px 8px">' + memberCount + ' Team Member' + (memberCount > 1 ? 's' : '') + '</span>'
         + '</div>'
+        + '<div class="row" style="gap:6px;align-items:center">'
+        + '<button type="button" class="btn btn-ghost btn-sm btn-dept-print" data-dept-id="' + group.deptId + '" data-dept-name="' + esc(group.deptName) + '" style="font-size:11px;padding:3px 8px;height:26px" title="Print or export PDF for ' + esc(group.deptName) + '">'
+        + icon("printer", 12) + ' Print Dept'
+        + '</button>'
         + (RosterState.canEdit
             ? '<button type="button" class="btn btn-ghost btn-sm btn-dept-auto-schedule" data-dept-id="' + group.deptId + '" data-dept-name="' + esc(group.deptName) + '" style="font-size:11px;padding:3px 10px;height:26px" title="Auto-schedule shifts for ' + esc(group.deptName) + '">'
               + icon("zap", 12) + ' Auto-Schedule ' + esc(group.deptName)
               + '</button>'
             : '')
+        + '</div>'
         + '</div>'
         + '</td>'
         + '</tr>';
@@ -419,6 +426,21 @@ function bindRosterEvents(container, isEmbedded) {
       const deptId = Number(btn.dataset.deptId);
       const deptName = btn.dataset.deptName;
       openAutoGenerateModal(deptId, deptName, container, isEmbedded);
+    };
+  });
+
+  // Print / PDF Export buttons
+  container.querySelectorAll("#btn-print-export").forEach(btn => {
+    btn.onclick = () => openPrintExportModal(null, null);
+  });
+
+  // Per-department print buttons
+  container.querySelectorAll(".btn-dept-print").forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const deptId = btn.dataset.deptId;
+      const deptName = btn.dataset.deptName;
+      openPrintExportModal(deptId, deptName);
     };
   });
 
@@ -882,4 +904,104 @@ function openManageShiftsModal() {
       location.hash = "#/shifts";
     };
   }
+}
+
+/**
+ * PRINT & PDF EXPORT MODAL (Landscape & Portrait)
+ */
+function openPrintExportModal(preSelectedDeptId, preSelectedDeptName) {
+  const deptList = RosterState.departments || [];
+  const currentDeptId = preSelectedDeptId !== null && preSelectedDeptId !== undefined ? String(preSelectedDeptId) : String(RosterState.departmentId);
+  const weekStart = RosterState.weekStart || getMonday(new Date());
+
+  const deptOptions = '<option value="all"' + (currentDeptId === "all" ? ' selected' : '') + '>🏢 All Departments (Grouped Schedule)</option>'
+    + deptList.map(d => `<option value="${d.id}"${String(d.id) === currentDeptId ? ' selected' : ''}>${esc(d.name)}</option>`).join("");
+
+  const bodyHtml = '<div class="stack" style="gap:18px">'
+    + '<div class="card card-pad" style="background:var(--paper);padding:12px 16px;border-left:3px solid var(--teal)">'
+    + '<div style="font-weight:700;font-size:13px;display:flex;align-items:center;gap:6px">' + icon("printer", 15) + ' Print or Export Shift Roster</div>'
+    + '<div class="tiny muted" style="margin-top:2px">Generate official executive documents formatted with Airport West Hotel branding, department groupings, color-coded shift blocks, and sign-off lines.</div>'
+    + '</div>'
+
+    + '<div class="form-group">'
+    + '<label class="label">Scope of Export</label>'
+    + '<select class="select" id="export-dept-choice" style="width:100%;font-weight:600">'
+    + deptOptions
+    + '</select>'
+    + '</div>'
+
+    + '<div class="grid grid-2" style="gap:12px">'
+
+    // Card 1: Download PDF Landscape
+    + '<div class="strategy-card export-action-card" data-action="pdf" data-orient="landscape">'
+    + '<div class="strategy-icon" style="background:rgba(15,118,110,0.12);color:var(--teal)">📄</div>'
+    + '<div class="strategy-content">'
+    + '<div class="strategy-title">Download PDF (Landscape)</div>'
+    + '<div class="strategy-desc"><b>Recommended for 7-day rosters.</b> Horizontal A4 document giving full column width for all daily shifts and staff.</div>'
+    + '<button type="button" class="btn btn-accent btn-sm" style="margin-top:8px;pointer-events:none">' + icon("download", 13) + ' Download PDF</button>'
+    + '</div>'
+    + '</div>'
+
+    // Card 2: Download PDF Portrait
+    + '<div class="strategy-card export-action-card" data-action="pdf" data-orient="portrait">'
+    + '<div class="strategy-icon" style="background:rgba(99,102,241,0.12);color:#6366f1">📄</div>'
+    + '<div class="strategy-content">'
+    + '<div class="strategy-title">Download PDF (Portrait)</div>'
+    + '<div class="strategy-desc">Vertical A4 layout suitable for clipboards, binders, or standard physical notice boards.</div>'
+    + '<button type="button" class="btn btn-soft btn-sm" style="margin-top:8px;pointer-events:none">' + icon("download", 13) + ' Download PDF</button>'
+    + '</div>'
+    + '</div>'
+
+    // Card 3: Print View Landscape
+    + '<div class="strategy-card export-action-card" data-action="print" data-orient="landscape">'
+    + '<div class="strategy-icon" style="background:rgba(234,88,12,0.12);color:#ea580c">🖨️</div>'
+    + '<div class="strategy-content">'
+    + '<div class="strategy-title">Print View (Landscape)</div>'
+    + '<div class="strategy-desc">Opens the clean printable view in a new browser tab with orientation toggle and print dialog ready.</div>'
+    + '<button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px;pointer-events:none;border:1px solid var(--line)">' + icon("printer", 13) + ' Open Print View</button>'
+    + '</div>'
+    + '</div>'
+
+    // Card 4: Print View Portrait
+    + '<div class="strategy-card export-action-card" data-action="print" data-orient="portrait">'
+    + '<div class="strategy-icon" style="background:rgba(124,58,237,0.12);color:#7c3aed">🖨️</div>'
+    + '<div class="strategy-content">'
+    + '<div class="strategy-title">Print View (Portrait)</div>'
+    + '<div class="strategy-desc">Opens vertical printable view in a new tab with ready-to-print browser dialog.</div>'
+    + '<button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px;pointer-events:none;border:1px solid var(--line)">' + icon("printer", 13) + ' Open Print View</button>'
+    + '</div>'
+    + '</div>'
+
+    + '</div>'
+
+    + '<div class="row-between" style="margin-top:8px">'
+    + '<button type="button" class="btn btn-ghost" data-close-modal>Close</button>'
+    + '<span class="tiny muted">All exports include company header, department sections, and approval signatures.</span>'
+    + '</div>'
+    + '</div>';
+
+  openModal({
+    title: "Print & Export Shift Roster",
+    sub: preSelectedDeptName ? `Exporting for ${preSelectedDeptName}` : "Download PDF or open printable view",
+    body: bodyHtml,
+    wide: true,
+  });
+
+  document.querySelectorAll(".export-action-card").forEach(card => {
+    card.onclick = () => {
+      const action = card.dataset.action;
+      const orient = card.dataset.orient;
+      const deptChoice = document.getElementById("export-dept-choice").value;
+      const token = API.token ? `&token=${encodeURIComponent(API.token)}` : '';
+
+      if (action === "pdf") {
+        const url = `/api/v1/roster/pdf?week_start=${weekStart}&department_id=${deptChoice}&orientation=${orient}${token}`;
+        window.open(url, "_blank");
+        toast(`Generating ${orient} PDF download…`, "teal");
+      } else if (action === "print") {
+        const url = `/api/v1/roster/print?week_start=${weekStart}&department_id=${deptChoice}&orientation=${orient}&auto_print=1${token}`;
+        window.open(url, "_blank");
+      }
+    };
+  });
 }
