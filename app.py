@@ -17,7 +17,8 @@ from functools import wraps
 from urllib.parse import quote as url_quote
 from flask import Flask, request, jsonify, render_template, send_file, send_from_directory, abort, Response
 from flask_cors import CORS
-from sqlalchemy import or_, func, false, text, inspect as sqla_inspect
+from sqlalchemy import or_, func, false, text, inspect as sqla_inspect, event
+from sqlalchemy.engine import Engine
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
@@ -91,6 +92,17 @@ app.secret_key = _load_secret_key()
 
 db.init_app(app)
 CORS(app)
+
+
+@event.listens_for(Engine, "connect")
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    if "sqlite" in app.config.get("SQLALCHEMY_DATABASE_URI", ""):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.execute("PRAGMA cache_size=-64000;")
+        cursor.execute("PRAGMA foreign_keys=ON;")
+        cursor.close()
 
 
 def ensure_schema():
