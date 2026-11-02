@@ -162,7 +162,8 @@ Views.dashboard = async function (root) {
       + '<button class="quick-tile" id="ql-profile"><span class="qt-icon teal">' + icon("user", 16) + '</span><div><b>My 360° File</b><span>Contracts & skills</span></div></button>'
       + '<button class="quick-tile" id="ql-letter"><span class="qt-icon accent">' + icon("file", 16) + '</span><div><b>Employment Letter</b><span>View, sign & print PDF</span></div></button>'
       + '<button class="quick-tile" id="ql-leave"><span class="qt-icon blue">' + icon("calendar", 16) + '</span><div><b>Request Leave</b><span>Book time off</span></div></button>'
-      + '<button class="quick-tile" id="ql-payslips"><span class="qt-icon purple">' + icon("wallet", 16) + '</span><div><b>Payslips</b><span>Compensation & tax</span></div></button>'
+      + '<button class="quick-tile" id="ql-loans"><span class="qt-icon purple">' + icon("wallet", 16) + '</span><div><b>Staff Loans</b><span>Request & track loans</span></div></button>'
+      + '<button class="quick-tile" id="ql-payslips"><span class="qt-icon teal">' + icon("receipt", 16) + '</span><div><b>Payslips</b><span>Compensation & tax</span></div></button>'
       + '<button class="quick-tile" id="ql-cmd"><span class="qt-icon teal">' + icon("zap", 16) + '</span><div><b>Quick Jump</b><span>Press Ctrl+K / ⌘K</span></div></button>'
       + '</div>';
 
@@ -203,6 +204,11 @@ Views.dashboard = async function (root) {
     const qa = root.querySelector("#quick-approvals");
     if (qa) qa.onclick = () => go("approvals");
     root.querySelector("#ql-profile").onclick = () => { if (Store.user && Store.user.employee_id) openEmployeeProfile(Store.user.employee_id); else go("settings"); };
+    const qlLoans = root.querySelector("#ql-loans");
+    if (qlLoans) qlLoans.onclick = () => {
+      if (typeof window.openLoanRequestModal === "function") window.openLoanRequestModal(Store.user && Store.user.employee_id);
+      else go("payroll/loans");
+    };
     const qlLet = root.querySelector("#ql-letter");
     if (qlLet) qlLet.onclick = () => go("employment-letters");
     const dashLet = root.querySelector("#dash-open-my-letter");
@@ -509,21 +515,21 @@ async function drawEmployees(root) {
         { label: "Work mode", key: "work_location", render: r => '<span class="pill-tag" style="text-transform:capitalize">' + esc(r.work_location || "office") + '</span>' },
         { label: "Category", key: "contract_type", render: r => '<span class="chip teal" style="font-size:10.5px">' + esc(r.category_label || (r.contract_type || "").replace("_", " ")) + '</span>' + (r.staff_category ? '<div class="tiny muted" style="margin-top:2px">' + esc(r.staff_category) + '</div>' : '') },
         { label: "Joined", key: "hire_date", render: r => fmtDate(r.hire_date) },
-        {
-          label: "Status", key: "status",
-          render: r => canManage
-            ? '<button class="btn btn-sm btn-ghost" data-emp-status="' + r.id + '" title="Click to change employment status" style="padding:2px 8px;height:auto;gap:4px">' + chip(r.status) + ' ' + icon("refresh", 10) + '</button>'
-            : chip(r.status),
-        },
+        { label: "Status", key: "status", render: r => chip(r.status) },
         {
           label: "", class: "right", sortable: false,
           render: r => '<div class="row" style="justify-content:flex-end;gap:4px">'
-            + '<button class="btn btn-sm btn-ghost" title="View employee reports" data-emp-reports="' + r.id + '">' + icon("chart", 12) + ' Reports</button>'
-            + '<button class="btn btn-sm btn-soft" title="View & print category employment letter" data-emp-letter="' + r.id + '">' + icon("printer", 12) + ' Letter</button>'
-            + (canManage ? '<button class="btn btn-sm btn-ghost" title="Change employment status" data-emp-status="' + r.id + '">' + icon("refresh", 12) + ' Status</button>' : '')
-            + (canManage ? '<button class="btn btn-sm btn-ghost" title="Send or reset portal username & password" data-emp-creds="' + r.id + '">' + icon("key", 12) + '</button>' : '')
-            + (canManage ? '<button class="icon-btn" style="width:28px;height:28px;color:var(--red)" title="Delete employee" data-emp-del="' + r.id + '">' + icon("trash", 13) + '</button>' : '')
-            + '<button class="btn btn-sm btn-ghost" data-open-emp="' + r.id + '">360° ' + icon("arrowRight", 12) + '</button>'
+            + '<div class="dropdown-container" style="position:relative">'
+            + '<button class="btn btn-sm btn-ghost" data-emp-actions="' + r.id + '" title="Actions menu">' + icon("more", 14) + ' Actions</button>'
+            + '<div class="dropdown-menu" data-emp-menu="' + r.id + '" style="display:none;position:absolute;right:0;top:100%;z-index:10;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow-lg);min-width:180px;margin-top:4px">'
+            + '<button class="dropdown-item" data-emp-reports="' + r.id + '">' + icon("chart", 14) + ' Reports</button>'
+            + '<button class="dropdown-item" data-emp-letter="' + r.id + '">' + icon("printer", 14) + ' Letter</button>'
+            + (canManage ? '<button class="dropdown-item" data-emp-status="' + r.id + '">' + icon("refresh", 14) + ' Change Status</button>' : '')
+            + (canManage ? '<button class="dropdown-item" data-emp-creds="' + r.id + '">' + icon("key", 14) + ' Credentials</button>' : '')
+            + '<div class="dropdown-divider"></div>'
+            + '<button class="dropdown-item" data-open-emp="' + r.id + '">' + icon("user", 14) + ' View 360°</button>'
+            + (canManage ? '<button class="dropdown-item" style="color:var(--red)" data-emp-del="' + r.id + '">' + icon("trash", 14) + ' Delete</button>' : '')
+            + '</div></div>'
             + '</div>',
         },
       ],
@@ -582,6 +588,23 @@ async function drawEmployees(root) {
     empState.viewMode = b.dataset.empView;
     drawEmployees(root);
   });
+  
+  // Dropdown menu toggle
+  onDelegate(root, "click", "[data-emp-actions]", (el, ev) => {
+    ev.stopPropagation();
+    const menu = root.querySelector('[data-emp-menu="' + el.dataset.empActions + '"]');
+    const allMenus = root.querySelectorAll('[data-emp-menu]');
+    allMenus.forEach(m => { if (m !== menu) m.style.display = 'none'; });
+    if (menu) menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+  });
+  
+  // Close dropdown when clicking outside
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('[data-emp-actions]')) {
+      root.querySelectorAll('[data-emp-menu]').forEach(m => m.style.display = 'none');
+    }
+  });
+  
   onDelegate(root, "click", "[data-open-emp]", (el, ev) => {
     ev.stopPropagation();
     go("employees/" + el.dataset.openEmp);

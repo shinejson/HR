@@ -31,12 +31,14 @@ const NAV = [
     items: [
       { id: "attendance", label: "Attendance", icon: "clock" },
       { id: "leave", label: "Leave", icon: "calendar" },
+      { id: "leave", label: "Sell Leaves", icon: "dollar", subTab: "encashment" },
     ],
   },
   {
     label: "Compensation", icon: "wallet",
     items: [
       { id: "payroll", label: "Payroll", icon: "wallet", roles: ["super_admin", "hr_admin", "hr_officer", "payroll", "manager", "employee"] },
+      { id: "payroll", label: "Staff Loans", icon: "wallet", subTab: "loans", roles: ["super_admin", "hr_admin", "hr_officer", "payroll", "manager", "employee"] },
       { id: "expenses", label: "Expenses", icon: "receipt", roles: ["super_admin", "hr_admin", "hr_officer", "payroll", "manager", "employee"] },
     ],
   },

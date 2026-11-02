@@ -517,7 +517,10 @@ function openCorrectionForm() {
 const leaveState = { tab: "overview", month: new Date(), selectedEmployee: null };
 const leaveTabs = [["overview", "Balances & requests"], ["encashment", "Sell Leaves (Encashment)"], ["calendar", "Team calendar"], ["approvals", "Approvals"], ["config", "Types & holidays"]];
 
-Views.leave = async function (root) {
+Views.leave = async function (root, params) {
+  if (params && params[0] && ["balance", "requests", "calendar", "types", "holidays", "encashment"].includes(params[0])) {
+    leaveState.tab = params[0];
+  }
   root.innerHTML = pageHead("Leave", "Loading leave position…") + spinners(3);
   try {
     const [reqRes, typeRes, holRes, inboxRes, balRes] = await Promise.all([
@@ -1291,7 +1294,10 @@ function onFinanceDelegate(container, eventType, selector, handler) {
   container.addEventListener(eventType, listener);
 }
 
-Views.payroll = async function (root) {
+Views.payroll = async function (root, params) {
+  if (params && params[0] && ["runs", "payslips", "loans", "config"].includes(params[0])) {
+    payState.tab = params[0];
+  }
   root.innerHTML = pageHead("Payroll", "Loading payroll data…") + spinners(3);
   try {
     const isSelfService = Store.isRole("employee", "manager");
@@ -1303,12 +1309,48 @@ Views.payroll = async function (root) {
         ...r,
         period_label: r.period_month && r.period_year ? monthName(r.period_month) + " " + r.period_year : ("Run #" + r.run_id),
       }));
-      const loans = loanRes.data;
-      root.innerHTML = pageHead("Payroll", "Your payslips and salary details.", "", "Compensation")
-        + '<div class="grid grid-3" style="margin-bottom:18px">'
+      const loans = loanRes.data || [];
+      const totalLoanBal = loans.filter(l => l.status === "active").reduce((sum, l) => sum + Number(l.balance || 0), 0);
+      root.innerHTML = pageHead(
+        "Payroll & Loans",
+        "Your payslips, salary details, and staff loans.",
+        '<button class="btn btn-accent" id="ess-request-loan">' + icon("wallet", 14) + ' Request Loan / Advance</button>',
+        "Compensation"
+      )
+        + '<div class="grid grid-4" style="margin-bottom:18px">'
         + kpiCard({ label: "Latest net pay", value: money(slips[0] ? slips[0].net : 0), icon: "wallet", tone: "teal", foot: slips[0] ? slips[0].period_label : "Most recent payslip" })
         + kpiCard({ label: "Payslips available", value: slips.length, icon: "file", tone: "blue", foot: "Secure ESS downloads" })
         + kpiCard({ label: "Active advances", value: loans.filter(l => l.status === "active").length, icon: "receipt", tone: "accent", foot: "Salary advances on record" })
+        + kpiCard({ label: "Loan balance remaining", value: money(totalLoanBal), icon: "wallet", tone: "purple", foot: "Repayable via monthly payroll" })
+        + '</div>'
+        + '<div style="margin-bottom:24px;">'
+        + renderTable({
+          id: "my-loans-table",
+          title: "My Staff Loans & Salary Advances",
+          exportName: "my-loans",
+          columns: [
+            { label: "Ref / Loan", render: r => '<b>' + esc(r.reference_no || ("LOAN-" + r.id)) + '</b><div class="tiny muted" style="text-transform:capitalize">' + esc((r.loan_type || "").replace(/_/g, " ")) + '</div>' },
+            { label: "Principal", class: "right mono", render: r => money(r.principal) },
+            { label: "Monthly deduction", class: "right mono", render: r => money(r.instalment) },
+            { label: "Repayment Progress", render: r => {
+              const p = Number(r.principal || 0);
+              const b = Number(r.balance !== undefined ? r.balance : p);
+              const paid = Math.max(0, p - b);
+              const pct = p > 0 ? Math.round((paid / p) * 100) : 0;
+              return '<div style="min-width:140px"><div class="row-between tiny muted" style="margin-bottom:3px"><span>' + pct + '%</span><span class="mono">' + money(paid) + '</span></div>'
+                + '<div class="loan-progress-wrap"><div class="loan-progress-bar" style="width:' + pct + '%"></div></div></div>';
+            } },
+            { label: "Remaining", class: "right mono", render: r => '<b style="color:' + (Number(r.balance) <= 0 ? 'var(--green)' : 'inherit') + '">' + money(r.balance) + '</b>' },
+            { label: "Status", render: r => chip(r.status) },
+            { label: "", class: "right", sortable: false, render: r => {
+              return '<button class="btn btn-sm btn-ghost" data-ess-loan-track="' + r.id + '">' + icon("activity", 12) + ' Track</button> '
+                + (r.status === 'active' || r.status === 'completed' || r.approved_at ? '<button class="btn btn-sm btn-soft" data-ess-loan-letter="' + r.id + '">' + icon("fileText", 12) + ' Agreement</button>' : '');
+            } },
+          ],
+          rows: loans,
+          emptyTitle: "No loans or advances on record",
+          emptyText: "Need a salary advance or staff loan? Click 'Request Loan / Advance' above.",
+        })
         + '</div>'
         + renderTable({
           id: "my-payslips",
@@ -1325,7 +1367,18 @@ Views.payroll = async function (root) {
             { label: "", class: "right", sortable: false, render: r => '<button class="btn btn-sm btn-ghost" data-payslip="' + r.id + '">' + icon("eye", 13) + ' View</button>' },
           ], rows: slips, emptyTitle: "No payslips yet",
         });
+
+      const essReq = root.querySelector("#ess-request-loan");
+      if (essReq) essReq.onclick = () => {
+        if (typeof window.openLoanRequestModal === "function") window.openLoanRequestModal(Store.user && Store.user.employee_id);
+      };
       onFinanceDelegate(root, "click", "[data-payslip]", (b) => openPayslipModal(Number(b.dataset.payslip)));
+      onFinanceDelegate(root, "click", "[data-ess-loan-track]", (b) => {
+        if (typeof window.openLoanTrackingModal === "function") window.openLoanTrackingModal(b.dataset.essLoanTrack);
+      });
+      onFinanceDelegate(root, "click", "[data-ess-loan-letter]", (b) => {
+        if (typeof window.openLoanLetterModal === "function") window.openLoanLetterModal(b.dataset.essLoanLetter);
+      });
       return;
     }
 

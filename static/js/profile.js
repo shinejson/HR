@@ -495,6 +495,7 @@ function openCareerEventModal(e, onSaved) {
 async function viewEmployeeDetail(root, id, initialTab) {
   root.innerHTML = pageHead("Employee Profile", "Loading employee record…") + spinners(4);
   let activeTab = initialTab || "overview";
+  if (activeTab === "loans") activeTab = "compensation";
   let showSensitive = false;
 
   async function loadAndRender() {
@@ -520,7 +521,7 @@ async function viewEmployeeDetail(root, id, initialTab) {
         ["family", "Family & Emergency", (e.contacts || []).length + (e.dependants || []).length],
       ];
       if (e.can_view_compensation) {
-        tabs.push(["compensation", "Pay & Banking", (e.payslips || []).length]);
+        tabs.push(["compensation", "Pay, Loans & Banking", (e.payslips || []).length + (e.loans || []).length]);
       }
       tabs.push(
         ["time", "Time & Leave"],
@@ -649,6 +650,33 @@ async function viewEmployeeDetail(root, id, initialTab) {
                 + '<div class="body"><b>' + esc(c.name) + ' <span class="chip teal" style="margin-left:6px">' + esc(c.type || "emergency") + '</span></b>'
                 + '<span>' + esc(c.relationship || "Contact") + ' · ' + esc(c.phone || "—") + (c.email ? " · " + esc(c.email) : "") + '</span></div></div>').join("")
               : '<p class="small muted">No emergency contacts on file. Please add at least one emergency contact.</p>')
+          + '</div></div>'
+
+          // Staff Loans & Advances overview card
+          + '<div class="card"><div class="card-head"><div><h3>Staff Loans & Salary Advances</h3><div class="sub">Active loans and real-time repayment tracking</div></div>'
+          + '<div class="right">'
+          + (canSelfOrHr ? '<button class="btn btn-sm btn-accent" id="overview-request-loan">' + icon("plus", 13) + ' Request Loan</button>' : '')
+          + (e.can_view_compensation ? '<button class="btn btn-sm btn-ghost" data-switch-tab="compensation">View All →</button>' : '')
+          + '</div></div><div class="card-body">'
+          + ((e.loans && e.loans.length)
+              ? '<div class="stack" style="gap:10px">' + e.loans.map(l => {
+                  const p = Number(l.principal || 0);
+                  const b = Number(l.balance !== undefined ? l.balance : p);
+                  const paid = Math.max(0, p - b);
+                  const pct = p > 0 ? Math.round((paid / p) * 100) : 0;
+                  return '<div style="padding:10px;background:var(--paper-2);border-radius:8px;border:1px solid var(--line)">'
+                    + '<div class="row-between"><div><b class="small" style="text-transform:capitalize">' + esc((l.loan_type || "").replace(/_/g, " ")) + ' · <span class="mono">' + esc(l.reference_no || ("LOAN-" + l.id)) + '</span></b>'
+                    + '<div class="tiny muted" style="margin-top:2px">Principal ' + fmtMoney(l.principal) + ' · ' + fmtMoney(l.instalment) + '/mo</div></div>'
+                    + '<div class="right" style="text-align:right"><b class="mono small" style="color:' + (b <= 0 ? 'var(--green)' : 'inherit') + '">' + fmtMoney(l.balance) + ' left</b><div>' + chip(l.status) + '</div></div></div>'
+                    + '<div class="loan-progress-wrap" style="margin-top:8px;max-width:100%"><div class="loan-progress-bar" style="width:' + pct + '%"></div></div>'
+                    + '<div class="row-between" style="margin-top:6px;font-size:11px"><span class="muted">' + pct + '% repaid (' + fmtMoney(paid) + ')</span>'
+                    + '<div style="display:flex;gap:6px">'
+                    + '<button class="btn btn-sm btn-ghost" data-profile-loan-track="' + l.id + '">' + icon("activity", 11) + ' Track</button>'
+                    + (l.status === 'active' || l.status === 'completed' || l.approved_at ? '<button class="btn btn-sm btn-soft" data-profile-loan-letter="' + l.id + '">' + icon("fileText", 11) + ' Letter</button>' : '')
+                    + '</div></div></div>';
+                }).join("") + '</div>'
+              : ('<div class="small muted" style="margin-bottom:12px">No active staff loans or salary advances on file.</div>'
+                 + (canSelfOrHr ? '<button class="btn btn-sm btn-accent" id="overview-request-loan-empty">' + icon("wallet", 13) + ' Request a Staff Loan or Advance</button>' : '')))
           + '</div></div>'
 
           + '<div class="card"><div class="card-head"><div><h3>Active Goals & Compliance</h3><div class="sub">Current objectives and policy sign-offs</div></div>'
@@ -810,7 +838,7 @@ async function viewEmployeeDetail(root, id, initialTab) {
               : '')
           + '<div class="divider"></div>'
           + '<div class="row-between" style="margin-bottom:8px;"><div class="tiny muted" style="text-transform:uppercase;letter-spacing:.1em">Staff Loans & Advances</div>'
-          + '<button class="btn btn-sm btn-ghost" id="profile-request-loan">' + icon("plus", 12) + ' Request Loan</button></div>'
+          + (canSelfOrHr ? '<button class="btn btn-sm btn-accent" id="profile-request-loan">' + icon("plus", 12) + ' Request Loan / Advance</button>' : '') + '</div>'
           + ((e.loans && e.loans.length)
               ? e.loans.map(l => {
                   const p = Number(l.principal || 0);
@@ -828,7 +856,8 @@ async function viewEmployeeDetail(root, id, initialTab) {
                     + (l.status === 'active' || l.status === 'completed' || l.approved_at ? '<button class="btn btn-sm btn-soft" data-profile-loan-letter="' + l.id + '">' + icon("fileText", 11) + ' Agreement Letter</button>' : '')
                     + '</div></div></div>';
                 }).join("")
-              : '<div class="small muted">No active staff loans or salary advances.</div>')
+              : ('<div class="small muted" style="margin-bottom:8px">No active staff loans or salary advances.</div>'
+                 + (canSelfOrHr ? '<button class="btn btn-sm btn-accent" id="profile-request-loan-empty">' + icon("wallet", 12) + ' Request Loan / Advance</button>' : '')))
           + '</div></div>'
 
           + '<div class="card"><div class="card-head"><div><h3>Salary Bank & MoMo Accounts</h3><div class="sub">Disbursement accounts for monthly payroll</div></div>'
@@ -1057,7 +1086,9 @@ async function viewEmployeeDetail(root, id, initialTab) {
       /* ===================== HERO + PAGE SHELL ===================== */
       const topActions = '<div class="row" style="flex-wrap:wrap;gap:8px">'
         + (!e.is_self ? '<button class="btn btn-ghost" onclick="go(\'employees\')">' + icon("arrowLeft", 14) + ' Directory</button>' : '')
-        + '<button class="btn btn-teal" id="btn-emp-letter">' + icon("printer", 14) + ' Employment Letter</button>'
+        + (canSelfOrHr ? '<button class="btn btn-accent" id="btn-top-request-loan">' + icon("wallet", 14) + ' Request Loan</button>' : '')
+        + (canSelfOrHr ? '<button class="btn btn-teal" id="btn-top-sell-leave">' + icon("calendar", 14) + ' Sell Leaves</button>' : '')
+        + '<button class="btn btn-soft" id="btn-emp-letter">' + icon("printer", 14) + ' Employment Letter</button>'
         + (canManage ? '<button class="btn btn-soft" id="btn-emp-send-creds">' + icon("key", 14) + ' Send Credentials</button>' : '')
         + '<button class="btn btn-ghost" id="btn-print-profile">' + icon("file", 14) + ' Print summary</button>'
         + (canSelfOrHr ? '<button class="btn btn-ghost" id="btn-self-edit">' + icon("user", 14) + ' Edit personal</button>' : '')
@@ -1116,15 +1147,45 @@ async function viewEmployeeDetail(root, id, initialTab) {
         + '  <div class="kpi"><div class="label">Compliance & Assets</div><div class="value" style="font-size:22px">' + ackedCount + '/' + policyList.length + '</div><div class="sub">' + activeAssets.length + ' asset(s) in custody</div></div>'
         + '</div>'
 
-        // Tabs
-        + '<div class="tabs" style="margin-bottom:18px">' + tabs.map(t =>
+        // Tabs with navigation
+        + '<div class="tabs-wrapper">'
+        + '<button class="tabs-nav-btn" id="profile-tabs-prev" title="Previous">' + icon("chevronLeft", 14) + '</button>'
+        + '<div class="tabs-container-scroll">'
+        + '<div class="tabs" id="profile-tabs-container" style="margin-bottom:18px">' + tabs.map(t =>
             '<button class="tab ' + (activeTab === t[0] ? "active" : "") + '" data-tab="' + t[0] + '">' + esc(t[1])
             + (t[2] !== undefined ? '<span class="count">' + t[2] + '</span>' : '') + '</button>'
           ).join("") + '</div>'
+        + '</div>'
+        + '<button class="tabs-nav-btn" id="profile-tabs-next" title="Next">' + icon("chevronRight", 14) + '</button>'
+        + '</div>'
         + tabBody
         + '</div>';
 
       /* ===================== BIND INTERACTIONS ===================== */
+      // Tab navigation handlers
+      const tabsContainer = root.querySelector("#profile-tabs-container");
+      const prevBtn = root.querySelector("#profile-tabs-prev");
+      const nextBtn = root.querySelector("#profile-tabs-next");
+      
+      if (prevBtn && nextBtn && tabsContainer) {
+        prevBtn.onclick = () => {
+          tabsContainer.scrollBy({ left: -200, behavior: 'smooth' });
+        };
+        nextBtn.onclick = () => {
+          tabsContainer.scrollBy({ left: 200, behavior: 'smooth' });
+        };
+        
+        // Update button states based on scroll position
+        const updateNavButtons = () => {
+          const { scrollLeft, scrollWidth, clientWidth } = tabsContainer;
+          prevBtn.disabled = scrollLeft <= 0;
+          nextBtn.disabled = scrollLeft + clientWidth >= scrollWidth - 1;
+        };
+        
+        tabsContainer.addEventListener('scroll', updateNavButtons);
+        updateNavButtons();
+      }
+
       root.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { activeTab = b.dataset.tab; loadAndRender(); });
       root.querySelectorAll("[data-switch-tab]").forEach(b => b.onclick = () => { activeTab = b.dataset.switchTab; loadAndRender(); });
       root.querySelectorAll("[data-jump-emp]").forEach(el => el.onclick = () => go("employees/" + el.dataset.jumpEmp));
@@ -1366,10 +1427,11 @@ async function viewEmployeeDetail(root, id, initialTab) {
       });
 
       // Profile Loan Actions
-      const profReqLoan = root.querySelector("#profile-request-loan");
-      if (profReqLoan) profReqLoan.onclick = () => {
-        if (typeof window.openLoanRequestModal === "function") window.openLoanRequestModal(e.id);
-      };
+      root.querySelectorAll("#profile-request-loan, #profile-request-loan-empty, #overview-request-loan, #overview-request-loan-empty, #btn-top-request-loan").forEach(btn => {
+        btn.onclick = () => {
+          if (typeof window.openLoanRequestModal === "function") window.openLoanRequestModal(e.id);
+        };
+      });
 
       onDelegate(pWrap, "click", "[data-profile-loan-track]", (b) => {
         if (typeof window.openLoanTrackingModal === "function") window.openLoanTrackingModal(b.dataset.profileLoanTrack);
@@ -1380,10 +1442,11 @@ async function viewEmployeeDetail(root, id, initialTab) {
       });
 
       // Profile Sell Leaves
-      const profSellLeave = root.querySelector("#profile-sell-leave");
-      if (profSellLeave) profSellLeave.onclick = () => {
-        if (typeof window.openLeaveEncashmentModal === "function") window.openLeaveEncashmentModal(e.id);
-      };
+      root.querySelectorAll("#profile-sell-leave, #btn-top-sell-leave").forEach(btn => {
+        btn.onclick = () => {
+          if (typeof window.openLeaveEncashmentModal === "function") window.openLeaveEncashmentModal(e.id);
+        };
+      });
 
       onDelegate(pWrap, "click", "[data-profile-encash-letter]", (b) => {
         if (typeof window.openLeaveEncashmentLetterModal === "function") window.openLeaveEncashmentLetterModal(b.dataset.profileEncashLetter);

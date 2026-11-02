@@ -435,6 +435,47 @@ td.signin-browser, th.signin-browser { min-width: 260px; vertical-align: middle;
   max-width: 100%;
 }
 
+/* Dropdown menu styles */
+.dropdown-container { position: relative; display: inline-block; }
+.dropdown-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 100;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  min-width: 200px;
+  margin-top: 4px;
+  padding: 6px 0;
+}
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 16px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  text-align: left;
+  transition: background 0.15s;
+}
+.dropdown-item:hover {
+  background: var(--paper-2);
+}
+.dropdown-item:active {
+  background: var(--line);
+}
+.dropdown-divider {
+  height: 1px;
+  background: var(--line);
+  margin: 6px 0;
+}
+
 td .person { display: flex; align-items: center; gap: 10px; }
 td .person b { display: block; font-weight: 500; font-size: 12.5px; }
 td .person span { display: block; font-size: 10.5px; color: var(--muted-2); }
