@@ -14,6 +14,7 @@ from sqlalchemy import or_, and_
 from models import (
     db, Company, Department, Employee, Attendance, LeaveBalance, LeaveRequest,
     Payslip, PayrollRun, Appraisal, AppraisalCycle, Goal, Training, TrainingEnrolment, Contract, Document,
+    Loan, LoanRepayment, LeaveEncashment, LeaveType,
 )
 
 reports_bp = Blueprint("employee_reports", __name__, url_prefix="/api/v1/employee-reports")
@@ -21,6 +22,8 @@ reports_bp = Blueprint("employee_reports", __name__, url_prefix="/api/v1/employe
 ORGANISATION_ROLES = {"super_admin", "hr_admin", "hr_officer", "payroll", "auditor"}
 HR_ROLES = {"super_admin", "hr_admin", "hr_officer", "auditor"}
 PAYROLL_ROLES = {"super_admin", "hr_admin", "payroll", "auditor"}
+FINANCE_HR_ROLES = {"super_admin", "hr_admin", "hr_officer", "payroll", "auditor"}
+ENCASHMENT_ROLES = {"super_admin", "hr_admin", "hr_officer", "payroll", "auditor", "manager"}
 
 # `date_field` is an explicit reporting convention, not a generic created-at
 # filter. The UI displays its label so users know exactly what a period means.
@@ -43,10 +46,18 @@ REPORT_TYPES = [
     {"key": "leave-balances", "title": "Leave balance report", "icon": "calendar", "group": "Time & absence",
      "description": "Annual entitlement, carry-over, days taken, pending days and remaining balance.",
      "scope": "both", "year_filter": True},
+    {"key": "leave-encashment", "title": "Leave encashment audit", "icon": "receipt", "group": "Time & absence",
+     "description": "Sold leave records, days encashed, daily compensation rates, payout amounts and balance deductions.",
+     "scope": "both", "date_field": "created_at", "date_label": "Application date", "year_filter": True,
+     "status_label": "Encashment status", "statuses": ["pending", "approved", "rejected", "paid"]},
     {"key": "payroll", "title": "Payroll report", "icon": "wallet", "group": "Compensation",
      "description": "Payslip earnings, PAYE, SSNIT, other deductions and net pay by payroll period.",
      "scope": "both", "date_field": "period_start", "date_label": "Payroll month",
      "status_label": "Payroll status", "statuses": ["draft", "calculated", "approved", "paid"]},
+    {"key": "loans", "title": "Staff loans & repayment ledger", "icon": "wallet", "group": "Compensation",
+     "description": "Staff loan records, principal, monthly deductions, repayment history and real-time outstanding balances.",
+     "scope": "both", "date_field": "start_date", "date_label": "Loan start date",
+     "status_label": "Loan status", "statuses": ["pending", "active", "completed", "rejected"]},
     {"key": "performance", "title": "Performance report", "icon": "target", "group": "Talent",
      "description": "Appraisal scores, review comments and employee goals with progress.",
      "scope": "both", "date_field": "start_date", "date_label": "Review start / goal due date",
@@ -145,8 +156,10 @@ def register_report_routes(app, login_required, error, audit):
                 ids.update(e.id for e in Employee.query.filter_by(manager_id=request.user.employee_id,
                                                                  deleted_at=None).all())
             employees = query.filter(Employee.id.in_(ids)).order_by(Employee.first_name, Employee.last_name).all() if ids else []
-        if report_type == "payroll":
-            employees = [e for e in employees if is_self(e.id) or role() in PAYROLL_ROLES]
+        if report_type in ("payroll", "loans"):
+            employees = [e for e in employees if is_self(e.id) or role() in FINANCE_HR_ROLES]
+        elif report_type == "leave-encashment":
+            employees = [e for e in employees if is_self(e.id) or role() in ENCASHMENT_ROLES]
         elif report_type == "documents":
             employees = [e for e in employees if is_self(e.id) or role() in HR_ROLES or role() == "manager"]
         return employees
@@ -156,10 +169,21 @@ def register_report_routes(app, login_required, error, audit):
             allowed_ids = {e.id for e in visible_employees()}
         if employee is None or employee.id not in allowed_ids:
             return False
-        if report_type == "payroll":
-            return is_self(employee.id) or role() in PAYROLL_ROLES
+        if report_type in ("payroll", "loans"):
+            return is_self(employee.id) or role() in FINANCE_HR_ROLES
+        if report_type == "leave-encashment":
+            return is_self(employee.id) or role() in ENCASHMENT_ROLES
         if report_type == "documents":
             return is_self(employee.id) or role() in HR_ROLES or role() == "manager"
+        return True
+
+    def can_access_org_type(key):
+        if key in ("payroll", "loans"):
+            return role() in FINANCE_HR_ROLES
+        if key == "leave-encashment":
+            return role() in ENCASHMENT_ROLES
+        if key == "documents":
+            return role() in HR_ROLES | {"manager"}
         return True
 
     def accessible_types(employee=None, allowed_ids=None):
@@ -202,8 +226,10 @@ def register_report_routes(app, login_required, error, audit):
 
     def resolve_scope(filters, report_type):
         if filters["department_id"] is not None:
-            if report_type == "payroll" and role() not in PAYROLL_ROLES:
-                return error("Department payroll reports require payroll access", 403)
+            if report_type in ("payroll", "loans") and role() not in FINANCE_HR_ROLES:
+                return error(f"Department {report_type} reports require payroll or HR access", 403)
+            if report_type == "leave-encashment" and role() not in ENCASHMENT_ROLES:
+                return error("You do not have permission to view department leave encashment reports", 403)
             if report_type == "documents" and role() not in HR_ROLES | {"manager"}:
                 return error("You do not have permission to view department documents", 403)
         department = None
@@ -375,6 +401,152 @@ def register_report_routes(app, login_required, error, audit):
             summary = [{"label": "Payslips", "value": str(len(rows))},
                        {"label": "Gross pay", "value": f"{currency} {sum(money_value(r['gross']) for r in rows):,.2f}"},
                        {"label": "Net pay", "value": f"{currency} {sum(money_value(r['net']) for r in rows):,.2f}"}]
+        elif report_type == "loans":
+            query = date_window(Loan.query.filter(Loan.employee_id.in_(ids)), Loan.start_date, filters)
+            loans = query.order_by(Loan.start_date.desc(), Loan.id.desc()).all()
+
+            loan_rows = []
+            for r in loans:
+                total_repaid = sum(float(rep.amount or 0) for rep in r.repayments) if r.repayments else max(0.0, float(r.principal or 0) - float(r.balance or 0))
+                loan_rows.append({
+                    **person(r.employee),
+                    "reference_no": r.reference_no or f"LN-{r.id:04d}",
+                    "loan_type": _display(r.loan_type),
+                    "principal": _display(r.principal, "money").replace("GHS", currency),
+                    "instalment": _display(r.instalment, "money").replace("GHS", currency),
+                    "repayments_total": _display(total_repaid, "money").replace("GHS", currency),
+                    "balance": _display(r.balance, "money").replace("GHS", currency),
+                    "repayment_months": f"{r.repayment_months or 1} mo",
+                    "start_date": _display(r.start_date, "date"),
+                    "end_date": _display(r.end_date, "date"),
+                    "status": r.status,
+                    "_principal": float(r.principal or 0),
+                    "_balance": float(r.balance or 0),
+                    "_repaid": float(total_repaid),
+                })
+
+            loan_rows = add("Staff loan register", _columns(
+                ("reference_no", "Loan ref", "text"),
+            ) + _employee_columns() + _columns(
+                ("department_name", "Department", "text"),
+                ("loan_type", "Loan type", "text"),
+                ("principal", "Principal", "text"),
+                ("instalment", "Monthly deduction", "text"),
+                ("repayments_total", "Repaid to date", "text"),
+                ("balance", "Balance remaining", "text"),
+                ("repayment_months", "Tenure", "text"),
+                ("start_date", "Start date", "text"),
+                ("end_date", "End date", "text"),
+                ("status", "Status", "status"),
+            ), loan_rows, "Staff loan portfolio, monthly amortization deductions, and real-time remaining balances.")
+
+            # Repayment history ledger
+            repayments_q = LoanRepayment.query.join(Loan).filter(Loan.employee_id.in_(ids))
+            if filters["date_from"]:
+                repayments_q = repayments_q.filter(LoanRepayment.repayment_date >= filters["date_from"])
+            if filters["date_to"]:
+                repayments_q = repayments_q.filter(LoanRepayment.repayment_date <= filters["date_to"])
+            repayment_records = repayments_q.order_by(LoanRepayment.repayment_date.desc(), LoanRepayment.id.desc()).all()
+
+            repayment_rows = [{
+                "repayment_date": _display(rep.repayment_date, "date"),
+                "reference_no": rep.loan.reference_no if rep.loan else "—",
+                **person(rep.loan.employee if rep.loan and rep.loan.employee else by_id.get(rep.loan.employee_id)),
+                "amount": _display(rep.amount, "money").replace("GHS", currency),
+                "source": _display(rep.source),
+                "balance_before": _display(rep.balance_before, "money").replace("GHS", currency),
+                "balance_after": _display(rep.balance_after, "money").replace("GHS", currency),
+                "notes": rep.notes or "—",
+                "status": "completed",
+            } for rep in repayment_records if rep.loan]
+
+            repayment_rows = add("Repayment history & deduction ledger", _columns(
+                ("repayment_date", "Payment date", "text"),
+                ("reference_no", "Loan ref", "text"),
+            ) + _employee_columns() + _columns(
+                ("department_name", "Department", "text"),
+                ("amount", "Amount paid", "text"),
+                ("source", "Deduction source", "text"),
+                ("balance_before", "Balance before", "text"),
+                ("balance_after", "Balance after", "text"),
+                ("notes", "Remarks", "text"),
+            ), repayment_rows, "Chronological audit trail of loan repayments, payroll deductions, and balance reductions.")
+
+            total_principal = sum(r["_principal"] for r in loan_rows)
+            total_balance = sum(r["_balance"] for r in loan_rows)
+            total_repaid = sum(r["_repaid"] for r in loan_rows)
+            summary = [
+                {"label": "Total loans", "value": str(len(loan_rows))},
+                {"label": "Active loans", "value": str(sum(r["status"] == "active" for r in loan_rows))},
+                {"label": "Total disbursed", "value": f"{currency} {total_principal:,.2f}"},
+                {"label": "Total repaid", "value": f"{currency} {total_repaid:,.2f}"},
+                {"label": "Outstanding balance", "value": f"{currency} {total_balance:,.2f}"},
+            ]
+        elif report_type == "leave-encashment":
+            query = LeaveEncashment.query.filter(LeaveEncashment.employee_id.in_(ids))
+            if filters["year"]:
+                query = query.filter(LeaveEncashment.year == filters["year"])
+            if filters["date_from"]:
+                query = query.filter(LeaveEncashment.created_at >= datetime.combine(filters["date_from"], datetime.min.time()))
+            if filters["date_to"]:
+                query = query.filter(LeaveEncashment.created_at <= datetime.combine(filters["date_to"], datetime.max.time()))
+
+            encashments = query.order_by(LeaveEncashment.created_at.desc(), LeaveEncashment.id.desc()).all()
+
+            def approval_summary(enc):
+                if enc.status == "paid":
+                    return "Paid & settled"
+                if enc.status == "rejected":
+                    return "Rejected"
+                steps = []
+                steps.append("HOD: " + ("✓" if enc.hod_approved_at else "⏳"))
+                steps.append("Acct: " + ("✓" if enc.accountant_approved_at else "⏳"))
+                steps.append("MD: " + ("✓" if enc.md_approved_at else "⏳"))
+                return " ".join(steps)
+
+            enc_rows = [{
+                **person(r.employee),
+                "reference_no": r.reference_no or f"ENC-{r.id:04d}",
+                "leave_type": r.leave_type.name if r.leave_type else "Annual Leave",
+                "year": str(r.year),
+                "days_sold": _display(r.days_sold, "number") + " d",
+                "daily_rate": _display(r.daily_rate, "money").replace("GHS", currency),
+                "total_amount": _display(r.total_amount, "money").replace("GHS", currency),
+                "accumulated_before": _display(r.accumulated_before, "number") + " d",
+                "accumulated_after": _display(r.accumulated_after, "number") + " d",
+                "approvals": approval_summary(r),
+                "created_at": _display(r.created_at, "date"),
+                "status": r.status,
+                "reason": r.reason or "—",
+                "_days_sold": float(r.days_sold or 0),
+                "_total_amount": float(r.total_amount or 0),
+            } for r in encashments]
+
+            enc_rows = add("Leave encashment register", _columns(
+                ("reference_no", "Reference", "text"),
+            ) + _employee_columns() + _columns(
+                ("department_name", "Department", "text"),
+                ("leave_type", "Leave type", "text"),
+                ("year", "Year", "text"),
+                ("days_sold", "Days sold", "text"),
+                ("daily_rate", "Daily rate", "text"),
+                ("total_amount", "Payout amount", "text"),
+                ("accumulated_before", "Accrued before", "text"),
+                ("accumulated_after", "Balance after", "text"),
+                ("approvals", "Approval steps", "text"),
+                ("status", "Status", "status"),
+                ("created_at", "Applied on", "text"),
+            ), enc_rows, "Audited record of employee leaves sold, daily cash compensation, and deducted leave balances.")
+
+            total_days = sum(r["_days_sold"] for r in enc_rows)
+            total_payout = sum(r["_total_amount"] for r in enc_rows)
+            summary = [
+                {"label": "Encashment requests", "value": str(len(enc_rows))},
+                {"label": "Total days sold", "value": f"{total_days:g} days"},
+                {"label": "Total compensation paid", "value": f"{currency} {total_payout:,.2f}"},
+                {"label": "Paid / Approved", "value": str(sum(r["status"] in ("paid", "approved") for r in enc_rows))},
+                {"label": "Pending review", "value": str(sum(r["status"] == "pending" for r in enc_rows))},
+            ]
         elif report_type == "performance":
             query = Appraisal.query.filter(Appraisal.employee_id.in_(ids))
             if filters["date_from"] or filters["date_to"]:
@@ -455,9 +627,7 @@ def register_report_routes(app, login_required, error, audit):
                 "generated_by": request.user.employee.full_name if request.user.employee else request.user.email,
                 "reference": "HR-" + report_type[:3].upper() + "-" + datetime.utcnow().strftime("%Y%m%d") + "-" + secrets.token_hex(3).upper(),
                 "record_count": sum(s["record_count"] for s in sections), "summary": summary, "sections": sections,
-                "organisation_types": [t["key"] for t in accessible_types()
-                    if (t["key"] != "payroll" or role() in PAYROLL_ROLES)
-                    and (t["key"] != "documents" or role() in HR_ROLES | {"manager"})],
+                "organisation_types": [t["key"] for t in accessible_types() if can_access_org_type(t["key"])],
                 "back_path": f"reports/employee/{employee.id}" if employee else (f"reports/department/{department.id}" if department else "reports")}
 
     def prepare():
@@ -488,12 +658,8 @@ def register_report_routes(app, login_required, error, audit):
                 "name": department.name if department else "Unassigned", "code": department.code if department else "",
                 "head_name": department.head.full_name if department and department.head and department.head.id in allowed_ids else None,
                 "employee_count": len(members), "active_count": sum(e.status in ("active", "probation") for e in members),
-                "report_types": [t["key"] for t in accessible_types()
-                    if (t["key"] != "payroll" or role() in PAYROLL_ROLES)
-                    and (t["key"] != "documents" or role() in HR_ROLES | {"manager"})]})
-        organisation_types = [t["key"] for t in accessible_types()
-                              if (t["key"] != "payroll" or role() in PAYROLL_ROLES)
-                              and (t["key"] != "documents" or role() in HR_ROLES | {"manager"})]
+                "report_types": [t["key"] for t in accessible_types() if can_access_org_type(t["key"])]})
+        organisation_types = [t["key"] for t in accessible_types() if can_access_org_type(t["key"])]
         return jsonify({"data": {"types": REPORT_TYPES, "organisation_types": organisation_types, "departments": department_rows,
             "employees": [{**_employee_payload(e), "report_types": [t["key"] for t in accessible_types(e, allowed_ids)]} for e in employees],
             "scope_label": "Organisation-wide" if role() in ORGANISATION_ROLES else ("Your team and your own records" if role() == "manager" else "Your own records"),

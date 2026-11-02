@@ -186,9 +186,12 @@ const ReportCentre = (() => {
     if (data.scope.employee) crumbs.push({ label: data.scope.employee.name, path: 'reports/employee/' + data.scope.employee.id });
     crumbs.push({ label: data.title });
     const otherTypes = catalogue.types.filter(t => data.scope.employee ? data.scope.employee && catalogue.employees.find(e => e.id === data.scope.employee.id)?.report_types.includes(t.key) : data.organisation_types.includes(t.key));
+    const actions = '<div class="row gap-2" style="display:flex;gap:8px;align-items:center;">'
+      + '<button class="btn btn-ghost" id="report-csv">' + icon('download', 14) + ' Export CSV</button>'
+      + '<button class="btn btn-accent" id="report-print">' + icon('printer', 16) + ' Print / Save PDF</button>'
+      + '</div>';
     root.innerHTML = breadcrumb(crumbs)
-      + pageHead(data.title, data.scope.label + ' · ' + data.scope.period,
-        '<button class="btn btn-accent" id="report-print">' + icon('printer', 16) + ' Print / Save PDF</button>', 'Report details')
+      + pageHead(data.title, data.scope.label + ' · ' + data.scope.period, actions, 'Report details')
       + '<div class="report-type-switch"><label for="report-type-switch">Report type</label><select class="select" id="report-type-switch">' + otherTypes.map(t => '<option value="' + esc(t.key) + '"' + (t.key === typeKey ? ' selected' : '') + '>' + esc(t.title) + '</option>').join('') + '</select><span class="tiny muted">' + esc(catalogue.scope_label) + '</span></div>'
       + filterForm(type, filters) + '<div id="report-print-error" class="form-error hidden" role="alert"></div>'
       + '<div class="card report-preview" id="report-preview" aria-label="Report preview"></div>';
@@ -206,7 +209,62 @@ const ReportCentre = (() => {
       go(pathFor(typeKey, { ...filters, ...values, employee_id: filters.employee_id || values.employee_id || '' }));
     };
     root.querySelector('#report-reset').onclick = () => go(pathFor(typeKey, { department_id: filters.department_id, employee_id: filters.employee_id }));
+    root.querySelector('#report-csv').onclick = () => exportReportCSV(data);
     root.querySelector('#report-print').onclick = () => printReport(typeKey, filters, root);
+  }
+
+  function exportReportCSV(data) {
+    if (!data || !data.sections || !data.sections.length) {
+      toast('No report data available to export', 'warn');
+      return;
+    }
+    const escCsv = val => {
+      const s = String(val ?? '').replace(/"/g, '""');
+      return /[",\n\r]/.test(s) ? '"' + s + '"' : s;
+    };
+    const lines = [];
+    lines.push(escCsv(data.company.name || 'Company') + ' — ' + escCsv(data.title));
+    lines.push('Scope: ' + escCsv(data.scope.label) + ' | Period: ' + escCsv(data.scope.period) + ' | Status: ' + escCsv(data.scope.status));
+    lines.push('Reference: ' + escCsv(data.reference) + ' | Generated: ' + escCsv(data.generated_at) + ' by ' + escCsv(data.generated_by));
+    lines.push('');
+
+    if (data.summary && data.summary.length) {
+      lines.push('SUMMARY');
+      lines.push(data.summary.map(s => escCsv(s.label)).join(','));
+      lines.push(data.summary.map(s => escCsv(s.value)).join(','));
+      lines.push('');
+    }
+
+    data.sections.forEach(sec => {
+      if (sec.kind === 'fields') {
+        lines.push('SECTION: ' + escCsv(sec.title));
+        if (sec.fields) {
+          sec.fields.forEach(f => lines.push(escCsv(f.label) + ',' + escCsv(f.value)));
+        }
+        lines.push('');
+      } else if (sec.columns && sec.rows) {
+        lines.push('SECTION: ' + escCsv(sec.title) + (sec.description ? ' (' + escCsv(sec.description) + ')' : ''));
+        lines.push(sec.columns.map(c => escCsv(c.label)).join(','));
+        sec.rows.forEach(r => {
+          lines.push(sec.columns.map(c => escCsv(r[c.key] ?? '')).join(','));
+        });
+        lines.push('');
+      }
+    });
+
+    const csvContent = '\uFEFF' + lines.join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeTitle = (data.title || 'report').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const dateStr = new Date().toISOString().slice(0, 10);
+    a.href = url;
+    a.download = safeTitle + '-' + dateStr + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    toast('Exported ' + data.title + ' to CSV', 'success');
   }
 
   async function printReport(typeKey, filters, root) {
