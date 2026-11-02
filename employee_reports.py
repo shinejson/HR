@@ -14,7 +14,7 @@ from sqlalchemy import or_, and_
 from models import (
     db, Company, Department, Employee, Attendance, LeaveBalance, LeaveRequest,
     Payslip, PayrollRun, Appraisal, AppraisalCycle, Goal, Training, TrainingEnrolment, Contract, Document,
-    Loan, LoanRepayment, LeaveEncashment, LeaveType,
+    Loan, LoanRepayment, LeaveEncashment, LeaveType, Shift, ShiftAssignment,
 )
 
 reports_bp = Blueprint("employee_reports", __name__, url_prefix="/api/v1/employee-reports")
@@ -39,6 +39,10 @@ REPORT_TYPES = [
      "description": "Daily attendance, clock-in/out times, lateness and recorded overtime.",
      "scope": "both", "date_field": "work_date", "date_label": "Work date",
      "status_label": "Attendance status", "statuses": ["present", "late", "absent", "remote", "half_day", "leave", "on_leave"]},
+    {"key": "shift-roster", "title": "Shift roster & 24/7 coverage audit", "icon": "clock", "group": "Time & absence",
+     "description": "Weekly shift schedules, daily 24/7 departmental coverage counts, shift codes and scheduled vs actual attendance.",
+     "scope": "both", "date_field": "work_date", "date_label": "Work date",
+     "status_label": "Assignment status", "statuses": ["scheduled", "present", "late", "absent", "off"]},
     {"key": "leave", "title": "Leave report", "icon": "calendar", "group": "Time & absence",
      "description": "Leave applications, dates, days requested and approval status.",
      "scope": "both", "date_field": "start_date", "date_label": "Leave dates (overlapping)",
@@ -160,6 +164,8 @@ def register_report_routes(app, login_required, error, audit):
             employees = [e for e in employees if is_self(e.id) or role() in FINANCE_HR_ROLES]
         elif report_type == "leave-encashment":
             employees = [e for e in employees if is_self(e.id) or role() in ENCASHMENT_ROLES]
+        elif report_type == "shift-roster":
+            employees = [e for e in employees if is_self(e.id) or role() in ORGANISATION_ROLES or role() == "manager"]
         elif report_type == "documents":
             employees = [e for e in employees if is_self(e.id) or role() in HR_ROLES or role() == "manager"]
         return employees
@@ -173,6 +179,8 @@ def register_report_routes(app, login_required, error, audit):
             return is_self(employee.id) or role() in FINANCE_HR_ROLES
         if report_type == "leave-encashment":
             return is_self(employee.id) or role() in ENCASHMENT_ROLES
+        if report_type == "shift-roster":
+            return is_self(employee.id) or role() in ORGANISATION_ROLES or role() == "manager"
         if report_type == "documents":
             return is_self(employee.id) or role() in HR_ROLES or role() == "manager"
         return True
@@ -182,6 +190,8 @@ def register_report_routes(app, login_required, error, audit):
             return role() in FINANCE_HR_ROLES
         if key == "leave-encashment":
             return role() in ENCASHMENT_ROLES
+        if key == "shift-roster":
+            return role() in ORGANISATION_ROLES | {"manager"}
         if key == "documents":
             return role() in HR_ROLES | {"manager"}
         return True
@@ -341,6 +351,187 @@ def register_report_routes(app, login_required, error, audit):
                        {"label": "Present / remote", "value": str(sum(r["status"] in ("present", "remote", "late") for r in rows))},
                        {"label": "Late", "value": str(sum(r["status"] == "late" for r in rows))},
                        {"label": "Overtime hours", "value": _display(sum(float(r["overtime_hours"]) for r in rows), "number")}]
+        elif report_type == "shift-roster":
+            query = date_window(ShiftAssignment.query.filter(ShiftAssignment.employee_id.in_(ids)), ShiftAssignment.work_date, filters)
+            assignments = query.order_by(ShiftAssignment.work_date.asc(), ShiftAssignment.department_id.asc(), ShiftAssignment.employee_id.asc()).all()
+
+            att_map = {}
+            if assignments:
+                min_date = min(a.work_date for a in assignments)
+                max_date = max(a.work_date for a in assignments)
+                atts = Attendance.query.filter(
+                    Attendance.employee_id.in_(ids),
+                    Attendance.work_date >= min_date,
+                    Attendance.work_date <= max_date
+                ).all()
+                for a in atts:
+                    att_map[(a.employee_id, a.work_date)] = a
+
+            today_val = date.today()
+            reg_rows = []
+            coverage_by_date = {}
+
+            for a in assignments:
+                emp = a.employee or by_id.get(a.employee_id)
+                dept_name = a.department.name if a.department else (emp.department.name if emp and emp.department else "Unassigned")
+                shift = a.shift
+                shift_name = shift.name if shift else "Day Off"
+                shift_code = (shift.code if shift and shift.code else ("OFF" if not shift else "—")).upper()
+                is_off = not shift or shift_code == "OFF" or "off" in shift_name.lower()
+                shift_hours = f"{shift.start_time} – {shift.end_time}" if (shift and not is_off and shift.start_time and shift.end_time) else "—"
+
+                att = att_map.get((a.employee_id, a.work_date))
+                clock_in_str = _display(att.clock_in, "time") if att and att.clock_in else "—"
+                clock_out_str = _display(att.clock_out, "time") if att and att.clock_out else "—"
+
+                if is_off:
+                    if att and att.clock_in:
+                        variance = "Worked on Rest Day"
+                        status_tag = "present"
+                    else:
+                        variance = "Scheduled Rest Day"
+                        status_tag = "off"
+                else:
+                    if att:
+                        if att.status == "late":
+                            variance = f"Late ({att.notes or 'Tardy'})"
+                            status_tag = "late"
+                        else:
+                            variance = "Attended On Time"
+                            status_tag = "present"
+                    else:
+                        if a.work_date > today_val:
+                            variance = "Scheduled Upcoming"
+                            status_tag = "scheduled"
+                        elif a.work_date == today_val:
+                            variance = "Scheduled Today"
+                            status_tag = "scheduled"
+                        else:
+                            variance = "Absent / No Show"
+                            status_tag = "absent"
+
+                day_abbr = a.work_date.strftime("%a")
+                formatted_date = _display(a.work_date, "date")
+
+                reg_rows.append({
+                    "work_date": formatted_date,
+                    "day_name": day_abbr,
+                    **person(emp),
+                    "department_name": dept_name,
+                    "shift_label": f"{shift_name} ({shift_code})" if not is_off else "Scheduled Day Off (OFF)",
+                    "shift_hours": shift_hours,
+                    "clock_in": clock_in_str,
+                    "clock_out": clock_out_str,
+                    "variance": variance,
+                    "status": status_tag,
+                    "notes": a.notes or "—",
+                    "_is_off": is_off,
+                    "_is_night": bool(shift and any(x in (shift.name.lower() + " " + shift_code.lower()) for x in ("late", "night", "l", "n"))),
+                    "_is_morning": bool(shift and any(x in (shift.name.lower() + " " + shift_code.lower()) for x in ("early", "morning", "e"))),
+                    "_is_afternoon": bool(shift and any(x in (shift.name.lower() + " " + shift_code.lower()) for x in ("afternoon", "mid", "a", "m"))),
+                    "_has_att": bool(att and att.clock_in),
+                })
+
+                cov_key = (a.work_date, dept_name)
+                if cov_key not in coverage_by_date:
+                    coverage_by_date[cov_key] = {
+                        "date": a.work_date,
+                        "day": day_abbr,
+                        "dept": dept_name,
+                        "total_scheduled": 0,
+                        "morning": 0,
+                        "afternoon": 0,
+                        "night": 0,
+                        "off": 0,
+                        "attended": 0,
+                    }
+                cd = coverage_by_date[cov_key]
+                if is_off:
+                    cd["off"] += 1
+                else:
+                    cd["total_scheduled"] += 1
+                    if any(x in (shift_name.lower() + " " + shift_code.lower()) for x in ("late", "night", "l", "n")):
+                        cd["night"] += 1
+                    elif any(x in (shift_name.lower() + " " + shift_code.lower()) for x in ("early", "morning", "e")):
+                        cd["morning"] += 1
+                    else:
+                        cd["afternoon"] += 1
+                if att and att.clock_in:
+                    cd["attended"] += 1
+
+            cov_rows = []
+            for cov_key in sorted(coverage_by_date.keys(), key=lambda k: (k[0], k[1])):
+                cd = coverage_by_date[cov_key]
+                cov_rows.append({
+                    "work_date": _display(cd["date"], "date"),
+                    "day_name": cd["day"],
+                    "department_name": cd["dept"],
+                    "total_scheduled": str(cd["total_scheduled"]),
+                    "morning_count": str(cd["morning"]),
+                    "afternoon_count": str(cd["afternoon"]),
+                    "night_count": str(cd["night"]),
+                    "off_count": str(cd["off"]),
+                    "attended_count": str(cd["attended"]),
+                    "coverage_audit": f"M: {cd['morning']} | A: {cd['afternoon']} | N: {cd['night']} | OFF: {cd['off']}",
+                    "status": "completed" if cd["attended"] >= cd["total_scheduled"] and cd["total_scheduled"] > 0 else ("active" if cd["date"] >= today_val else "pending"),
+                })
+
+            cov_rows = add("24/7 Daily department coverage summary", _columns(
+                ("work_date", "Date", "text"),
+                ("day_name", "Day", "text"),
+                ("department_name", "Department", "text"),
+                ("total_scheduled", "On Duty", "text"),
+                ("morning_count", "Morning (E)", "text"),
+                ("afternoon_count", "Afternoon (A/M)", "text"),
+                ("night_count", "Night (L/N)", "text"),
+                ("off_count", "Rest Day (OFF)", "text"),
+                ("attended_count", "Checked In", "text"),
+                ("coverage_audit", "Shift Breakdown", "text"),
+            ), cov_rows, "Audited 24-hour round-the-clock staffing levels across hotel wings and departments.")
+
+            reg_rows = add("Shift assignments & attendance audit", _columns(
+                ("work_date", "Date", "text"),
+                ("day_name", "Day", "text"),
+            ) + _employee_columns() + _columns(
+                ("department_name", "Department", "text"),
+                ("shift_label", "Assigned Shift", "text"),
+                ("shift_hours", "Shift Hours", "text"),
+                ("clock_in", "Clock In", "text"),
+                ("clock_out", "Clock Out", "text"),
+                ("variance", "Attendance Audit", "text"),
+                ("status", "Status", "status"),
+            ), reg_rows, "Individual employee roster assignments compared against actual biometric/web attendance.")
+
+            all_shifts = Shift.query.order_by(Shift.id.asc()).all()
+            shift_legend_rows = [{
+                "code": s.code or "—",
+                "name": s.name,
+                "hours": f"{s.start_time} – {s.end_time}",
+                "grace": f"{s.grace_minutes or 0} mins",
+                "overtime_multiplier": f"{float(s.overtime_multiplier or 1.5):.2f}x",
+                "status": "active"
+            } for s in all_shifts]
+
+            add("Active shift catalogue & working hours standard", _columns(
+                ("code", "Code", "text"),
+                ("name", "Shift Name", "text"),
+                ("hours", "Standard Hours", "text"),
+                ("grace", "Grace Period", "text"),
+                ("overtime_multiplier", "OT Rate", "text"),
+            ), shift_legend_rows, "Standard operating shift codes and working hour boundaries.")
+
+            total_shifts = sum(1 for r in reg_rows if not r.get("_is_off"))
+            total_off = sum(1 for r in reg_rows if r.get("_is_off"))
+            total_night = sum(1 for r in reg_rows if r.get("_is_night"))
+            total_attended = sum(1 for r in reg_rows if r.get("_has_att"))
+
+            summary = [
+                {"label": "Total assignments", "value": str(len(reg_rows))},
+                {"label": "Shifts on duty", "value": str(total_shifts)},
+                {"label": "Night / 24-7 coverage", "value": str(total_night)},
+                {"label": "Scheduled rest days", "value": str(total_off)},
+                {"label": "Actual clock-ins", "value": str(total_attended)},
+            ]
         elif report_type == "leave":
             query = date_window(LeaveRequest.query.filter(LeaveRequest.employee_id.in_(ids)),
                                 LeaveRequest.start_date, filters, LeaveRequest.end_date)
