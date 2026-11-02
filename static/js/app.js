@@ -30,6 +30,7 @@ const NAV = [
     label: "Time & absence", icon: "clock",
     items: [
       { id: "attendance", label: "Attendance", icon: "clock" },
+      { id: "shift-planner", label: "Shift schedules", icon: "calendar" },
       { id: "leave", label: "Leave", icon: "calendar" },
     ],
   },
@@ -94,6 +95,7 @@ const NAV = [
 ];
 
 const PAGES = {
+  "shift-planner": "Shift schedules",
   dashboard: "Overview", approvals: "Approvals Inbox", employees: "Employees",
   "employment-letters": "Employment Letters", organisation: "Organisation", recruitment: "Recruitment",
   onboarding: "Onboarding", documents: "Documents", attendance: "Attendance", leave: "Leave",
