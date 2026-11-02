@@ -417,6 +417,12 @@ tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover { background: #fbf9f4; }
 tbody tr.clickable { cursor: pointer; }
 
+/* Table cells with select dropdowns - ensure dropdown visibility */
+table { overflow: visible; }
+tbody { overflow: visible; }
+tbody tr { overflow: visible; }
+tbody td { position: relative; overflow: visible; }
+
 /* Sign-in activity table specific styles */
 td.signin-timestamp, th.signin-timestamp { white-space: nowrap; width: 175px; vertical-align: middle; }
 td.signin-status, th.signin-status { white-space: nowrap; width: 110px; vertical-align: middle; }
@@ -1839,6 +1845,7 @@ html[data-dt-density="compact"] .avatar-sm { width: 25px; height: 25px; font-siz
 
 /* ============================================================================
    MOBILE RESPONSIVE EXTENSIONS (Employment Letters, Modals, Leave Cards)
+   ============================================================================ */
 .leave-summary-strip {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

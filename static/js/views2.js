@@ -540,7 +540,16 @@ function openShiftModal(shift, onSaved) {
     title: isEdit ? "Edit Shift Configuration" : "Create New Operational Shift",
     sub: isEdit ? "Update shift parameters for " + (shift.name || "Shift") : "Define shift code/letter, working hours, grace period, and overtime multiplier",
     submitLabel: isEdit ? "Update Shift" : "Create Shift",
-    values: shift || {
+    successMessage: isEdit ? "Shift updated successfully" : "Shift created successfully",
+    values: shift ? {
+      code: shift.code || "",
+      name: shift.name || "",
+      start_time: shift.start_time || "08:30",
+      end_time: shift.end_time || "17:30",
+      grace_minutes: shift.grace_minutes !== undefined ? shift.grace_minutes : 10,
+      overtime_multiplier: shift.overtime_multiplier !== undefined ? shift.overtime_multiplier : 1.5,
+      is_default: !!shift.is_default,
+    } : {
       code: "",
       name: "",
       start_time: "08:30",
@@ -570,12 +579,15 @@ function openShiftModal(shift, onSaved) {
       };
       if (isEdit) {
         await API.put("/shifts/" + shift.id, payload);
-        toast("Shift updated successfully", "success");
       } else {
         await API.post("/shifts", payload);
-        toast("Shift created successfully", "success");
       }
-      if (onSaved) onSaved();
+      if (typeof DT_STATE_CACHE !== "undefined") {
+        DT_STATE_CACHE.delete("shifts::shifts-table");
+      }
+      if (onSaved) {
+        await onSaved();
+      }
     }
   });
 }
@@ -583,6 +595,9 @@ function openShiftModal(shift, onSaved) {
 Views.shifts = async function (root, params) {
   if (params && params[0] && ["schedules", "coverage", "roster", "policy"].includes(params[0])) {
     shiftsState.tab = params[0];
+  }
+  if (typeof DT_STATE_CACHE !== "undefined") {
+    DT_STATE_CACHE.delete("shifts::shifts-table");
   }
   root.innerHTML = pageHead("Shift Management", "Loading operational shifts…") + spinners(3);
 

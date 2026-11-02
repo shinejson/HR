@@ -8577,7 +8577,7 @@ def meta():
         "leave_types": [{"id": t.id, "name": t.name, "color": t.color, "paid": t.paid}
                         for t in LeaveType.query.all()],
         "expense_categories": [{"id": c.id, "name": c.name} for c in ExpenseCategory.query.all()],
-        "shifts": [{"id": s.id, "name": s.name} for s in Shift.query.all()],
+        "shifts": [{"id": s.id, "name": s.name, "code": s.code or ""} for s in Shift.query.all()],
         "assets": [{"id": a.id, "name": a.name, "tag": a.tag, "status": a.status}
                    for a in Asset.query.order_by(Asset.name)],
         "tax_bands": [serialize(t) for t in TaxBand.query.order_by(TaxBand.min_amount)],

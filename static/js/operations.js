@@ -1045,10 +1045,40 @@ Views.operations = async function (root, params) {
       pageActions,
       "Department"
     )
-    + '<div class="tabs" style="margin-bottom:20px">'
+    + '<div class="tabs-wrapper">'
+    + '<button class="tabs-nav-btn" id="ops-tabs-prev" title="Previous">' + icon("chevronLeft", 14) + '</button>'
+    + '<div class="tabs-container-scroll">'
+    + '<div class="tabs" id="ops-tabs-container" style="margin-bottom:20px">'
     + tabs.map(t => '<button class="tab ' + (opsState.tab === t[0] ? "active" : "") + '" data-opstab="' + t[0] + '">' + t[1] + '</button>').join("")
     + '</div>'
+    + '</div>'
+    + '<button class="tabs-nav-btn" id="ops-tabs-next" title="Next">' + icon("chevronRight", 14) + '</button>'
+    + '</div>'
     + '<div class="page-enter">' + body + '</div>';
+
+    // Tab navigation handlers
+    const tabsContainer = root.querySelector("#ops-tabs-container");
+    const prevBtn = root.querySelector("#ops-tabs-prev");
+    const nextBtn = root.querySelector("#ops-tabs-next");
+    
+    if (prevBtn && nextBtn && tabsContainer) {
+      prevBtn.onclick = () => {
+        tabsContainer.scrollBy({ left: -200, behavior: 'smooth' });
+      };
+      nextBtn.onclick = () => {
+        tabsContainer.scrollBy({ left: 200, behavior: 'smooth' });
+      };
+      
+      // Update button states based on scroll position
+      const updateNavButtons = () => {
+        const { scrollLeft, scrollWidth, clientWidth } = tabsContainer;
+        prevBtn.disabled = scrollLeft <= 0;
+        nextBtn.disabled = scrollLeft + clientWidth >= scrollWidth - 1;
+      };
+      
+      tabsContainer.addEventListener('scroll', updateNavButtons);
+      updateNavButtons();
+    }
 
     // Attach Tab Navigation
     root.querySelectorAll("[data-opstab]").forEach(b => {

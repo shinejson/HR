@@ -471,12 +471,37 @@ class Shift(db.Model, TimestampMixin):
     __tablename__ = "shifts"
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(80), nullable=False)
-    code = db.Column(db.String(10), nullable=True)
+    code = db.Column(db.String(10), nullable=True)  # E, L, MID, OFF
     start_time = db.Column(db.String(8), nullable=False)
     end_time = db.Column(db.String(8), nullable=False)
     grace_minutes = db.Column(db.Integer, default=10)
     overtime_multiplier = db.Column(db.Numeric(4, 2), default=1.5)
     is_default = db.Column(db.Boolean, default=False)
+    color = db.Column(db.String(20), default="#0f766e")  # Color for calendar display
+
+
+class ShiftAssignment(db.Model, TimestampMixin):
+    """Weekly shift roster - assigns employees to shifts per day"""
+    __tablename__ = "shift_assignments"
+    id = db.Column(db.Integer, primary_key=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=False)
+    department_id = db.Column(db.Integer, db.ForeignKey("departments.id"), nullable=False)
+    shift_id = db.Column(db.Integer, db.ForeignKey("shifts.id"), nullable=True)  # NULL = OFF day
+    work_date = db.Column(db.Date, nullable=False)
+    week_start = db.Column(db.Date, nullable=False)  # Monday of the week
+    notes = db.Column(db.String(255))
+    created_by_id = db.Column(db.Integer, db.ForeignKey("employees.id"), nullable=True)
+    
+    employee = db.relationship("Employee", foreign_keys=[employee_id])
+    department = db.relationship("Department")
+    shift = db.relationship("Shift")
+    created_by = db.relationship("Employee", foreign_keys=[created_by_id])
+    
+    __table_args__ = (
+        db.UniqueConstraint("employee_id", "work_date", name="uq_shift_emp_date"),
+        db.Index("idx_shift_dept_week", "department_id", "week_start"),
+    )
+
 
 
 class Attendance(db.Model, TimestampMixin):
