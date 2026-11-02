@@ -1084,6 +1084,17 @@ def login_required(fn):
     return wrapper
 
 
+def admin_required(fn):
+    @wraps(fn)
+    @login_required
+    def wrapper(*args, **kwargs):
+        role = role_of(request.user)
+        if role not in ("super_admin", "hr_admin", "hr_officer"):
+            return error("Administrator privileges required", 403)
+        return fn(*args, **kwargs)
+    return wrapper
+
+
 def role_of(user):
     return user.role.slug if user.role else "employee"
 
@@ -5794,6 +5805,152 @@ def employee_export():
                     conv(e.hire_date), e.status, float(e.basic_salary or 0)])
     mem = io.BytesIO(buf.getvalue().encode("utf-8"))
     return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="employees.csv")
+
+
+# ---------------------------------------------------------------- shift management
+
+@app.get("/api/v1/shifts")
+@login_required
+def get_shifts():
+    """Get all shifts"""
+    shifts = Shift.query.order_by(Shift.is_default.desc(), Shift.name).all()
+    return success([{
+        "id": s.id,
+        "name": s.name,
+        "start_time": s.start_time,
+        "end_time": s.end_time,
+        "grace_minutes": s.grace_minutes,
+        "overtime_multiplier": float(s.overtime_multiplier) if s.overtime_multiplier else 1.5,
+        "is_default": s.is_default,
+        "created_at": s.created_at.isoformat() if hasattr(s, 'created_at') and s.created_at else None,
+    } for s in shifts])
+
+
+@app.post("/api/v1/shifts")
+@login_required
+@admin_required
+def create_shift():
+    """Create a new shift"""
+    data = request.get_json() or {}
+    
+    name = (data.get("name") or "").strip()
+    start_time = (data.get("start_time") or "").strip()
+    end_time = (data.get("end_time") or "").strip()
+    grace_minutes = data.get("grace_minutes", 10)
+    overtime_multiplier = data.get("overtime_multiplier", 1.5)
+    is_default = data.get("is_default", False)
+    
+    if not name:
+        return error("Shift name is required", 400)
+    if not start_time or not end_time:
+        return error("Start time and end time are required", 400)
+    
+    # Validate time format (HH:MM)
+    import re
+    time_pattern = r'^([0-1][0-9]|2[0-3]):[0-5][0-9]$'
+    if not re.match(time_pattern, start_time):
+        return error("Invalid start time format. Use HH:MM (e.g., 08:00)", 400)
+    if not re.match(time_pattern, end_time):
+        return error("Invalid end time format. Use HH:MM (e.g., 17:00)", 400)
+    
+    # If setting as default, unset other defaults
+    if is_default:
+        Shift.query.filter_by(is_default=True).update({"is_default": False})
+    
+    shift = Shift(
+        name=name,
+        start_time=start_time,
+        end_time=end_time,
+        grace_minutes=int(grace_minutes),
+        overtime_multiplier=float(overtime_multiplier),
+        is_default=is_default
+    )
+    
+    db.session.add(shift)
+    db.session.commit()
+    
+    return success({
+        "id": shift.id,
+        "name": shift.name,
+        "start_time": shift.start_time,
+        "end_time": shift.end_time,
+        "grace_minutes": shift.grace_minutes,
+        "overtime_multiplier": float(shift.overtime_multiplier),
+        "is_default": shift.is_default,
+    }, "Shift created successfully")
+
+
+@app.put("/api/v1/shifts/<int:shift_id>")
+@login_required
+@admin_required
+def update_shift(shift_id):
+    """Update an existing shift"""
+    shift = Shift.query.get(shift_id)
+    if not shift:
+        return error("Shift not found", 404)
+    
+    data = request.get_json() or {}
+    
+    name = (data.get("name") or "").strip()
+    start_time = (data.get("start_time") or "").strip()
+    end_time = (data.get("end_time") or "").strip()
+    
+    if not name:
+        return error("Shift name is required", 400)
+    if not start_time or not end_time:
+        return error("Start time and end time are required", 400)
+    
+    # Validate time format
+    import re
+    time_pattern = r'^([0-1][0-9]|2[0-3]):[0-5][0-9]$'
+    if not re.match(time_pattern, start_time):
+        return error("Invalid start time format. Use HH:MM (e.g., 08:00)", 400)
+    if not re.match(time_pattern, end_time):
+        return error("Invalid end time format. Use HH:MM (e.g., 17:00)", 400)
+    
+    # If setting as default, unset other defaults
+    is_default = data.get("is_default", False)
+    if is_default and not shift.is_default:
+        Shift.query.filter(Shift.id != shift_id).update({"is_default": False})
+    
+    shift.name = name
+    shift.start_time = start_time
+    shift.end_time = end_time
+    shift.grace_minutes = int(data.get("grace_minutes", 10))
+    shift.overtime_multiplier = float(data.get("overtime_multiplier", 1.5))
+    shift.is_default = is_default
+    
+    db.session.commit()
+    
+    return success({
+        "id": shift.id,
+        "name": shift.name,
+        "start_time": shift.start_time,
+        "end_time": shift.end_time,
+        "grace_minutes": shift.grace_minutes,
+        "overtime_multiplier": float(shift.overtime_multiplier),
+        "is_default": shift.is_default,
+    }, "Shift updated successfully")
+
+
+@app.delete("/api/v1/shifts/<int:shift_id>")
+@login_required
+@admin_required
+def delete_shift(shift_id):
+    """Delete a shift"""
+    shift = Shift.query.get(shift_id)
+    if not shift:
+        return error("Shift not found", 404)
+    
+    # Prevent deleting default shift if it's the only one
+    if shift.is_default and Shift.query.count() == 1:
+        return error("Cannot delete the only shift in the system", 400)
+    
+    shift_name = shift.name
+    db.session.delete(shift)
+    db.session.commit()
+    
+    return success(None, f"Shift '{shift_name}' deleted successfully")
 
 
 # ---------------------------------------------------------------- attendance actions

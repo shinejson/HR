@@ -513,6 +513,374 @@ function openCorrectionForm() {
   });
 }
 
+
+/* ============================================================ SHIFT MANAGEMENT */
+const shiftsState = { tab: "schedules" };
+const shiftTabs = [
+  ["schedules", "Shifts & Working Hours"],
+  ["coverage", "24-Hour Coverage Timeline"],
+  ["roster", "Staff Distribution & Work Modes"],
+  ["policy", "Lateness & Overtime Rules"],
+];
+
+function calcShiftDuration(start, end) {
+  if (!start || !end) return "—";
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  let totalMin = (eh * 60 + em) - (sh * 60 + sm);
+  if (totalMin < 0) totalMin += 24 * 60; // Overnight shift past midnight
+  const hrs = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  return hrs + "h" + (mins > 0 ? " " + mins + "m" : "");
+}
+
+function openShiftModal(shift, onSaved) {
+  const isEdit = !!shift;
+  openFormModal({
+    title: isEdit ? "Edit Shift Configuration" : "Create New Operational Shift",
+    sub: isEdit ? "Update shift parameters for " + (shift.name || "Shift") : "Define shift working hours, grace period, and overtime multiplier",
+    submitLabel: isEdit ? "Update Shift" : "Create Shift",
+    values: shift || {
+      name: "",
+      start_time: "08:30",
+      end_time: "17:30",
+      grace_minutes: 10,
+      overtime_multiplier: 1.5,
+      is_default: false,
+    },
+    fields: [
+      { name: "name", label: "Shift Name", required: true, placeholder: "e.g. Standard Day, Morning Shift, Night Front Desk" },
+      { name: "start_time", label: "Start Time (HH:MM)", required: true, placeholder: "08:30", hint: "24-hour format HH:MM (e.g. 08:30, 07:00, 22:00)" },
+      { name: "end_time", label: "End Time (HH:MM)", required: true, placeholder: "17:30", hint: "24-hour format HH:MM (e.g. 17:30, 16:00, 06:00)" },
+      { name: "grace_minutes", label: "Grace Period (Minutes)", type: "number", default: 10, required: true, hint: "Allowed delay after start time before clock-in is marked late" },
+      { name: "overtime_multiplier", label: "Overtime Rate Multiplier", type: "number", step: "0.05", default: 1.5, required: true, hint: "e.g. 1.5 for 150% standard overtime rate" },
+      { name: "is_default", label: "Set as Default Hotel Baseline Shift", type: "checkbox", default: false, hint: "Used as baseline system shift for clock-in lateness calculations" },
+    ],
+    onSubmit: async (data) => {
+      const payload = {
+        name: (data.name || "").trim(),
+        start_time: (data.start_time || "").trim(),
+        end_time: (data.end_time || "").trim(),
+        grace_minutes: parseInt(data.grace_minutes, 10) || 10,
+        overtime_multiplier: parseFloat(data.overtime_multiplier) || 1.5,
+        is_default: !!data.is_default,
+      };
+      if (isEdit) {
+        await API.put("/shifts/" + shift.id, payload);
+        toast("Shift updated successfully", "success");
+      } else {
+        await API.post("/shifts", payload);
+        toast("Shift created successfully", "success");
+      }
+      if (onSaved) onSaved();
+    }
+  });
+}
+
+Views.shifts = async function (root, params) {
+  if (params && params[0] && ["schedules", "coverage", "roster", "policy"].includes(params[0])) {
+    shiftsState.tab = params[0];
+  }
+  root.innerHTML = pageHead("Shift Management", "Loading operational shifts…") + spinners(3);
+
+  try {
+    const [shiftsRes, empRes] = await Promise.all([
+      API.get("/shifts"),
+      API.get("/employees", { per_page: 500 }).catch(() => ({ data: [] }))
+    ]);
+
+    const shifts = shiftsRes.data || [];
+    const employees = empRes.data || [];
+    const canManage = Store.canManage() || Store.isRole("super_admin", "hr_admin", "hr_officer");
+    const defaultShift = shifts.find(s => s.is_default) || shifts[0] || null;
+
+    // Header actions
+    const actions = canManage
+      ? '<button class="btn btn-accent" id="btn-create-shift">' + icon("plus", 14) + ' Create Shift</button>'
+      : '';
+
+    // KPIs
+    const totalShifts = shifts.length;
+    const defaultName = defaultShift ? (defaultShift.name + " (" + defaultShift.start_time + " – " + defaultShift.end_time + ")") : "None";
+    const defaultGrace = defaultShift ? (defaultShift.grace_minutes + " mins") : "10 mins";
+    const defaultOT = defaultShift ? (Number(defaultShift.overtime_multiplier || 1.5).toFixed(2) + "x") : "1.50x";
+
+    let body = "";
+
+    /* ---------------- TAB 1: SHIFTS & WORKING HOURS ---------------- */
+    if (shiftsState.tab === "schedules") {
+      body = renderTable({
+        id: "shifts-table",
+        exportName: "hotel-shifts",
+        columns: [
+          {
+            label: "Shift Name",
+            sortKey: "name",
+            render: r => '<div><b>' + esc(r.name) + '</b>'
+              + (r.is_default ? '<span class="chip teal tiny" style="margin-left:8px">Default Baseline</span>' : '')
+              + '<div class="tiny muted">Grace: ' + (r.grace_minutes || 0) + 'm · OT: ' + Number(r.overtime_multiplier || 1.5).toFixed(2) + 'x</div></div>'
+          },
+          {
+            label: "Start Time",
+            sortKey: "start_time",
+            render: r => '<span class="mono" style="font-weight:600">' + esc(r.start_time) + '</span>'
+          },
+          {
+            label: "End Time",
+            sortKey: "end_time",
+            render: r => '<span class="mono" style="font-weight:600">' + esc(r.end_time) + '</span>'
+          },
+          {
+            label: "Duration",
+            render: r => '<span class="pill-tag">' + calcShiftDuration(r.start_time, r.end_time) + '</span>'
+          },
+          {
+            label: "Grace Period",
+            render: r => '<span class="chip grey">' + (r.grace_minutes || 0) + ' min grace</span>'
+          },
+          {
+            label: "Overtime Rate",
+            render: r => '<span class="mono">' + Number(r.overtime_multiplier || 1.5).toFixed(2) + 'x</span>'
+          },
+          {
+            label: "Status",
+            render: r => r.is_default ? '<span class="chip green">Default</span>' : '<span class="chip grey">Configured</span>'
+          },
+          {
+            label: "",
+            class: "right",
+            sortable: false,
+            render: r => {
+              if (!canManage) return "";
+              let btns = '<button class="btn btn-sm btn-ghost" data-shift-edit="' + r.id + '">' + icon("edit", 12) + ' Edit</button> ';
+              if (!r.is_default) {
+                btns += '<button class="btn btn-sm btn-soft" data-shift-default="' + r.id + '">Set Default</button> ';
+                btns += '<button class="btn btn-sm btn-danger" data-shift-delete="' + r.id + '">' + icon("trash", 12) + '</button>';
+              }
+              return btns;
+            }
+          }
+        ],
+        rows: shifts,
+        emptyTitle: "No operational shifts defined",
+        emptyText: "Click 'Create Shift' to configure hotel working hours.",
+      });
+    }
+
+    /* ---------------- TAB 2: 24-HOUR COVERAGE TIMELINE ---------------- */
+    else if (shiftsState.tab === "coverage") {
+      const colors = ["#0f766e", "#2563eb", "#7c3aed", "#d97706", "#059669", "#dc2626", "#0284c7"];
+      body = '<div class="card" style="margin-bottom:18px"><div class="card-head"><div><h3>24-Hour Hospitality Operational Coverage</h3><div class="sub">Visual timeline of active shift hours across day, evening, and night operations</div></div>'
+        + '<div class="right"><span class="tiny muted">' + shifts.length + ' shift patterns configured</span></div></div>'
+        + '<div class="card-body">'
+        + '<div class="row-between tiny muted mono" style="padding:0 4px;margin-bottom:8px">'
+        + '<span>00:00 (Midnight)</span><span>03:00</span><span>06:00 (Morning)</span><span>09:00</span><span>12:00 (Noon)</span><span>15:00</span><span>18:00 (Evening)</span><span>21:00</span><span>24:00</span>'
+        + '</div>'
+        + '<div style="position:relative;background:var(--paper-2);border:1px solid var(--line);border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:12px;">'
+        + (shifts.length ? shifts.map((s, idx) => {
+            const [sh, sm] = (s.start_time || "00:00").split(":").map(Number);
+            const [eh, em] = (s.end_time || "00:00").split(":").map(Number);
+            const startPct = Math.min(100, Math.max(0, ((sh * 60 + (sm || 0)) / 1440) * 100));
+            const endPct = Math.min(100, Math.max(0, ((eh * 60 + (em || 0)) / 1440) * 100));
+            const color = colors[idx % colors.length];
+
+            let barHTML = "";
+            if (endPct < startPct) {
+              barHTML = '<div style="position:absolute;left:' + startPct + '%;width:' + (100 - startPct) + '%;height:100%;background:' + color + ';border-radius:4px 0 0 4px;opacity:0.88"></div>'
+                + '<div style="position:absolute;left:0%;width:' + endPct + '%;height:100%;background:' + color + ';border-radius:0 4px 4px 0;opacity:0.88"></div>';
+            } else {
+              barHTML = '<div style="position:absolute;left:' + startPct + '%;width:' + Math.max(1, endPct - startPct) + '%;height:100%;background:' + color + ';border-radius:4px;opacity:0.88"></div>';
+            }
+
+            return '<div style="display:flex;align-items:center;gap:12px;">'
+              + '<div style="width:160px;min-width:160px;font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + esc(s.name) + '">'
+              + (s.is_default ? '<span class="chip teal tiny" style="margin-right:6px">Default</span>' : '')
+              + esc(s.name)
+              + '</div>'
+              + '<div style="position:relative;flex:1;height:26px;background:var(--paper);border-radius:5px;border:1px solid var(--line);overflow:hidden;">'
+              + barHTML
+              + '</div>'
+              + '<div class="mono tiny muted" style="width:120px;text-align:right"><b>' + esc(s.start_time) + ' – ' + esc(s.end_time) + '</b> (' + calcShiftDuration(s.start_time, s.end_time) + ')</div>'
+              + '</div>';
+          }).join("") : '<div class="small muted">No shifts configured yet.</div>')
+        + '</div>'
+        + '<div style="margin-top:14px;display:flex;gap:16px;flex-wrap:wrap;font-size:11.5px;" class="muted">'
+        + '<span><span style="display:inline-block;width:10px;height:10px;background:#0f766e;border-radius:2px;margin-right:4px;vertical-align:middle"></span> Daytime Operations</span>'
+        + '<span><span style="display:inline-block;width:10px;height:10px;background:#2563eb;border-radius:2px;margin-right:4px;vertical-align:middle"></span> Evening / Transition</span>'
+        + '<span><span style="display:inline-block;width:10px;height:10px;background:#7c3aed;border-radius:2px;margin-right:4px;vertical-align:middle"></span> Night & Front Desk</span>'
+        + '</div>'
+        + '</div></div>';
+    }
+
+    /* ---------------- TAB 3: STAFF DISTRIBUTION & WORK MODES ---------------- */
+    else if (shiftsState.tab === "roster") {
+      const officeCount = employees.filter(e => (e.work_location || "Office").toLowerCase() === "office").length;
+      const hybridCount = employees.filter(e => (e.work_location || "").toLowerCase() === "hybrid").length;
+      const remoteCount = employees.filter(e => (e.work_location || "").toLowerCase() === "remote").length;
+
+      body = '<div class="grid grid-3" style="margin-bottom:18px">'
+        + kpiCard({ label: "On-Site / Office", value: officeCount, icon: "building", tone: "teal", foot: "Stationed on hotel premises" })
+        + kpiCard({ label: "Hybrid Roster", value: hybridCount, icon: "refresh", tone: "blue", foot: "Rotational on-site / remote" })
+        + kpiCard({ label: "Remote / Field", value: remoteCount, icon: "globe", tone: "purple", foot: "Remote staff / off-site" })
+        + '</div>'
+        + renderTable({
+          id: "staff-roster-table",
+          exportName: "staff-schedules",
+          filters: [
+            { key: "department_name", label: "Department" },
+            { key: "work_location", label: "Work Location" },
+            { key: "work_schedule", label: "Schedule Type" },
+          ],
+          columns: [
+            {
+              label: "Employee",
+              sortKey: "full_name",
+              render: r => personCell({ name: r.full_name || (r.first_name + ' ' + r.last_name), employee_no: r.employee_no })
+            },
+            {
+              label: "Department",
+              key: "department_name",
+              render: r => esc(r.department_name || "—")
+            },
+            {
+              label: "Designation",
+              key: "designation_title",
+              render: r => esc(r.designation_title || "—")
+            },
+            {
+              label: "Work Mode",
+              key: "work_location",
+              render: r => '<span class="chip ' + (r.work_location === 'Remote' ? 'purple' : (r.work_location === 'Hybrid' ? 'teal' : 'grey')) + '">' + esc(r.work_location || "Office") + '</span>'
+            },
+            {
+              label: "Schedule",
+              key: "work_schedule",
+              render: r => '<span class="pill-tag" style="text-transform:capitalize">' + esc(r.work_schedule || "Standard") + '</span>'
+            },
+            {
+              label: "Status",
+              key: "status",
+              render: r => chip(r.status || "active")
+            },
+          ],
+          rows: employees,
+          emptyTitle: "No staff roster records found",
+        });
+    }
+
+    /* ---------------- TAB 4: LATENESS & OVERTIME RULES ---------------- */
+    else if (shiftsState.tab === "policy") {
+      body = '<div class="grid grid-2">'
+        + '<div class="card"><div class="card-head"><div><h3>Lateness Calculation Engine</h3><div class="sub">How clock-ins are evaluated against active shifts</div></div></div>'
+        + '<div class="card-body stack" style="gap:12px">'
+        + '<div class="skill-item"><div><b style="font-size:13px">1. Baseline Shift Lookup</b>'
+        + '<p class="tiny muted" style="margin-top:2px">The attendance engine retrieves the default system shift (currently <b>' + esc(defaultName) + '</b>).</p></div></div>'
+        + '<div class="skill-item"><div><b style="font-size:13px">2. Grace Period Application</b>'
+        + '<p class="tiny muted" style="margin-top:2px">A buffer of <b>' + defaultGrace + '</b> is added to the start time. Clock-in timestamps on or before this cutoff are recorded as <b>Present</b>.</p></div></div>'
+        + '<div class="skill-item"><div><b style="font-size:13px">3. Lateness Trigger & Reporting</b>'
+        + '<p class="tiny muted" style="margin-top:2px">Clock-ins exceeding start time + grace minutes are automatically tagged with the <b>Late</b> status on the attendance register and summary reports.</p></div></div>'
+        + '</div></div>'
+
+        + '<div class="card"><div class="card-head"><div><h3>Overtime Compensation Rules</h3><div class="sub">Calculation multipliers for excess authorized hours</div></div></div>'
+        + '<div class="card-body stack" style="gap:12px">'
+        + '<div class="skill-item"><div><b style="font-size:13px">Standard Overtime Multiplier (' + defaultOT + ')</b>'
+        + '<p class="tiny muted" style="margin-top:2px">Authorized hours worked past the shift end time are compensated at ' + defaultOT + ' of the basic hourly rate.</p></div></div>'
+        + '<div class="skill-item"><div><b style="font-size:13px">Departmental Overrides</b>'
+        + '<p class="tiny muted" style="margin-top:2px">Individual shifts can be customized with distinct multipliers (e.g. 2.0x for emergency call-outs or weekend hospitality duties).</p></div></div>'
+        + '<div class="skill-item"><div><b style="font-size:13px">Payroll Integration</b>'
+        + '<p class="tiny muted" style="margin-top:2px">Accumulated overtime minutes appear automatically on monthly payroll runs as approved attendance additions.</p></div></div>'
+        + '</div></div>'
+        + '</div>';
+    }
+
+    // Render complete page
+    root.innerHTML = pageHead("Shift Management", "Configure shift timings, grace periods, overtime rates, and staff schedules.", actions, "Time & Absence")
+      + '<div class="grid grid-4" style="margin-bottom:18px">'
+      + kpiCard({ label: "Total Shifts", value: totalShifts, icon: "clock", tone: "teal", foot: "Active operational shift definitions" })
+      + kpiCard({ label: "Default Shift", value: esc(defaultShift ? defaultShift.name : "None"), icon: "checkCircle", tone: "blue", foot: defaultName })
+      + kpiCard({ label: "Grace Period", value: defaultGrace, icon: "sliders", tone: "accent", foot: "Cutoff before lateness is flagged" })
+      + kpiCard({ label: "Default Overtime", value: defaultOT, icon: "wallet", tone: "purple", foot: "Hourly overtime pay rate" })
+      + '</div>'
+      + '<div class="tabs" style="margin-bottom:18px">'
+      + shiftTabs.map(t =>
+          '<button class="tab ' + (shiftsState.tab === t[0] ? "active" : "") + '" data-stab="' + t[0] + '">' + esc(t[1])
+          + (t[2] !== undefined ? '<span class="count">' + t[2] + '</span>' : '')
+          + '</button>'
+        ).join("")
+      + '</div>'
+      + body;
+
+    // Bind tab events
+    root.querySelectorAll("[data-stab]").forEach(b => {
+      b.onclick = () => {
+        shiftsState.tab = b.dataset.stab;
+        Views.shifts(root);
+      };
+    });
+
+    // Bind Create Shift
+    const createBtn = root.querySelector("#btn-create-shift");
+    if (createBtn) {
+      createBtn.onclick = () => openShiftModal(null, () => Views.shifts(root));
+    }
+
+    // Bind Edit Shift
+    root.querySelectorAll("[data-shift-edit]").forEach(b => {
+      b.onclick = () => {
+        const s = shifts.find(item => String(item.id) === String(b.dataset.shiftEdit));
+        if (s) openShiftModal(s, () => Views.shifts(root));
+      };
+    });
+
+    // Bind Set Default Shift
+    root.querySelectorAll("[data-shift-default]").forEach(b => {
+      b.onclick = async () => {
+        const s = shifts.find(item => String(item.id) === String(b.dataset.shiftDefault));
+        if (!s) return;
+        try {
+          await API.put("/shifts/" + s.id, {
+            name: s.name,
+            start_time: s.start_time,
+            end_time: s.end_time,
+            grace_minutes: s.grace_minutes,
+            overtime_multiplier: s.overtime_multiplier,
+            is_default: true,
+          });
+          toast("Default shift updated to '" + s.name + "'", "success");
+          Views.shifts(root);
+        } catch (err) {
+          handleErr(err);
+        }
+      };
+    });
+
+    // Bind Delete Shift
+    root.querySelectorAll("[data-shift-delete]").forEach(b => {
+      b.onclick = () => {
+        const s = shifts.find(item => String(item.id) === String(b.dataset.shiftDelete));
+        if (!s) return;
+        confirmDialog(
+          "Delete Shift",
+          "Are you sure you want to delete shift '" + s.name + "' (" + s.start_time + " – " + s.end_time + ")?",
+          async () => {
+            try {
+              await API.del("/shifts/" + s.id);
+              toast("Shift deleted successfully", "success");
+              Views.shifts(root);
+            } catch (err) {
+              handleErr(err);
+            }
+          },
+          { danger: true, confirmLabel: "Delete Shift" }
+        );
+      };
+    });
+
+  } catch (err) {
+    root.innerHTML = pageHead("Shift Management", "Error loading shifts") + emptyState("Could not load shifts", err.message, "alert");
+  }
+};
+
 /* ============================================================ LEAVE */
 const leaveState = { tab: "overview", month: new Date(), selectedEmployee: null };
 const leaveTabs = [["overview", "Balances & requests"], ["encashment", "Sell Leaves (Encashment)"], ["calendar", "Team calendar"], ["approvals", "Approvals"], ["config", "Types & holidays"]];
