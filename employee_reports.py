@@ -16,6 +16,7 @@ from models import (
     Payslip, PayrollRun, Appraisal, AppraisalCycle, Goal, Training, TrainingEnrolment, Contract, Document,
     Loan, LoanRepayment, LeaveEncashment, LeaveType, Shift, ShiftAssignment,
     HotelWorkOrder, MaintenanceWork, MaintenanceCategory,
+    HotelStoreroom, HotelStoreroomSection, HotelInventoryItem, HotelStockMovement,
 )
 
 reports_bp = Blueprint("employee_reports", __name__, url_prefix="/api/v1/employee-reports")
@@ -82,6 +83,10 @@ REPORT_TYPES = [
      "description": "Room readiness, guest work orders, maintenance SLA turnaround times, wing backlogs and repair costs.",
      "scope": "both", "date_field": "created_at", "date_label": "Reported date",
      "status_label": "Work order status", "statuses": ["open", "in_progress", "completed", "cancelled", "on_hold"]},
+    {"key": "hotel-inventory", "title": "Hotel storeroom & inventory valuation audit", "icon": "briefcase", "group": "Hotel operations",
+     "description": "Storeroom asset valuation, low stock & reorder alerts, par level variance, and stock movement audit trails.",
+     "scope": "both", "date_field": "movement_date", "date_label": "Movement date",
+     "status_label": "Stock status", "statuses": ["in_stock", "low_stock", "out_of_stock", "on_order"]},
 ]
 TYPE_MAP = {item["key"]: item for item in REPORT_TYPES}
 
@@ -169,7 +174,7 @@ def register_report_routes(app, login_required, error, audit):
             employees = [e for e in employees if is_self(e.id) or role() in FINANCE_HR_ROLES]
         elif report_type == "leave-encashment":
             employees = [e for e in employees if is_self(e.id) or role() in ENCASHMENT_ROLES]
-        elif report_type in ("shift-roster", "hotel-workorders"):
+        elif report_type in ("shift-roster", "hotel-workorders", "hotel-inventory"):
             employees = [e for e in employees if is_self(e.id) or role() in ORGANISATION_ROLES or role() == "manager"]
         elif report_type == "documents":
             employees = [e for e in employees if is_self(e.id) or role() in HR_ROLES or role() == "manager"]
@@ -184,7 +189,7 @@ def register_report_routes(app, login_required, error, audit):
             return is_self(employee.id) or role() in FINANCE_HR_ROLES
         if report_type == "leave-encashment":
             return is_self(employee.id) or role() in ENCASHMENT_ROLES
-        if report_type in ("shift-roster", "hotel-workorders"):
+        if report_type in ("shift-roster", "hotel-workorders", "hotel-inventory"):
             return is_self(employee.id) or role() in ORGANISATION_ROLES or role() == "manager"
         if report_type == "documents":
             return is_self(employee.id) or role() in HR_ROLES or role() == "manager"
@@ -195,7 +200,7 @@ def register_report_routes(app, login_required, error, audit):
             return role() in FINANCE_HR_ROLES
         if key == "leave-encashment":
             return role() in ENCASHMENT_ROLES
-        if key in ("shift-roster", "hotel-workorders"):
+        if key in ("shift-roster", "hotel-workorders", "hotel-inventory"):
             return role() in ORGANISATION_ROLES | {"manager"}
         if key == "documents":
             return role() in HR_ROLES | {"manager"}
@@ -988,6 +993,189 @@ def register_report_routes(app, login_required, error, audit):
                 {"label": "Active backlog", "value": str(sum(r["status"] in ("open", "in_progress") for r in wo_rows))},
                 {"label": "SLA compliance rate", "value": f"{overall_sla_pct}%" if completed_count > 0 else "—"},
                 {"label": "Maintenance cost", "value": f"{currency} {total_maint_cost:,.2f}"},
+            ]
+        elif report_type == "hotel-inventory":
+            # 1. Query items
+            item_query = HotelInventoryItem.query
+            if filters["department_id"] is not None:
+                item_query = item_query.join(HotelInventoryItem.storeroom).filter(HotelStoreroom.department_id == filters["department_id"])
+
+            items = item_query.order_by(HotelInventoryItem.category.asc(), HotelInventoryItem.name.asc()).all()
+
+            # Section 1: Storeroom Inventory Register & Asset Valuation
+            inv_rows = []
+            low_stock_rows = []
+            total_val = 0.0
+            reorder_budget = 0.0
+            low_stock_count = 0
+            out_of_stock_count = 0
+
+            for itm in items:
+                stock_qty = itm.current_stock or 0
+                reorder_qty = itm.reorder_level or 0
+                par_qty = itm.ideal_par_level or 0
+                cost = float(itm.unit_cost or 0)
+                item_val = stock_qty * cost
+                total_val += item_val
+
+                store_name = itm.storeroom.name if itm.storeroom else "General Store"
+                store_code = itm.storeroom.code if itm.storeroom else "STORE"
+
+                is_out = stock_qty <= 0
+                is_low = stock_qty <= reorder_qty and not is_out
+
+                if is_out:
+                    out_of_stock_count += 1
+                    health_str = "🚨 Out of Stock (0)"
+                    health_status = "absent"
+                elif is_low:
+                    low_stock_count += 1
+                    health_str = f"⚠ Low Stock ({stock_qty} / {reorder_qty})"
+                    health_status = "late"
+                else:
+                    par_pct = round((stock_qty / par_qty) * 100) if par_qty > 0 else 100
+                    health_str = f"✓ Healthy ({par_pct}% of Par)"
+                    health_status = "completed"
+
+                row_dict = {
+                    "sku": itm.sku,
+                    "name": itm.name,
+                    "category": itm.category,
+                    "storeroom": f"{store_name} ({store_code})",
+                    "current_stock": f"{stock_qty} {itm.unit or 'units'}",
+                    "par_level": f"{par_qty} {itm.unit or 'units'}",
+                    "reorder_level": f"{reorder_qty} {itm.unit or 'units'}",
+                    "unit_cost": _display(cost, "money").replace("GHS", currency),
+                    "valuation": _display(item_val, "money").replace("GHS", currency),
+                    "health": health_str,
+                    "status": itm.status or ("out_of_stock" if is_out else ("low_stock" if is_low else "in_stock")),
+                    "_valuation": item_val,
+                }
+                inv_rows.append(row_dict)
+
+                # Low stock & urgent reorder table
+                if is_out or is_low:
+                    shortage = max(0, par_qty - stock_qty)
+                    needed_cost = shortage * cost
+                    reorder_budget += needed_cost
+                    low_stock_rows.append({
+                        "sku": itm.sku,
+                        "name": itm.name,
+                        "storeroom": store_name,
+                        "current_stock": f"{stock_qty} {itm.unit or 'units'}",
+                        "reorder_level": f"{reorder_qty} {itm.unit or 'units'}",
+                        "shortage": f"{shortage} {itm.unit or 'units'}",
+                        "reorder_cost": _display(needed_cost, "money").replace("GHS", currency),
+                        "supplier": itm.supplier or "Preferred Vendor",
+                        "status": "out_of_stock" if is_out else "low_stock",
+                        "_needed_cost": needed_cost,
+                    })
+
+            inv_rows = add("Storeroom inventory register & asset valuation", _columns(
+                ("sku", "SKU", "text"),
+                ("name", "Item Description", "text"),
+                ("category", "Category", "text"),
+                ("storeroom", "Storeroom / Hub", "text"),
+                ("current_stock", "On Hand", "text"),
+                ("par_level", "Par Level", "text"),
+                ("reorder_level", "Reorder Level", "text"),
+                ("unit_cost", "Unit Cost", "text"),
+                ("valuation", "Asset Value", "text"),
+                ("health", "Stock Health", "text"),
+                ("status", "Status", "status"),
+            ), inv_rows, "Audited valuation and current stock positions across all hotel departments and guest hubs.")
+
+            low_stock_rows = add("Low stock & urgent replenishment alert schedule", _columns(
+                ("sku", "SKU", "text"),
+                ("name", "Item Description", "text"),
+                ("storeroom", "Storeroom", "text"),
+                ("current_stock", "Stock Level", "text"),
+                ("reorder_level", "Threshold", "text"),
+                ("shortage", "Replenish Qty", "text"),
+                ("reorder_cost", "Restock Budget", "text"),
+                ("supplier", "Supplier / Source", "text"),
+                ("status", "Urgency", "status"),
+            ), low_stock_rows, "Critical items depleted below minimum reorder thresholds requiring urgent purchase requisitions.")
+
+            # Section 3: Stock Movement & Issuance Audit Trail
+            mov_query = HotelStockMovement.query
+            if filters["date_from"]:
+                mov_query = mov_query.filter(HotelStockMovement.movement_date >= filters["date_from"])
+            if filters["date_to"]:
+                mov_query = mov_query.filter(HotelStockMovement.movement_date <= filters["date_to"])
+
+            movements = mov_query.order_by(HotelStockMovement.movement_date.desc(), HotelStockMovement.id.desc()).all()
+            mov_rows = []
+            for m in movements:
+                itm = m.item
+                m_type = m.movement_type.lower() if m.movement_type else "transfer"
+                type_label = {
+                    "in": "Received (IN)",
+                    "out": "Issued to Rooms (OUT)",
+                    "transfer": "Stock Transfer",
+                    "damage": "Damaged / Discarded",
+                    "return": "Vendor Return",
+                    "adjustment": "Physical Count Audit",
+                }.get(m_type, m.movement_type.title() if m.movement_type else "Movement")
+
+                mov_rows.append({
+                    "movement_date": _display(m.movement_date, "date"),
+                    "reference_no": m.reference_no or f"MOV-{m.id:04d}",
+                    "item_name": itm.name if itm else f"Item #{m.item_id}",
+                    "sku": itm.sku if itm else "—",
+                    "movement_type": type_label,
+                    "quantity": f"{m.quantity} {itm.unit if itm and itm.unit else 'units'}",
+                    "source_dest": m.source_dest or "Internal Transfer",
+                    "status": "completed",
+                })
+
+            mov_rows = add("Stock movement & issuance audit trail", _columns(
+                ("movement_date", "Date", "text"),
+                ("reference_no", "Reference / PO", "text"),
+                ("sku", "SKU", "text"),
+                ("item_name", "Item Description", "text"),
+                ("movement_type", "Movement Type", "text"),
+                ("quantity", "Quantity", "text"),
+                ("source_dest", "Source / Destination", "text"),
+                ("status", "Status", "status"),
+            ), mov_rows, "Chronological movement register of deliveries, room replenishments, and linen disbursements.")
+
+            # Section 4: Storeroom Capacity & Hub Utilization Breakdown
+            storerooms = HotelStoreroom.query.order_by(HotelStoreroom.name.asc()).all()
+            store_rows = []
+            for s in storerooms:
+                s_items = [i for i in items if i.storeroom_id == s.id]
+                s_val = sum(float(i.current_stock or 0) * float(i.unit_cost or 0) for i in s_items)
+                store_rows.append({
+                    "code": s.code,
+                    "name": s.name,
+                    "category": s.category,
+                    "location": f"{s.location} ({s.wing or 'Main'})",
+                    "items_count": str(len(s_items)),
+                    "total_valuation": _display(s_val, "money").replace("GHS", currency),
+                    "capacity": f"{s.capacity_utilization or 0}% utilized",
+                    "manager_name": s.manager_name or (s.manager.full_name if s.manager else "Storekeeper"),
+                    "status": s.status or "active",
+                })
+
+            store_rows = add("Storeroom facility & service hub overview", _columns(
+                ("code", "Hub Code", "text"),
+                ("name", "Storeroom Name", "text"),
+                ("category", "Category", "text"),
+                ("location", "Location / Wing", "text"),
+                ("items_count", "SKU Count", "text"),
+                ("total_valuation", "Inventory Value", "text"),
+                ("capacity", "Space Capacity", "text"),
+                ("manager_name", "Custodian", "text"),
+                ("status", "Status", "status"),
+            ), store_rows, "Overview of central linen storage, housekeeping pantries, and guest room hubs.")
+
+            summary = [
+                {"label": "Total inventory value", "value": f"{currency} {total_val:,.2f}"},
+                {"label": "Tracked SKUs", "value": str(len(inv_rows))},
+                {"label": "Low stock alerts", "value": str(low_stock_count)},
+                {"label": "Out of stock items", "value": str(out_of_stock_count)},
+                {"label": "Restock budget required", "value": f"{currency} {reorder_budget:,.2f}"},
             ]
 
         scope_name = employee.full_name if employee else (department.name if department else ("Unassigned" if filters["department_id"] == 0 else "All accessible departments"))
