@@ -5981,7 +5981,7 @@ def delete_shift(shift_id):
 @app.get("/api/v1/roster")
 @login_required
 def get_roster():
-    """Get shift roster for a week and department"""
+    """Get shift roster for a week and department (supports individual dept or 'all' grouped)"""
     from datetime import datetime, timedelta, date
 
     week_start_str = request.args.get("week_start")  # YYYY-MM-DD format (Monday)
@@ -6012,27 +6012,40 @@ def get_roster():
     else:
         allowed_depts = []
 
+    allowed_ids = [d.id for d in allowed_depts]
+    if not allowed_ids:
+        return error("No accessible departments found", 400)
+
+    # Determine if 'all' departments requested
+    is_all = False
     target_dept_id = None
+
     if department_id_arg:
-        try:
-            target_dept_id = int(department_id_arg)
-        except ValueError:
-            return error("Invalid department ID", 400)
-
-        if not is_admin and target_dept_id not in [d.id for d in allowed_depts]:
-            return error("You don't have permission to view this department's roster", 403)
-    else:
-        if emp and emp.department_id:
-            target_dept_id = emp.department_id
-        elif allowed_depts:
-            target_dept_id = allowed_depts[0].id
+        if str(department_id_arg).lower() == "all":
+            if not is_admin and len(allowed_depts) <= 1:
+                target_dept_id = allowed_ids[0]
+            else:
+                is_all = True
         else:
-            first_dept = Department.query.order_by(Department.name).first()
-            if first_dept:
-                target_dept_id = first_dept.id
+            try:
+                target_dept_id = int(department_id_arg)
+            except ValueError:
+                return error("Invalid department ID", 400)
 
-    if not target_dept_id:
-        return error("No department available", 400)
+            if not is_admin and target_dept_id not in allowed_ids:
+                return error("You don't have permission to view this department's roster", 403)
+    else:
+        # Default behavior:
+        # For super_admin / hr_admin: default to "all" to show all departments grouped!
+        # For others: default to their department
+        if is_admin:
+            is_all = True
+        elif emp and emp.department_id in allowed_ids:
+            target_dept_id = emp.department_id
+        elif allowed_ids:
+            target_dept_id = allowed_ids[0]
+        else:
+            is_all = True
 
     # Parse week start date (ensure Monday)
     if week_start_str:
@@ -6049,24 +6062,37 @@ def get_roster():
 
     week_end = week_start + timedelta(days=6)
 
-    dept_obj = db.session.get(Department, target_dept_id)
+    # Query employees and assignments
+    if is_all:
+        dept_name = "All Departments"
+        employees = Employee.query.filter(
+            Employee.department_id.in_(allowed_ids),
+            Employee.status == "active"
+        ).order_by(Employee.department_id, Employee.first_name, Employee.last_name).all()
 
-    # Employees in department
-    employees = Employee.query.filter_by(
-        department_id=target_dept_id,
-        status="active"
-    ).order_by(Employee.first_name, Employee.last_name).all()
+        assignments = ShiftAssignment.query.filter(
+            ShiftAssignment.department_id.in_(allowed_ids),
+            ShiftAssignment.work_date >= week_start,
+            ShiftAssignment.work_date <= week_end
+        ).all()
+    else:
+        dept_obj = db.session.get(Department, target_dept_id)
+        dept_name = dept_obj.name if dept_obj else "Department"
+        employees = Employee.query.filter_by(
+            department_id=target_dept_id,
+            status="active"
+        ).order_by(Employee.first_name, Employee.last_name).all()
+
+        assignments = ShiftAssignment.query.filter(
+            ShiftAssignment.department_id == target_dept_id,
+            ShiftAssignment.work_date >= week_start,
+            ShiftAssignment.work_date <= week_end
+        ).all()
 
     # Shifts
     shifts = Shift.query.order_by(Shift.is_default.desc(), Shift.name).all()
 
-    # Assignments for this week
-    assignments = ShiftAssignment.query.filter(
-        ShiftAssignment.department_id == target_dept_id,
-        ShiftAssignment.work_date >= week_start,
-        ShiftAssignment.work_date <= week_end
-    ).all()
-
+    # Build assignment map
     assignment_map = {}
     for assign in assignments:
         key = f"{assign.employee_id}_{assign.work_date}"
@@ -6085,6 +6111,8 @@ def get_roster():
             "employee_id": emp_item.id,
             "employee_name": emp_item.full_name,
             "employee_no": emp_item.employee_no or "",
+            "department_id": emp_item.department_id,
+            "department_name": emp_item.department.name if emp_item.department else "Unassigned",
             "days": {}
         }
         for i in range(7):
@@ -6100,13 +6128,14 @@ def get_roster():
             })
         roster_data.append(emp_data)
 
-    can_edit = is_admin or (emp and (target_dept_id in hod_dept_ids))
+    can_edit = is_admin or (emp and (is_all or (target_dept_id in hod_dept_ids)))
 
     return success({
         "week_start": week_start.isoformat(),
         "week_end": week_end.isoformat(),
-        "department_id": target_dept_id,
-        "department_name": dept_obj.name if dept_obj else "",
+        "department_id": "all" if is_all else target_dept_id,
+        "department_name": dept_name,
+        "is_all": is_all,
         "departments": [{"id": d.id, "name": d.name} for d in allowed_depts],
         "can_edit": can_edit,
         "roster": roster_data,
@@ -6254,6 +6283,231 @@ def bulk_assign_shifts():
 
     db.session.commit()
     return success(None, f"{success_count} shift(s) assigned successfully")
+
+
+@app.post("/api/v1/roster/auto-generate")
+@login_required
+def auto_generate_roster():
+    """Auto-generate/run shift roster across departments using balanced, standard, or 24/7 rules"""
+    from datetime import datetime, timedelta, date
+
+    data = request.get_json() or {}
+    week_start_str = data.get("week_start")
+    dept_param = data.get("department_id", "all")
+    strategy = data.get("strategy", "balanced_rotation")  # balanced_rotation, standard_weekdays, hospitality_24_7, copy_previous_week
+    overwrite = bool(data.get("overwrite", False))
+
+    user_role = role_of(request.user)
+    is_admin = user_role in ["super_admin", "hr_admin", "hr_officer"]
+    emp = employee_of(request.user)
+
+    if not is_admin and not emp:
+        return error("Permission denied", 403)
+
+    # Determine allowed departments for the user
+    hod_dept_ids = []
+    if emp:
+        hod_records = DepartmentHead.query.filter_by(employee_id=emp.id, status="active").all()
+        hod_dept_ids = [h.department_id for h in hod_records if h.department_id]
+
+    if is_admin:
+        allowed_depts = Department.query.order_by(Department.name).all()
+    elif hod_dept_ids:
+        allowed_depts = Department.query.filter(Department.id.in_(hod_dept_ids)).order_by(Department.name).all()
+    else:
+        return error("You do not have permission to auto-generate shift schedules", 403)
+
+    allowed_dept_ids = [d.id for d in allowed_depts]
+
+    # Target departments
+    if str(dept_param).lower() in ["all", ""]:
+        target_dept_ids = allowed_dept_ids
+    else:
+        try:
+            tid = int(dept_param)
+            if tid not in allowed_dept_ids:
+                return error("You don't have permission for this department", 403)
+            target_dept_ids = [tid]
+        except ValueError:
+            return error("Invalid department ID", 400)
+
+    # Parse week_start (must be Monday)
+    if week_start_str:
+        try:
+            week_start = datetime.strptime(week_start_str, "%Y-%m-%d").date()
+        except ValueError:
+            return error("Invalid week start format (YYYY-MM-DD)", 400)
+    else:
+        today = date.today()
+        week_start = today - timedelta(days=today.weekday())
+
+    if week_start.weekday() != 0:
+        week_start = week_start - timedelta(days=week_start.weekday())
+
+    # Fetch shifts
+    all_shifts = Shift.query.all()
+    off_shift = next((s for s in all_shifts if (s.code and s.code.upper() == "OFF") or ("off" in s.name.lower())), None)
+    op_shifts = [s for s in all_shifts if (not s.code or s.code.upper() != "OFF") and ("off" not in s.name.lower())]
+
+    if not op_shifts:
+        op_shifts = all_shifts
+
+    default_op_shift = next((s for s in op_shifts if s.is_default), op_shifts[0] if op_shifts else None)
+
+    total_created = 0
+    total_updated = 0
+    departments_processed = 0
+
+    for dept_id in target_dept_ids:
+        employees = Employee.query.filter_by(
+            department_id=dept_id,
+            status="active"
+        ).order_by(Employee.first_name, Employee.last_name).all()
+
+        if not employees:
+            continue
+
+        departments_processed += 1
+
+        for emp_idx, employee in enumerate(employees):
+            # If strategy is copy_previous_week, load employee's previous week assignments
+            prev_map = {}
+            if strategy == "copy_previous_week":
+                prev_week_start = week_start - timedelta(days=7)
+                prev_week_end = prev_week_start + timedelta(days=6)
+                prev_assigns = ShiftAssignment.query.filter(
+                    ShiftAssignment.employee_id == employee.id,
+                    ShiftAssignment.work_date >= prev_week_start,
+                    ShiftAssignment.work_date <= prev_week_end
+                ).all()
+                prev_map = {a.work_date.weekday(): a.shift_id for a in prev_assigns}
+
+            for day_idx in range(7):
+                work_date = week_start + timedelta(days=day_idx)
+
+                existing = ShiftAssignment.query.filter_by(
+                    employee_id=employee.id,
+                    work_date=work_date
+                ).first()
+
+                if existing and not overwrite:
+                    continue
+
+                chosen_shift_id = None
+
+                if strategy == "copy_previous_week":
+                    if day_idx in prev_map:
+                        chosen_shift_id = prev_map[day_idx]
+                    else:
+                        chosen_shift_id = default_op_shift.id if (day_idx < 5 and default_op_shift) else (off_shift.id if off_shift else None)
+
+                elif strategy == "standard_weekdays":
+                    # Mon-Fri: default operational shift; Sat-Sun: Day Off (OFF)
+                    if day_idx < 5:
+                        chosen_shift_id = default_op_shift.id if default_op_shift else None
+                    else:
+                        chosen_shift_id = off_shift.id if off_shift else None
+
+                elif strategy == "hospitality_24_7":
+                    # Round-the-clock hotel coverage (Morning E, Afternoon A, Late L) with 2 staggered rest days
+                    rest_day_1 = (emp_idx * 2) % 7
+                    rest_day_2 = (rest_day_1 + 1) % 7
+
+                    if day_idx in (rest_day_1, rest_day_2):
+                        chosen_shift_id = off_shift.id if off_shift else None
+                    else:
+                        shift_cycle = [s for s in op_shifts if s.code in ["E", "A", "L", "MID"]] or op_shifts
+                        shift_pos = (emp_idx + day_idx) % len(shift_cycle)
+                        chosen_shift_id = shift_cycle[shift_pos].id
+
+                else:  # balanced_rotation (default)
+                    # 5 days work, 2 days off per employee; staggered rest days across staff:
+                    rest_day_1 = (emp_idx * 2) % 7
+                    rest_day_2 = (rest_day_1 + 1) % 7
+
+                    if day_idx in (rest_day_1, rest_day_2):
+                        chosen_shift_id = off_shift.id if off_shift else None
+                    else:
+                        shift_pos = (emp_idx + day_idx) % len(op_shifts)
+                        chosen_shift_id = op_shifts[shift_pos].id
+
+                if existing:
+                    existing.shift_id = chosen_shift_id
+                    existing.notes = f"Auto-scheduled ({strategy.replace('_', ' ')})"
+                    total_updated += 1
+                else:
+                    new_assign = ShiftAssignment(
+                        employee_id=employee.id,
+                        department_id=dept_id,
+                        shift_id=chosen_shift_id,
+                        work_date=work_date,
+                        week_start=week_start,
+                        notes=f"Auto-scheduled ({strategy.replace('_', ' ')})",
+                        created_by_id=emp.id if emp else None,
+                    )
+                    db.session.add(new_assign)
+                    total_created += 1
+
+    db.session.commit()
+
+    strat_label = {
+        "balanced_rotation": "Balanced Shift Rotation",
+        "standard_weekdays": "Standard Business Week (Mon-Fri)",
+        "hospitality_24_7": "24/7 Hospitality Coverage",
+        "copy_previous_week": "Replicated Previous Week"
+    }.get(strategy, strategy)
+
+    return success({
+        "week_start": week_start.isoformat(),
+        "total_created": total_created,
+        "total_updated": total_updated,
+        "total_assigned": total_created + total_updated,
+        "departments_count": departments_processed,
+        "strategy": strategy,
+        "strategy_label": strat_label,
+    }, f"Successfully auto-scheduled {total_created + total_updated} shifts across {departments_processed} department(s) using {strat_label}.")
+
+
+@app.get("/api/v1/roster/auto-run-settings")
+@login_required
+def get_auto_run_settings():
+    """Get automated shift roster recurring settings"""
+    enabled_row = Setting.query.filter_by(key="roster.auto_run_enabled").first()
+    strat_row = Setting.query.filter_by(key="roster.auto_run_strategy").first()
+    day_row = Setting.query.filter_by(key="roster.auto_run_day").first()
+    overwrite_row = Setting.query.filter_by(key="roster.auto_run_overwrite").first()
+
+    return success({
+        "enabled": enabled_row.value == "1" if enabled_row else True,
+        "strategy": strat_row.value if strat_row else "balanced_rotation",
+        "day": day_row.value if day_row else "Sunday",
+        "overwrite": overwrite_row.value == "1" if overwrite_row else False,
+    })
+
+
+@app.post("/api/v1/roster/auto-run-settings")
+@login_required
+@admin_required
+def save_auto_run_settings():
+    """Save automated shift roster recurring settings"""
+    data = request.get_json() or {}
+
+    pairs = {
+        "roster.auto_run_enabled": "1" if data.get("enabled", True) else "0",
+        "roster.auto_run_strategy": data.get("strategy", "balanced_rotation"),
+        "roster.auto_run_day": data.get("day", "Sunday"),
+        "roster.auto_run_overwrite": "1" if data.get("overwrite", False) else "0",
+    }
+
+    for key, val in pairs.items():
+        row = Setting.query.filter_by(key=key).first()
+        if row:
+            row.value = str(val)
+        else:
+            db.session.add(Setting(key=key, value=str(val), group_name="shifts"))
+
+    db.session.commit()
+    return success(None, "Auto-run roster settings saved successfully")
 
 
 # ---------------------------------------------------------------- attendance actions

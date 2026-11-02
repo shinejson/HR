@@ -3085,3 +3085,85 @@ html[data-dt-density="compact"] .avatar-sm { width: 25px; height: 25px; font-siz
     min-width: 60px;
   }
 }
+
+/* Department Section Headers in Roster Grid */
+.roster-dept-header-cell {
+  background: var(--paper) !important;
+  padding: 10px 16px !important;
+  border-top: 2px solid var(--line) !important;
+  border-bottom: 2px solid var(--line) !important;
+  border-left: none !important;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+}
+
+.roster-dept-header-row {
+  background: var(--paper);
+}
+
+.roster-dept-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+/* Strategy Option Cards in Auto-Schedule Modal */
+.strategy-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  background: var(--card);
+  transition: all 0.15s ease;
+}
+
+.strategy-card:hover {
+  border-color: var(--teal);
+  background: var(--paper);
+  transform: translateY(-1px);
+}
+
+.strategy-card.selected {
+  border-color: var(--teal) !important;
+  background: rgba(15, 118, 110, 0.05) !important;
+  box-shadow: 0 0 0 1px var(--teal);
+}
+
+.strategy-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(15, 118, 110, 0.1);
+  color: var(--teal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.strategy-content {
+  flex: 1;
+}
+
+.strategy-title {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.strategy-desc {
+  font-size: 11.5px;
+  color: var(--muted-2);
+  line-height: 1.4;
+}

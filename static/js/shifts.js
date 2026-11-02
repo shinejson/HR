@@ -1,14 +1,16 @@
 /* ============================================================
    SHIFT ROSTER MANAGEMENT - Weekly Calendar Grid
+   Auto-Run Scheduling & Department Grouping Engine
    ============================================================ */
 
 const RosterState = {
   weekStart: null,
-  departmentId: null,
+  departmentId: "all",
   roster: [],
   shifts: [],
   departments: [],
-  departmentName: "",
+  departmentName: "All Departments",
+  isAll: true,
   selectedCells: new Set(),
   canEdit: false,
   isLoading: false,
@@ -39,7 +41,7 @@ function formatDateRange(start, end) {
     }
     return `${sMonth} ${sDay} – ${eMonth} ${eDay}, ${sYear}`;
   }
-  return `${sMonth} ${sDay}, ${sYear} – ${eMonth} ${eDay}, ${eYear}`;
+  return `${sMonth} ${sDay}, ${sYear} – ${eMonth} ${eDay}, ${sYear}`;
 }
 
 function isDateToday(dateStr) {
@@ -54,8 +56,8 @@ function isDateToday(dateStr) {
  * Main Roster View Handler (Standalone #/roster page)
  */
 Views.roster = async function (root, params) {
-  if (params && params[0] && !isNaN(Number(params[0]))) {
-    RosterState.departmentId = Number(params[0]);
+  if (params && params[0]) {
+    RosterState.departmentId = params[0] === "all" ? "all" : (isNaN(Number(params[0])) ? "all" : Number(params[0]));
   }
   await renderRosterComponent(root, { embedded: false });
 };
@@ -94,8 +96,9 @@ async function loadRoster(container, isEmbedded) {
     RosterState.shifts = data.shifts || [];
     RosterState.departments = data.departments || [];
     RosterState.weekStart = data.week_start || RosterState.weekStart;
-    RosterState.departmentId = data.department_id || RosterState.departmentId;
-    RosterState.departmentName = data.department_name || "";
+    RosterState.departmentId = data.department_id !== undefined ? data.department_id : RosterState.departmentId;
+    RosterState.departmentName = data.department_name || "All Departments";
+    RosterState.isAll = data.is_all !== undefined ? !!data.is_all : (RosterState.departmentId === "all");
     RosterState.canEdit = !!data.can_edit;
     RosterState.selectedCells.clear();
 
@@ -159,15 +162,19 @@ function renderRosterGrid(container, data, isEmbedded) {
     });
   }
 
-  // Department options
+  // Department selector with "All Departments (Grouped)" option
   const deptList = RosterState.departments || [];
   let deptSelectHtml = "";
   if (deptList.length > 0) {
+    const isAllSelected = String(RosterState.departmentId) === "all";
     deptSelectHtml = '<div style="display:flex;align-items:center;gap:8px">'
-      + '<span class="tiny muted" style="font-weight:600;letter-spacing:.05em">DEPARTMENT:</span>'
-      + '<select class="select" id="roster-dept-select" style="min-width:210px;font-weight:600;font-size:12.5px">'
+      + '<span class="tiny muted" style="font-weight:600;letter-spacing:.05em">VIEW:</span>'
+      + '<select class="select" id="roster-dept-select" style="min-width:230px;font-weight:600;font-size:12.5px">'
+      + (Store.isRole("super_admin", "hr_admin", "hr_officer") || deptList.length > 1
+          ? `<option value="all"${isAllSelected ? " selected" : ""}>🏢 All Departments (Grouped)</option>`
+          : "")
       + deptList.map(dept => {
-          const sel = String(dept.id) === String(data.department_id) ? " selected" : "";
+          const sel = !isAllSelected && String(dept.id) === String(RosterState.departmentId) ? " selected" : "";
           return `<option value="${dept.id}"${sel}>${esc(dept.name)}</option>`;
         }).join("")
       + '</select>'
@@ -176,10 +183,13 @@ function renderRosterGrid(container, data, isEmbedded) {
     deptSelectHtml = `<div class="pill-tag" style="font-size:12px;font-weight:600">${esc(data.department_name)} Department</div>`;
   }
 
-  // Header banner (if not embedded inside tabs that already have pageHead)
+  // Header actions for standalone page
   let headHtml = "";
   if (!isEmbedded) {
     const headerActions = (RosterState.canEdit
+        ? '<button class="btn btn-accent" id="btn-auto-roster" title="Automatically generate and balance shifts across departments">' + icon("zap", 14) + ' Auto-Run Roster</button>'
+        : '')
+      + (RosterState.canEdit
         ? '<button class="btn btn-soft" id="btn-bulk-assign" style="display:none">' + icon("check", 14) + ' Assign Selected</button>'
         : '')
       + '<button class="btn btn-ghost" id="btn-manage-shifts">' + icon("settings", 14) + ' Shift Types</button>'
@@ -189,7 +199,7 @@ function renderRosterGrid(container, data, isEmbedded) {
 
     headHtml = pageHead(
       "Weekly Shift Roster",
-      "Department weekly roster — View, schedule, and assign staff shifts (E, L, MID, OFF, A, M)",
+      "Department weekly schedule — Auto-run shifts, balance coverage, and view staff grouped by department",
       headerActions,
       "Time & Absence"
     );
@@ -220,7 +230,10 @@ function renderRosterGrid(container, data, isEmbedded) {
     + '</div>'
     + '<div class="row" style="gap:10px;align-items:center;flex-wrap:wrap">'
     + (isEmbedded && RosterState.canEdit
-        ? '<button class="btn btn-accent btn-sm" id="btn-bulk-assign" style="display:none">' + icon("check", 13) + ' Assign Selected</button>'
+        ? '<button class="btn btn-accent btn-sm" id="btn-auto-roster">' + icon("zap", 13) + ' Auto-Run Roster</button>'
+        : '')
+    + (isEmbedded && RosterState.canEdit
+        ? '<button class="btn btn-soft btn-sm" id="btn-bulk-assign" style="display:none">' + icon("check", 13) + ' Assign Selected</button>'
         : '')
     + (isEmbedded
         ? '<button class="btn btn-ghost btn-sm" id="btn-manage-shifts" style="font-size:12px">' + icon("settings", 13) + ' Shift Types</button>'
@@ -229,59 +242,97 @@ function renderRosterGrid(container, data, isEmbedded) {
     + '</div>'
     + '</div>';
 
-  // Table
+  // Build Grouped Table Rows
   let tableRowsHtml = "";
   const employees = RosterState.roster || [];
 
   if (employees.length === 0) {
     tableRowsHtml = '<tr><td colspan="8" style="text-align:center;padding:64px 20px">'
       + '<div style="font-size:36px;margin-bottom:10px;color:var(--muted-2)">👥</div>'
-      + '<div style="font-weight:600;font-size:14px;margin-bottom:4px">No Active Employees in Department</div>'
-      + '<div class="tiny muted">There are no active employees registered under this department to display on the roster.</div>'
+      + '<div style="font-weight:600;font-size:14px;margin-bottom:4px">No Active Employees to Display</div>'
+      + '<div class="tiny muted">There are no active employees registered under the selected department filter.</div>'
       + '</td></tr>';
   } else {
+    // Group employees by department_id
+    const deptGroups = new Map();
     employees.forEach(emp => {
-      let cellsHtml = "";
-      days.forEach(d => {
-        const assignment = (emp.days && emp.days[d.dateStr]) || {};
-        const shiftCode = assignment.shift_code || "";
-        const shiftColor = assignment.shift_color || "";
-        const shiftName = assignment.shift_name || "";
-        const cellId = `${emp.employee_id}_${d.dateStr}`;
-        const isSelected = RosterState.selectedCells.has(cellId);
+      const deptId = emp.department_id || 0;
+      if (!deptGroups.has(deptId)) {
+        deptGroups.set(deptId, {
+          deptId: deptId,
+          deptName: emp.department_name || "General Department",
+          members: []
+        });
+      }
+      deptGroups.get(deptId).members.push(emp);
+    });
 
-        let badgeContent = "";
-        if (shiftCode) {
-          badgeContent = `<div class="roster-shift-badge" style="background:${shiftColor || '#0f766e'};color:white" title="${esc(shiftName)}">${esc(shiftCode)}</div>`;
-        } else {
-          badgeContent = `<div class="roster-shift-badge" style="background:transparent;color:var(--muted-2);border:1px dashed var(--line);font-size:13px;font-weight:400" title="Click to assign shift">+</div>`;
-        }
+    // Render each department group
+    deptGroups.forEach(group => {
+      const memberCount = group.members.length;
 
-        const cellClasses = [
-          "roster-cell",
-          d.isWeekend ? "roster-weekend" : "",
-          d.isToday ? "roster-today" : "",
-          RosterState.canEdit ? "roster-clickable" : "",
-          isSelected ? "roster-selected" : "",
-        ].filter(Boolean).join(" ");
-
-        cellsHtml += `<td class="${cellClasses}" `
-          + `data-cell-id="${cellId}" `
-          + `data-employee-id="${emp.employee_id}" `
-          + `data-employee-name="${esc(emp.employee_name)}" `
-          + `data-work-date="${d.dateStr}" `
-          + `data-shift-id="${assignment.shift_id || ''}" `
-          + `data-notes="${esc(assignment.notes || '')}">`
-          + badgeContent
-          + `</td>`;
-      });
-
-      tableRowsHtml += '<tr class="roster-row">'
-        + '<td class="roster-td-name" style="position:sticky;left:0;z-index:2;background:var(--card)">'
-        + personCell({ name: emp.employee_name, employee_no: emp.employee_no })
+      // Department Section Header Row
+      tableRowsHtml += '<tr class="roster-dept-header-row">'
+        + '<td colspan="8" class="roster-dept-header-cell">'
+        + '<div class="row-between" style="align-items:center">'
+        + '<div class="row" style="gap:10px;align-items:center">'
+        + '<span style="font-size:16px">🏢</span>'
+        + '<span class="roster-dept-title">' + esc(group.deptName) + '</span>'
+        + '<span class="chip teal" style="font-size:11px;font-weight:600;padding:2px 8px">' + memberCount + ' Team Member' + (memberCount > 1 ? 's' : '') + '</span>'
+        + '</div>'
+        + (RosterState.canEdit
+            ? '<button type="button" class="btn btn-ghost btn-sm btn-dept-auto-schedule" data-dept-id="' + group.deptId + '" data-dept-name="' + esc(group.deptName) + '" style="font-size:11px;padding:3px 10px;height:26px" title="Auto-schedule shifts for ' + esc(group.deptName) + '">'
+              + icon("zap", 12) + ' Auto-Schedule ' + esc(group.deptName)
+              + '</button>'
+            : '')
+        + '</div>'
         + '</td>'
-        + cellsHtml
         + '</tr>';
+
+      // Employees under this department
+      group.members.forEach(emp => {
+        let cellsHtml = "";
+        days.forEach(d => {
+          const assignment = (emp.days && emp.days[d.dateStr]) || {};
+          const shiftCode = assignment.shift_code || "";
+          const shiftColor = assignment.shift_color || "";
+          const shiftName = assignment.shift_name || "";
+          const cellId = `${emp.employee_id}_${d.dateStr}`;
+          const isSelected = RosterState.selectedCells.has(cellId);
+
+          let badgeContent = "";
+          if (shiftCode) {
+            badgeContent = `<div class="roster-shift-badge" style="background:${shiftColor || '#0f766e'};color:white" title="${esc(shiftName)}">${esc(shiftCode)}</div>`;
+          } else {
+            badgeContent = `<div class="roster-shift-badge" style="background:transparent;color:var(--muted-2);border:1px dashed var(--line);font-size:13px;font-weight:400" title="Click to assign shift">+</div>`;
+          }
+
+          const cellClasses = [
+            "roster-cell",
+            d.isWeekend ? "roster-weekend" : "",
+            d.isToday ? "roster-today" : "",
+            RosterState.canEdit ? "roster-clickable" : "",
+            isSelected ? "roster-selected" : "",
+          ].filter(Boolean).join(" ");
+
+          cellsHtml += `<td class="${cellClasses}" `
+            + `data-cell-id="${cellId}" `
+            + `data-employee-id="${emp.employee_id}" `
+            + `data-employee-name="${esc(emp.employee_name)}" `
+            + `data-work-date="${d.dateStr}" `
+            + `data-shift-id="${assignment.shift_id || ''}" `
+            + `data-notes="${esc(assignment.notes || '')}">`
+            + badgeContent
+            + `</td>`;
+        });
+
+        tableRowsHtml += '<tr class="roster-row">'
+          + '<td class="roster-td-name" style="position:sticky;left:0;z-index:2;background:var(--card)">'
+          + personCell({ name: emp.employee_name, employee_no: emp.employee_no })
+          + '</td>'
+          + cellsHtml
+          + '</tr>';
+      });
     });
   }
 
@@ -310,7 +361,7 @@ function renderRosterGrid(container, data, isEmbedded) {
 
   container.innerHTML = headHtml + toolbarHtml + tableHtml;
 
-  // Bind all interactive events
+  // Bind interactive events
   bindRosterEvents(container, isEmbedded);
 }
 
@@ -349,28 +400,44 @@ function bindRosterEvents(container, isEmbedded) {
   const deptSelect = container.querySelector("#roster-dept-select");
   if (deptSelect) {
     deptSelect.onchange = () => {
-      RosterState.departmentId = Number(deptSelect.value);
+      const val = deptSelect.value;
+      RosterState.departmentId = val === "all" ? "all" : Number(val);
       loadRoster(container, isEmbedded);
     };
   }
 
-  // 3. Shift Types modal
+  // 3. Auto-Run Shift Roster button
+  const autoBtn = container.querySelector("#btn-auto-roster");
+  if (autoBtn) {
+    autoBtn.onclick = () => openAutoGenerateModal(null, null, container, isEmbedded);
+  }
+
+  // 4. Per-Department Quick Auto-Schedule buttons
+  container.querySelectorAll(".btn-dept-auto-schedule").forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const deptId = Number(btn.dataset.deptId);
+      const deptName = btn.dataset.deptName;
+      openAutoGenerateModal(deptId, deptName, container, isEmbedded);
+    };
+  });
+
+  // 5. Shift Types modal
   const manageBtn = container.querySelector("#btn-manage-shifts");
   if (manageBtn) {
     manageBtn.onclick = () => openManageShiftsModal();
   }
 
-  // 4. Bulk assign button
+  // 6. Bulk assign button
   const bulkBtn = container.querySelector("#btn-bulk-assign");
   if (bulkBtn) {
     bulkBtn.onclick = () => openBulkAssignModal(container, isEmbedded);
   }
 
-  // 5. Clickable cells
+  // 7. Clickable cells
   if (RosterState.canEdit) {
     container.querySelectorAll(".roster-clickable").forEach(cell => {
       cell.onclick = (e) => {
-        // Multi-select with Shift or Ctrl / Meta key
         if (e.shiftKey || e.ctrlKey || e.metaKey || RosterState.selectedCells.size > 0) {
           toggleCellSelection(cell, container);
         } else {
@@ -383,7 +450,6 @@ function bindRosterEvents(container, isEmbedded) {
         }
       };
 
-      // Right-click always selects for bulk assignment
       cell.oncontextmenu = (e) => {
         e.preventDefault();
         toggleCellSelection(cell, container);
@@ -412,6 +478,160 @@ function toggleCellSelection(cell, container) {
     } else {
       bulkBtn.style.display = "none";
     }
+  }
+}
+
+/**
+ * AUTO-RUN MODAL: Auto-schedule shifts with chosen algorithm
+ */
+function openAutoGenerateModal(preSelectedDeptId, preSelectedDeptName, container, isEmbedded) {
+  const deptList = RosterState.departments || [];
+  const currentWeekStart = RosterState.weekStart || getMonday(new Date());
+
+  // Calculate next week Monday
+  const nextWeekDate = new Date(currentWeekStart + "T00:00:00");
+  nextWeekDate.setDate(nextWeekDate.getDate() + 7);
+  const nextWeekStart = getMonday(nextWeekDate);
+
+  const currentRangeLabel = formatDateRange(new Date(currentWeekStart + "T00:00:00"), new Date(new Date(currentWeekStart + "T00:00:00").getTime() + 6 * 86400000));
+  const nextRangeLabel = formatDateRange(new Date(nextWeekStart + "T00:00:00"), new Date(new Date(nextWeekStart + "T00:00:00").getTime() + 6 * 86400000));
+
+  let deptSelectHtml = '<select class="select" id="auto-dept-select" style="width:100%;font-weight:600">'
+    + '<option value="all"' + (!preSelectedDeptId ? ' selected' : '') + '>🏢 All Departments (Grouped Schedule)</option>'
+    + deptList.map(dept => {
+        const isSel = preSelectedDeptId && String(dept.id) === String(preSelectedDeptId);
+        return `<option value="${dept.id}"${isSel ? ' selected' : ''}>${esc(dept.name)}</option>`;
+      }).join("")
+    + '</select>';
+
+  const bodyHtml = '<div class="stack" style="gap:18px">'
+    + '<div class="card card-pad" style="background:var(--paper);padding:12px 16px;border-left:3px solid var(--teal)">'
+    + '<div style="font-weight:700;font-size:13px;display:flex;align-items:center;gap:6px">' + icon("zap", 15) + ' Auto-Run Shift Scheduler</div>'
+    + '<div class="tiny muted" style="margin-top:2px">Automatically distribute shifts across active employees using fair rotations, hospital-grade 24/7 coverage, or standard business schedules.</div>'
+    + '</div>'
+
+    + '<div class="grid grid-2" style="gap:12px">'
+    + '<div class="form-group">'
+    + '<label class="label">Target Department(s)</label>'
+    + deptSelectHtml
+    + '</div>'
+    + '<div class="form-group">'
+    + '<label class="label">Target Week</label>'
+    + '<select class="select" id="auto-week-select" style="width:100%;font-weight:600">'
+    + '<option value="' + currentWeekStart + '" selected>Current Week (' + currentRangeLabel + ')</option>'
+    + '<option value="' + nextWeekStart + '">Next Week (' + nextRangeLabel + ')</option>'
+    + '</select>'
+    + '</div>'
+    + '</div>'
+
+    + '<div class="form-group">'
+    + '<label class="label">Scheduling Algorithm / Strategy</label>'
+    + '<div class="stack" style="gap:10px" id="strategy-options">'
+
+    + '<label class="strategy-card selected">'
+    + '<input type="radio" name="auto_strategy" value="balanced_rotation" checked style="display:none">'
+    + '<div class="strategy-icon">🔄</div>'
+    + '<div class="strategy-content">'
+    + '<div class="strategy-title">Balanced Shift Rotation (Recommended)</div>'
+    + '<div class="strategy-desc">5 working days + 2 rest days per employee. Staggers days off across staff so the department always has active coverage every day, fairly rotating Early, Afternoon, Mid, and Late shifts.</div>'
+    + '</div>'
+    + '</label>'
+
+    + '<label class="strategy-card">'
+    + '<input type="radio" name="auto_strategy" value="standard_weekdays" style="display:none">'
+    + '<div class="strategy-icon">🏢</div>'
+    + '<div class="strategy-content">'
+    + '<div class="strategy-title">Standard Business Week (Mon – Fri)</div>'
+    + '<div class="strategy-desc">Monday through Friday scheduled on standard working hours; Saturday and Sunday marked as Day Off (OFF). Ideal for corporate, HR, Finance, and Administration.</div>'
+    + '</div>'
+    + '</label>'
+
+    + '<label class="strategy-card">'
+    + '<input type="radio" name="auto_strategy" value="hospitality_24_7" style="display:none">'
+    + '<div class="strategy-icon">🏨</div>'
+    + '<div class="strategy-content">'
+    + '<div class="strategy-title">24/7 Hospitality Continuous Coverage</div>'
+    + '<div class="strategy-desc">Round-the-clock hotel coverage (Early morning checkouts, Afternoon operations, Late night audit). Staff assigned 5 on / 2 off with seamless rotational handovers.</div>'
+    + '</div>'
+    + '</label>'
+
+    + '<label class="strategy-card">'
+    + '<input type="radio" name="auto_strategy" value="copy_previous_week" style="display:none">'
+    + '<div class="strategy-icon">📋</div>'
+    + '<div class="strategy-content">'
+    + '<div class="strategy-title">Copy From Previous Week</div>'
+    + '<div class="strategy-desc">Replicates the exact shift assignments from the preceding week into the target week, preserving established shift patterns.</div>'
+    + '</div>'
+    + '</label>'
+
+    + '</div>'
+    + '</div>'
+
+    + '<div style="background:var(--card);padding:10px 14px;border:1px solid var(--line);border-radius:8px">'
+    + '<label class="row" style="cursor:pointer;font-size:12.5px;font-weight:500;gap:8px">'
+    + '<input type="checkbox" id="auto-overwrite-toggle" style="accent-color:var(--teal)">'
+    + '<span>Overwrite existing shift assignments <span class="muted tiny">(If unchecked, only empty/unassigned slots will be filled)</span></span>'
+    + '</label>'
+    + '</div>'
+
+    + '<div class="row-between" style="margin-top:8px">'
+    + '<button type="button" class="btn btn-ghost" data-close-modal>Cancel</button>'
+    + '<button type="button" class="btn btn-accent" id="btn-run-auto-schedule">' + icon("zap", 14) + ' Run Auto-Schedule</button>'
+    + '</div>'
+    + '</div>';
+
+  openModal({
+    title: "Auto-Run Shift Roster",
+    sub: preSelectedDeptName ? `Scheduling for ${preSelectedDeptName}` : "Bulk automated scheduling across departments",
+    body: bodyHtml,
+    wide: true,
+  });
+
+  // Strategy card selection highlighting
+  document.querySelectorAll(".strategy-card").forEach(card => {
+    card.onclick = () => {
+      document.querySelectorAll(".strategy-card").forEach(c => c.classList.remove("selected"));
+      card.classList.add("selected");
+      const radio = card.querySelector('input[type="radio"]');
+      if (radio) radio.checked = true;
+    };
+  });
+
+  // Run button handler
+  const runBtn = document.getElementById("btn-run-auto-schedule");
+  if (runBtn) {
+    runBtn.onclick = async () => {
+      const deptVal = document.getElementById("auto-dept-select").value;
+      const targetWeek = document.getElementById("auto-week-select").value;
+      const stratRadio = document.querySelector('input[name="auto_strategy"]:checked');
+      const strategy = stratRadio ? stratRadio.value : "balanced_rotation";
+      const overwrite = document.getElementById("auto-overwrite-toggle").checked;
+
+      runBtn.disabled = true;
+      runBtn.innerHTML = spinners(1) + " Scheduling…";
+
+      try {
+        const payload = {
+          week_start: targetWeek,
+          department_id: deptVal,
+          strategy: strategy,
+          overwrite: overwrite,
+        };
+
+        const res = await API.post("/roster/auto-generate", payload);
+        toast(res.message || "Shift roster auto-generated successfully!", "teal");
+        closeModal();
+
+        // Update current viewed week if user generated for next week
+        RosterState.weekStart = targetWeek;
+        RosterState.departmentId = deptVal === "all" ? "all" : Number(deptVal);
+        await loadRoster(container, isEmbedded);
+      } catch (err) {
+        toast(err.message || "Failed to auto-generate shift roster", "error");
+        runBtn.disabled = false;
+        runBtn.innerHTML = icon("zap", 14) + " Run Auto-Schedule";
+      }
+    };
   }
 }
 
