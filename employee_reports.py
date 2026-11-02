@@ -13,7 +13,7 @@ from sqlalchemy import or_, and_
 
 from models import (
     db, Company, Department, Employee, Attendance, LeaveBalance, LeaveRequest,
-    Payslip, PayrollRun, Appraisal, AppraisalCycle, Goal, Training, TrainingEnrolment, Contract, Document,
+    Payslip, PayrollRun, PayslipItem, Appraisal, AppraisalCycle, Goal, Training, TrainingEnrolment, Contract, Document,
     Loan, LoanRepayment, LeaveEncashment, LeaveType, Shift, ShiftAssignment,
     HotelWorkOrder, MaintenanceWork, MaintenanceCategory,
     HotelStoreroom, HotelStoreroomSection, HotelInventoryItem, HotelStockMovement,
@@ -58,6 +58,10 @@ REPORT_TYPES = [
      "status_label": "Encashment status", "statuses": ["pending", "approved", "rejected", "paid"]},
     {"key": "payroll", "title": "Payroll report", "icon": "wallet", "group": "Compensation",
      "description": "Payslip earnings, PAYE, SSNIT, other deductions and net pay by payroll period.",
+     "scope": "both", "date_field": "period_start", "date_label": "Payroll month",
+     "status_label": "Payroll status", "statuses": ["draft", "calculated", "approved", "paid"]},
+    {"key": "statutory-payroll", "title": "Statutory payroll schedule (GRA & SSNIT)", "icon": "receipt", "group": "Compensation",
+     "description": "Monthly GRA PAYE tax schedule, SSNIT Tier 1 (13.5%) and Tier 2 (5.0%) mandatory pension returns with employee TINs.",
      "scope": "both", "date_field": "period_start", "date_label": "Payroll month",
      "status_label": "Payroll status", "statuses": ["draft", "calculated", "approved", "paid"]},
     {"key": "loans", "title": "Staff loans & repayment ledger", "icon": "wallet", "group": "Compensation",
@@ -170,7 +174,7 @@ def register_report_routes(app, login_required, error, audit):
                 ids.update(e.id for e in Employee.query.filter_by(manager_id=request.user.employee_id,
                                                                  deleted_at=None).all())
             employees = query.filter(Employee.id.in_(ids)).order_by(Employee.first_name, Employee.last_name).all() if ids else []
-        if report_type in ("payroll", "loans"):
+        if report_type in ("payroll", "loans", "statutory-payroll"):
             employees = [e for e in employees if is_self(e.id) or role() in FINANCE_HR_ROLES]
         elif report_type == "leave-encashment":
             employees = [e for e in employees if is_self(e.id) or role() in ENCASHMENT_ROLES]
@@ -185,7 +189,7 @@ def register_report_routes(app, login_required, error, audit):
             allowed_ids = {e.id for e in visible_employees()}
         if employee is None or employee.id not in allowed_ids:
             return False
-        if report_type in ("payroll", "loans"):
+        if report_type in ("payroll", "loans", "statutory-payroll"):
             return is_self(employee.id) or role() in FINANCE_HR_ROLES
         if report_type == "leave-encashment":
             return is_self(employee.id) or role() in ENCASHMENT_ROLES
@@ -196,7 +200,7 @@ def register_report_routes(app, login_required, error, audit):
         return True
 
     def can_access_org_type(key):
-        if key in ("payroll", "loans"):
+        if key in ("payroll", "loans", "statutory-payroll"):
             return role() in FINANCE_HR_ROLES
         if key == "leave-encashment":
             return role() in ENCASHMENT_ROLES
@@ -246,7 +250,7 @@ def register_report_routes(app, login_required, error, audit):
 
     def resolve_scope(filters, report_type):
         if filters["department_id"] is not None:
-            if report_type in ("payroll", "loans") and role() not in FINANCE_HR_ROLES:
+            if report_type in ("payroll", "loans", "statutory-payroll") and role() not in FINANCE_HR_ROLES:
                 return error(f"Department {report_type} reports require payroll or HR access", 403)
             if report_type == "leave-encashment" and role() not in ENCASHMENT_ROLES:
                 return error("You do not have permission to view department leave encashment reports", 403)
@@ -602,6 +606,127 @@ def register_report_routes(app, login_required, error, audit):
             summary = [{"label": "Payslips", "value": str(len(rows))},
                        {"label": "Gross pay", "value": f"{currency} {sum(money_value(r['gross']) for r in rows):,.2f}"},
                        {"label": "Net pay", "value": f"{currency} {sum(money_value(r['net']) for r in rows):,.2f}"}]
+        elif report_type == "statutory-payroll":
+            query = Payslip.query.join(Payslip.run).filter(Payslip.employee_id.in_(ids))
+            if filters["date_from"]:
+                first = filters["date_from"].replace(day=1)
+                query = query.filter(or_(PayrollRun.period_year > first.year,
+                    and_(PayrollRun.period_year == first.year, PayrollRun.period_month >= first.month)))
+            if filters["date_to"]:
+                query = query.filter(or_(PayrollRun.period_year < filters["date_to"].year,
+                    and_(PayrollRun.period_year == filters["date_to"].year, PayrollRun.period_month <= filters["date_to"].month)))
+            records = query.order_by(PayrollRun.period_year.desc(), PayrollRun.period_month.desc()).all()
+
+            paye_rows = []
+            ssnit_rows = []
+            tier2_rows = []
+
+            total_gross = 0.0
+            total_tax = 0.0
+            total_tier1 = 0.0
+            total_tier2 = 0.0
+
+            for r in records:
+                emp = r.employee or by_id.get(r.employee_id)
+                period_str = f"{r.run.period_year}-{r.run.period_month:02d}"
+                gross_amt = float(r.gross or 0)
+                ssnit_amt = float(r.ssnit or 0)
+                tax_amt = float(r.tax or 0)
+                basic_amt = float(emp.basic_salary or (ssnit_amt / 0.055 if ssnit_amt > 0 else gross_amt))
+                taxable_amt = max(0.0, gross_amt - ssnit_amt)
+
+                tier1_total = round(basic_amt * 0.135, 2)
+                tier2_amt = round(basic_amt * 0.05, 2)
+                total_pension_amt = round(basic_amt * 0.185, 2)
+
+                total_gross += gross_amt
+                total_tax += tax_amt
+                total_tier1 += tier1_total
+                total_tier2 += tier2_amt
+
+                paye_rows.append({
+                    "tax_number": emp.tax_number or "Pending TIN",
+                    **person(emp),
+                    "period": period_str,
+                    "gross": _display(gross_amt, "money").replace("GHS", currency),
+                    "ssnit_relief": _display(ssnit_amt, "money").replace("GHS", currency),
+                    "taxable": _display(taxable_amt, "money").replace("GHS", currency),
+                    "tax": _display(tax_amt, "money").replace("GHS", currency),
+                    "status": r.run.status,
+                    "_gross": gross_amt,
+                    "_tax": tax_amt,
+                })
+
+                ssnit_rows.append({
+                    "ssnit_number": emp.ssnit_number or "Pending SSNIT",
+                    **person(emp),
+                    "period": period_str,
+                    "basic_salary": _display(basic_amt, "money").replace("GHS", currency),
+                    "employee_ssnit": _display(ssnit_amt, "money").replace("GHS", currency),
+                    "tier1_total": _display(tier1_total, "money").replace("GHS", currency),
+                    "status": r.run.status,
+                    "_tier1": tier1_total,
+                })
+
+                tier2_rows.append({
+                    "ssnit_number": emp.ssnit_number or "Pending SSNIT",
+                    **person(emp),
+                    "period": period_str,
+                    "basic_salary": _display(basic_amt, "money").replace("GHS", currency),
+                    "tier2_rate": "5.0%",
+                    "tier2_amount": _display(tier2_amt, "money").replace("GHS", currency),
+                    "total_pension": _display(total_pension_amt, "money").replace("GHS", currency),
+                    "status": r.run.status,
+                    "_tier2": tier2_amt,
+                })
+
+            paye_rows = add("GRA PAYE monthly income tax return schedule", _columns(
+                ("tax_number", "Employee TIN / Ghana Card", "text"),
+                ("employee_no", "Employee no.", "text"),
+                ("employee_name", "Employee", "text"),
+                ("department_name", "Department", "text"),
+                ("period", "Month", "text"),
+                ("gross", "Gross Emoluments", "text"),
+                ("ssnit_relief", "SSNIT Relief (5.5%)", "text"),
+                ("taxable", "Taxable Income", "text"),
+                ("tax", "PAYE Tax Withheld", "text"),
+                ("status", "Status", "status"),
+            ), paye_rows, "Audited monthly PAYE withholding tax schedule compliant with Ghana Revenue Authority (GRA) tax tables.")
+
+            ssnit_rows = add("SSNIT Tier 1 mandatory social security schedule (13.5%)", _columns(
+                ("ssnit_number", "SSNIT Number", "text"),
+                ("employee_no", "Employee no.", "text"),
+                ("employee_name", "Employee", "text"),
+                ("department_name", "Department", "text"),
+                ("period", "Month", "text"),
+                ("basic_salary", "Basic Salary", "text"),
+                ("employee_ssnit", "Employee (5.5%)", "text"),
+                ("tier1_total", "SSNIT Tier 1 (13.5%)", "text"),
+                ("status", "Status", "status"),
+            ), ssnit_rows, "Official monthly Tier 1 remittance schedule submitted to Social Security and National Insurance Trust.")
+
+            tier2_rows = add("Tier 2 occupational pension corporate trustee schedule (5.0%)", _columns(
+                ("ssnit_number", "SSNIT Number", "text"),
+                ("employee_no", "Employee no.", "text"),
+                ("employee_name", "Employee", "text"),
+                ("department_name", "Department", "text"),
+                ("period", "Month", "text"),
+                ("basic_salary", "Basic Salary", "text"),
+                ("tier2_rate", "Rate", "text"),
+                ("tier2_amount", "Tier 2 Trustee Remittance", "text"),
+                ("total_pension", "Total Pension (18.5%)", "text"),
+                ("status", "Status", "status"),
+            ), tier2_rows, "Mandatory second-tier privately managed occupational pension remittance schedule (Act 766).")
+
+            total_obligations = total_tax + total_tier1 + total_tier2
+
+            summary = [
+                {"label": "Total gross emoluments", "value": f"{currency} {total_gross:,.2f}"},
+                {"label": "GRA PAYE tax withheld", "value": f"{currency} {total_tax:,.2f}"},
+                {"label": "SSNIT Tier 1 remittance", "value": f"{currency} {total_tier1:,.2f}"},
+                {"label": "Tier 2 trustee remittance", "value": f"{currency} {total_tier2:,.2f}"},
+                {"label": "Total statutory liability", "value": f"{currency} {total_obligations:,.2f}"},
+            ]
         elif report_type == "loans":
             query = date_window(Loan.query.filter(Loan.employee_id.in_(ids)), Loan.start_date, filters)
             loans = query.order_by(Loan.start_date.desc(), Loan.id.desc()).all()
