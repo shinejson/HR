@@ -519,7 +519,7 @@ const shiftsState = { tab: "schedules" };
 const shiftTabs = [
   ["schedules", "Shifts & Working Hours"],
   ["coverage", "24-Hour Coverage Timeline"],
-  ["roster", "Staff Distribution & Work Modes"],
+  ["roster", "Weekly Shift Roster"],
   ["policy", "Lateness & Overtime Rules"],
 ];
 
@@ -736,60 +736,9 @@ Views.shifts = async function (root, params) {
         + '</div></div>';
     }
 
-    /* ---------------- TAB 3: STAFF DISTRIBUTION & WORK MODES ---------------- */
+    /* ---------------- TAB 3: WEEKLY SHIFT ROSTER ---------------- */
     else if (shiftsState.tab === "roster") {
-      const officeCount = employees.filter(e => (e.work_location || "Office").toLowerCase() === "office").length;
-      const hybridCount = employees.filter(e => (e.work_location || "").toLowerCase() === "hybrid").length;
-      const remoteCount = employees.filter(e => (e.work_location || "").toLowerCase() === "remote").length;
-
-      body = '<div class="grid grid-3" style="margin-bottom:18px">'
-        + kpiCard({ label: "On-Site / Office", value: officeCount, icon: "building", tone: "teal", foot: "Stationed on hotel premises" })
-        + kpiCard({ label: "Hybrid Roster", value: hybridCount, icon: "refresh", tone: "blue", foot: "Rotational on-site / remote" })
-        + kpiCard({ label: "Remote / Field", value: remoteCount, icon: "globe", tone: "purple", foot: "Remote staff / off-site" })
-        + '</div>'
-        + renderTable({
-          id: "staff-roster-table",
-          exportName: "staff-schedules",
-          filters: [
-            { key: "department_name", label: "Department" },
-            { key: "work_location", label: "Work Location" },
-            { key: "work_schedule", label: "Schedule Type" },
-          ],
-          columns: [
-            {
-              label: "Employee",
-              sortKey: "full_name",
-              render: r => personCell({ name: r.full_name || (r.first_name + ' ' + r.last_name), employee_no: r.employee_no })
-            },
-            {
-              label: "Department",
-              key: "department_name",
-              render: r => esc(r.department_name || "—")
-            },
-            {
-              label: "Designation",
-              key: "designation_title",
-              render: r => esc(r.designation_title || "—")
-            },
-            {
-              label: "Work Mode",
-              key: "work_location",
-              render: r => '<span class="chip ' + (r.work_location === 'Remote' ? 'purple' : (r.work_location === 'Hybrid' ? 'teal' : 'grey')) + '">' + esc(r.work_location || "Office") + '</span>'
-            },
-            {
-              label: "Schedule",
-              key: "work_schedule",
-              render: r => '<span class="pill-tag" style="text-transform:capitalize">' + esc(r.work_schedule || "Standard") + '</span>'
-            },
-            {
-              label: "Status",
-              key: "status",
-              render: r => chip(r.status || "active")
-            },
-          ],
-          rows: employees,
-          emptyTitle: "No staff roster records found",
-        });
+      body = '<div id="shifts-embedded-roster-mount" style="min-height:360px"></div>';
     }
 
     /* ---------------- TAB 4: LATENESS & OVERTIME RULES ---------------- */
@@ -833,6 +782,14 @@ Views.shifts = async function (root, params) {
         ).join("")
       + '</div>'
       + body;
+
+    // If weekly shift roster tab is active, mount the roster component
+    if (shiftsState.tab === "roster") {
+      const mount = root.querySelector("#shifts-embedded-roster-mount");
+      if (mount && typeof renderRosterComponent === "function") {
+        renderRosterComponent(mount, { embedded: true });
+      }
+    }
 
     // Bind tab events
     root.querySelectorAll("[data-stab]").forEach(b => {

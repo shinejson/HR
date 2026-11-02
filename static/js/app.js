@@ -30,6 +30,7 @@ const NAV = [
     label: "Time & absence", icon: "clock",
     items: [
       { id: "attendance", label: "Attendance", icon: "clock" },
+      { id: "roster", label: "Shift Roster", icon: "calendar", roles: ["super_admin", "hr_admin", "hr_officer", "manager", "department_head", "employee"] },
       { id: "leave", label: "Leave", icon: "calendar" },
       { id: "leave", label: "Sell Leaves", icon: "dollar", subTab: "encashment" },
       { id: "shifts", label: "Shift Management", icon: "clock", roles: ["super_admin", "hr_admin", "hr_officer"] },
@@ -104,7 +105,7 @@ const PAGES = {
   payroll: "Payroll", expenses: "Expenses", performance: "Performance", training: "Training",
   assets: "Assets", helpdesk: "Helpdesk", announcements: "Announcements & Events", operations: "Operations",
   reports: "Report centre", admin: "Administration", profile: "My Profile", settings: "Settings", notifications: "Notifications",
-  backups: "Backups & Recovery", shifts: "Shift Management",
+  backups: "Backups & Recovery", shifts: "Shift Management", roster: "Shift Roster",
 };
 
 function currentRole() { return Store.role(); }

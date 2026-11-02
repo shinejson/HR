@@ -26,7 +26,7 @@ from models import (
     EmployeeContact, Dependant, BankAccount, EmploymentHistory, EmployeeSkill,
     EmployeeEducation, Contract, Document, EmploymentLetter, Policy, PolicyAck, JobRequisition,
     JobPosting, Candidate, Application, Interview, OnboardingTemplate, OnboardingTask,
-    Offboarding, Shift, Attendance, AttendanceCorrection, LeaveType, LeaveBalance,
+    Offboarding, Shift, ShiftAssignment, Attendance, AttendanceCorrection, LeaveType, LeaveBalance,
     LeaveRequest, Holiday, SalaryComponent, SalaryStructure, TaxBand, PayrollRun,
     Payslip, PayslipItem, Loan, LoanRepayment, LeaveEncashment, Goal, AppraisalCycle, Appraisal, Training,
     TrainingEnrolment, ExpenseCategory, ExpenseClaim, Asset, AssetAssignment,
@@ -5830,6 +5830,7 @@ def get_shifts():
         "grace_minutes": s.grace_minutes,
         "overtime_multiplier": float(s.overtime_multiplier) if s.overtime_multiplier else 1.5,
         "is_default": s.is_default,
+        "color": getattr(s, 'color', '#0f766e') or '#0f766e',
         "created_at": s.created_at.isoformat() if hasattr(s, 'created_at') and s.created_at else None,
     } for s in shifts])
 
@@ -5845,6 +5846,7 @@ def create_shift():
     code = (data.get("code") or "").strip().upper()
     if not code and name:
         code = name[:2].upper()
+    color = (data.get("color") or "#0f766e").strip()
     start_time = (data.get("start_time") or "").strip()
     end_time = (data.get("end_time") or "").strip()
     grace_minutes = data.get("grace_minutes", 10)
@@ -5875,7 +5877,8 @@ def create_shift():
         end_time=end_time,
         grace_minutes=int(grace_minutes),
         overtime_multiplier=float(overtime_multiplier),
-        is_default=is_default
+        is_default=is_default,
+        color=color
     )
     
     db.session.add(shift)
@@ -5908,6 +5911,7 @@ def update_shift(shift_id):
     code = (data.get("code") or "").strip().upper()
     if not code and name:
         code = name[:2].upper()
+    color = (data.get("color") or "#0f766e").strip()
     start_time = (data.get("start_time") or "").strip()
     end_time = (data.get("end_time") or "").strip()
     
@@ -5931,6 +5935,7 @@ def update_shift(shift_id):
     
     shift.name = name
     shift.code = code
+    shift.color = color
     shift.start_time = start_time
     shift.end_time = end_time
     shift.grace_minutes = int(data.get("grace_minutes", 10))
@@ -5969,6 +5974,286 @@ def delete_shift(shift_id):
     db.session.commit()
     
     return success(None, f"Shift '{shift_name}' deleted successfully")
+
+
+# ---------------------------------------------------------------- weekly shift roster
+
+@app.get("/api/v1/roster")
+@login_required
+def get_roster():
+    """Get shift roster for a week and department"""
+    from datetime import datetime, timedelta, date
+
+    week_start_str = request.args.get("week_start")  # YYYY-MM-DD format (Monday)
+    department_id_arg = request.args.get("department_id")
+
+    user_role = role_of(request.user)
+    is_admin = user_role in ["super_admin", "hr_admin", "hr_officer"]
+    emp = employee_of(request.user)
+
+    if not emp and not is_admin:
+        return error("Employee profile not found", 404)
+
+    # Determine accessible departments
+    hod_dept_ids = []
+    if emp:
+        hod_records = DepartmentHead.query.filter_by(employee_id=emp.id, status="active").all()
+        hod_dept_ids = [h.department_id for h in hod_records if h.department_id]
+
+    if is_admin:
+        allowed_depts = Department.query.order_by(Department.name).all()
+    elif hod_dept_ids:
+        allowed_ids = set(hod_dept_ids)
+        if emp and emp.department_id:
+            allowed_ids.add(emp.department_id)
+        allowed_depts = Department.query.filter(Department.id.in_(allowed_ids)).order_by(Department.name).all()
+    elif emp and emp.department_id:
+        allowed_depts = Department.query.filter_by(id=emp.department_id).all()
+    else:
+        allowed_depts = []
+
+    target_dept_id = None
+    if department_id_arg:
+        try:
+            target_dept_id = int(department_id_arg)
+        except ValueError:
+            return error("Invalid department ID", 400)
+
+        if not is_admin and target_dept_id not in [d.id for d in allowed_depts]:
+            return error("You don't have permission to view this department's roster", 403)
+    else:
+        if emp and emp.department_id:
+            target_dept_id = emp.department_id
+        elif allowed_depts:
+            target_dept_id = allowed_depts[0].id
+        else:
+            first_dept = Department.query.order_by(Department.name).first()
+            if first_dept:
+                target_dept_id = first_dept.id
+
+    if not target_dept_id:
+        return error("No department available", 400)
+
+    # Parse week start date (ensure Monday)
+    if week_start_str:
+        try:
+            week_start = datetime.strptime(week_start_str, "%Y-%m-%d").date()
+        except ValueError:
+            return error("Invalid date format. Use YYYY-MM-DD", 400)
+    else:
+        today = date.today()
+        week_start = today - timedelta(days=today.weekday())
+
+    if week_start.weekday() != 0:
+        week_start = week_start - timedelta(days=week_start.weekday())
+
+    week_end = week_start + timedelta(days=6)
+
+    dept_obj = db.session.get(Department, target_dept_id)
+
+    # Employees in department
+    employees = Employee.query.filter_by(
+        department_id=target_dept_id,
+        status="active"
+    ).order_by(Employee.first_name, Employee.last_name).all()
+
+    # Shifts
+    shifts = Shift.query.order_by(Shift.is_default.desc(), Shift.name).all()
+
+    # Assignments for this week
+    assignments = ShiftAssignment.query.filter(
+        ShiftAssignment.department_id == target_dept_id,
+        ShiftAssignment.work_date >= week_start,
+        ShiftAssignment.work_date <= week_end
+    ).all()
+
+    assignment_map = {}
+    for assign in assignments:
+        key = f"{assign.employee_id}_{assign.work_date}"
+        assignment_map[key] = {
+            "id": assign.id,
+            "shift_id": assign.shift_id,
+            "shift_code": assign.shift.code if assign.shift and assign.shift.code else ("OFF" if not assign.shift_id else "S"),
+            "shift_name": assign.shift.name if assign.shift else ("Day Off" if not assign.shift_id else "Shift"),
+            "shift_color": getattr(assign.shift, 'color', '#94a3b8') if assign.shift else "#94a3b8",
+            "notes": assign.notes or "",
+        }
+
+    roster_data = []
+    for emp_item in employees:
+        emp_data = {
+            "employee_id": emp_item.id,
+            "employee_name": emp_item.full_name,
+            "employee_no": emp_item.employee_no or "",
+            "days": {}
+        }
+        for i in range(7):
+            day_date = week_start + timedelta(days=i)
+            key = f"{emp_item.id}_{day_date}"
+            emp_data["days"][day_date.isoformat()] = assignment_map.get(key, {
+                "id": None,
+                "shift_id": None,
+                "shift_code": "",
+                "shift_name": "",
+                "shift_color": "",
+                "notes": "",
+            })
+        roster_data.append(emp_data)
+
+    can_edit = is_admin or (emp and (target_dept_id in hod_dept_ids))
+
+    return success({
+        "week_start": week_start.isoformat(),
+        "week_end": week_end.isoformat(),
+        "department_id": target_dept_id,
+        "department_name": dept_obj.name if dept_obj else "",
+        "departments": [{"id": d.id, "name": d.name} for d in allowed_depts],
+        "can_edit": can_edit,
+        "roster": roster_data,
+        "shifts": [{
+            "id": s.id,
+            "name": s.name,
+            "code": s.code or "",
+            "start_time": s.start_time,
+            "end_time": s.end_time,
+            "color": getattr(s, 'color', '#0f766e') or '#0f766e',
+        } for s in shifts],
+    })
+
+
+@app.post("/api/v1/roster/assign")
+@login_required
+def assign_shift():
+    """Assign a shift to an employee for a specific date"""
+    from datetime import datetime, timedelta
+    data = request.get_json() or {}
+
+    employee_id = data.get("employee_id")
+    work_date_str = data.get("work_date")
+    shift_id = data.get("shift_id")
+    notes = data.get("notes", "")
+
+    if not employee_id or not work_date_str:
+        return error("Employee ID and work date are required", 400)
+
+    try:
+        work_date = datetime.strptime(work_date_str, "%Y-%m-%d").date()
+    except ValueError:
+        return error("Invalid date format. Use YYYY-MM-DD", 400)
+
+    employee = Employee.query.get(employee_id)
+    if not employee:
+        return error("Employee not found", 404)
+
+    emp = employee_of(request.user)
+    user_role = role_of(request.user)
+    is_admin = user_role in ["super_admin", "hr_admin", "hr_officer"]
+
+    is_hod = False
+    if emp and employee.department_id:
+        is_hod = DepartmentHead.query.filter_by(
+            employee_id=emp.id,
+            department_id=employee.department_id,
+            status="active"
+        ).first() is not None
+
+    if not is_admin and not is_hod:
+        return error("You don't have permission to assign shifts for this employee", 403)
+
+    week_start = work_date - timedelta(days=work_date.weekday())
+
+    existing = ShiftAssignment.query.filter_by(
+        employee_id=employee_id,
+        work_date=work_date
+    ).first()
+
+    if existing:
+        existing.shift_id = shift_id if shift_id else None
+        existing.notes = notes
+    else:
+        assignment = ShiftAssignment(
+            employee_id=employee_id,
+            department_id=employee.department_id,
+            shift_id=shift_id if shift_id else None,
+            work_date=work_date,
+            week_start=week_start,
+            notes=notes,
+            created_by_id=emp.id if emp else None,
+        )
+        db.session.add(assignment)
+
+    db.session.commit()
+    return success(None, "Shift assigned successfully")
+
+
+@app.post("/api/v1/roster/bulk-assign")
+@login_required
+def bulk_assign_shifts():
+    """Bulk assign shifts for multiple employees/dates"""
+    from datetime import datetime, timedelta
+    data = request.get_json() or {}
+    assignments = data.get("assignments", [])
+
+    if not assignments:
+        return error("No assignments provided", 400)
+
+    emp = employee_of(request.user)
+    user_role = role_of(request.user)
+    is_admin = user_role in ["super_admin", "hr_admin", "hr_officer"]
+
+    success_count = 0
+    for item in assignments:
+        employee_id = item.get("employee_id")
+        work_date_str = item.get("work_date")
+        shift_id = item.get("shift_id")
+
+        if not employee_id or not work_date_str:
+            continue
+
+        try:
+            work_date = datetime.strptime(work_date_str, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+
+        employee = Employee.query.get(employee_id)
+        if not employee:
+            continue
+
+        is_hod = False
+        if emp and employee.department_id:
+            is_hod = DepartmentHead.query.filter_by(
+                employee_id=emp.id,
+                department_id=employee.department_id,
+                status="active"
+            ).first() is not None
+
+        if not is_admin and not is_hod:
+            continue
+
+        week_start = work_date - timedelta(days=work_date.weekday())
+
+        existing = ShiftAssignment.query.filter_by(
+            employee_id=employee_id,
+            work_date=work_date
+        ).first()
+
+        if existing:
+            existing.shift_id = shift_id if shift_id else None
+        else:
+            assignment = ShiftAssignment(
+                employee_id=employee_id,
+                department_id=employee.department_id,
+                shift_id=shift_id if shift_id else None,
+                work_date=work_date,
+                week_start=week_start,
+                created_by_id=emp.id if emp else None,
+            )
+            db.session.add(assignment)
+
+        success_count += 1
+
+    db.session.commit()
+    return success(None, f"{success_count} shift(s) assigned successfully")
 
 
 # ---------------------------------------------------------------- attendance actions
