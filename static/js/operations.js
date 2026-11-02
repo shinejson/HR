@@ -68,6 +68,9 @@ Views.operations = async function (root, params) {
   const sub = params && params[0];
   const validTabs = ["dashboard", "inventory", "workorders", "maintenance", "storerooms", "readiness", "assets", "safety", "settings"];
   opsState.tab = (sub && validTabs.includes(sub)) ? sub : "dashboard";
+  if (typeof DT_STATE_CACHE !== "undefined") {
+    DT_STATE_CACHE.delete("operations::hotel-work-orders-table");
+  }
 
   root.innerHTML = pageHead("Hotel Operations", "Loading operations workspace…", "", "Department") + spinners(4);
 
@@ -494,12 +497,26 @@ Views.operations = async function (root, params) {
               { label: "Assigned To", render: r => esc(r.assigned_to) },
               { label: "Time Logged", render: r => timeAgo(r.created_at) },
               {
-                label: "", class: "right",
-                render: r => '<select class="select ops-wo-status-select" data-wo-id="' + r.id + '" style="height:27px;font-size:11.5px;padding:2px 8px">'
-                  + ["open", "in_progress", "completed", "inspected", "cancelled"].map(st =>
-                      '<option value="' + st + '"' + (r.status === st ? " selected" : "") + '>' + st.replace("_", " ") + '</option>'
-                    ).join("")
-                  + '</select>',
+                label: "Action",
+                class: "right ops-wo-action-col",
+                sortable: false,
+                render: r => {
+                  const statusClass = esc(r.status || "open");
+                  return '<div class="row" style="gap:6px;justify-content:flex-end;align-items:center;flex-wrap:nowrap">'
+                    + '<select class="select ops-wo-status-select ' + statusClass + '" data-wo-id="' + r.id + '" title="Change work order status" aria-label="Update status for work order #' + esc(r.order_no) + '">'
+                    + [
+                        ["open", "Open"],
+                        ["in_progress", "In Progress"],
+                        ["completed", "Completed"],
+                        ["inspected", "Inspected"],
+                        ["cancelled", "Cancelled"]
+                      ].map(([st, lab]) =>
+                        '<option value="' + st + '"' + (r.status === st ? " selected" : "") + '>' + lab + '</option>'
+                      ).join("")
+                    + '</select>'
+                    + '<button type="button" class="btn btn-sm btn-ghost" data-view-wo="' + r.id + '" title="View work order details" style="padding:4px 8px;height:30px">' + icon("eye", 13) + '</button>'
+                    + '</div>';
+                },
               },
             ],
             rows: orders, emptyTitle: "No work orders in queue",
@@ -1282,12 +1299,34 @@ Views.operations = async function (root, params) {
       sel.onchange = async () => {
         const woId = sel.dataset.woId;
         const newStatus = sel.value;
+        const prevClasses = sel.className;
         try {
+          sel.disabled = true;
           await API.put("/operations/work-orders/" + woId + "/status", { status: newStatus });
-          toast("Work order status updated to " + newStatus, "success");
+          sel.className = "select ops-wo-status-select " + newStatus;
+          toast("Work order #" + woId + " status updated to " + newStatus.replace("_", " "), "success");
+          const tr = sel.closest("tr");
+          if (tr) {
+            const statusCell = tr.querySelector("td:nth-child(5)");
+            if (statusCell) {
+              const chipColor = newStatus === "completed" ? "green" : (newStatus === "in_progress" ? "blue" : (newStatus === "inspected" ? "purple" : (newStatus === "cancelled" ? "grey" : "amber")));
+              statusCell.innerHTML = chip(chipColor, newStatus.replace("_", " "));
+            }
+          }
         } catch (e) {
+          sel.className = prevClasses;
           toast("Could not update status: " + e.message, "error");
+        } finally {
+          sel.disabled = false;
         }
+      };
+    });
+
+    // Attach View Work Order Details
+    root.querySelectorAll("[data-view-wo]").forEach(b => {
+      b.onclick = () => {
+        const wo = workOrders.find(item => String(item.id) === String(b.dataset.viewWo));
+        if (wo) openWorkOrderDetailModal(wo);
       };
     });
 
@@ -2639,4 +2678,43 @@ function deleteHotelAsset(asset, onSuccess) {
     },
     { danger: true, confirmLabel: "Delete asset" }
   );
+}
+
+
+function openWorkOrderDetailModal(wo) {
+  const priorityColor = wo.priority === "emergency" ? "red" : (wo.priority === "high" ? "high" : "medium");
+  const statusColor = wo.status === "completed" ? "green" : (wo.status === "in_progress" ? "blue" : (wo.status === "inspected" ? "purple" : (wo.status === "cancelled" ? "grey" : "amber")));
+
+  openModal({
+    title: "Work Order #" + esc(wo.order_no || wo.id),
+    sub: esc(wo.title || "Work Order Details"),
+    wide: true,
+    body: '<div class="grid grid-2" style="gap:16px;margin-bottom:16px">'
+      + '<div class="card card-pad" style="background:var(--paper-2);border:1px solid var(--line);border-radius:8px">'
+      + '<div class="tiny muted uppercase bold" style="margin-bottom:10px;letter-spacing:.05em">Assignment & Location</div>'
+      + '<dl class="kv">'
+      + '<dt>Order #</dt><dd><b>#' + esc(wo.order_no || wo.id) + '</b></dd>'
+      + '<dt>Category</dt><dd><span class="pill-tag">' + esc(wo.category || "General") + '</span></dd>'
+      + '<dt>Location</dt><dd><b>' + esc(wo.location || "—") + '</b></dd>'
+      + '<dt>Wing & Floor</dt><dd>' + esc(wo.wing || "—") + (wo.floor ? ' · ' + esc(wo.floor) : '') + '</dd>'
+      + '<dt>Assigned Staff</dt><dd><b>' + esc(wo.assigned_to || "Unassigned") + '</b></dd>'
+      + '<dt>Reported By</dt><dd>' + esc(wo.reported_by || "Staff") + '</dd>'
+      + '</dl>'
+      + '</div>'
+      + '<div class="card card-pad" style="background:var(--paper-2);border:1px solid var(--line);border-radius:8px">'
+      + '<div class="tiny muted uppercase bold" style="margin-bottom:10px;letter-spacing:.05em">Status & Timestamps</div>'
+      + '<dl class="kv">'
+      + '<dt>Priority</dt><dd>' + chip(priorityColor, wo.priority || "normal") + '</dd>'
+      + '<dt>Current Status</dt><dd>' + chip(statusColor, (wo.status || "open").replace("_", " ")) + '</dd>'
+      + '<dt>Date Logged</dt><dd>' + fmtDateTime(wo.created_at) + ' (' + timeAgo(wo.created_at) + ')</dd>'
+      + '<dt>Completed At</dt><dd>' + (wo.completed_at ? fmtDateTime(wo.completed_at) : '<span class="muted">Incomplete</span>') + '</dd>'
+      + '</dl>'
+      + '</div>'
+      + '</div>'
+      + '<div class="card card-pad" style="background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:12px">'
+      + '<div class="tiny muted uppercase bold" style="margin-bottom:6px;letter-spacing:.05em">Description & Task Notes</div>'
+      + '<div style="font-size:13px;line-height:1.6;color:var(--text);white-space:pre-wrap">' + esc(wo.description || "No additional description provided.") + '</div>'
+      + '</div>',
+    footer: '<button class="btn btn-ghost" data-close-modal>Close</button>'
+  });
 }
