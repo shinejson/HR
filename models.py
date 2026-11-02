@@ -471,6 +471,7 @@ class Shift(db.Model, TimestampMixin):
     __tablename__ = "shifts"
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(80), nullable=False)
+    code = db.Column(db.String(10), nullable=True)
     start_time = db.Column(db.String(8), nullable=False)
     end_time = db.Column(db.String(8), nullable=False)
     grace_minutes = db.Column(db.Integer, default=10)

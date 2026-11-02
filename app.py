@@ -1029,6 +1029,13 @@ def error(msg, code=400, errors=None):
     return jsonify(payload), code
 
 
+def success(data=None, msg="Success", code=200):
+    payload = {"data": data}
+    if msg:
+        payload["message"] = msg
+    return jsonify(payload), code
+
+
 SESSION_TIMEOUT_MINUTES = 30
 
 
@@ -5817,6 +5824,7 @@ def get_shifts():
     return success([{
         "id": s.id,
         "name": s.name,
+        "code": s.code or "",
         "start_time": s.start_time,
         "end_time": s.end_time,
         "grace_minutes": s.grace_minutes,
@@ -5834,6 +5842,9 @@ def create_shift():
     data = request.get_json() or {}
     
     name = (data.get("name") or "").strip()
+    code = (data.get("code") or "").strip().upper()
+    if not code and name:
+        code = name[:2].upper()
     start_time = (data.get("start_time") or "").strip()
     end_time = (data.get("end_time") or "").strip()
     grace_minutes = data.get("grace_minutes", 10)
@@ -5859,6 +5870,7 @@ def create_shift():
     
     shift = Shift(
         name=name,
+        code=code,
         start_time=start_time,
         end_time=end_time,
         grace_minutes=int(grace_minutes),
@@ -5872,6 +5884,7 @@ def create_shift():
     return success({
         "id": shift.id,
         "name": shift.name,
+        "code": shift.code,
         "start_time": shift.start_time,
         "end_time": shift.end_time,
         "grace_minutes": shift.grace_minutes,
@@ -5885,13 +5898,16 @@ def create_shift():
 @admin_required
 def update_shift(shift_id):
     """Update an existing shift"""
-    shift = Shift.query.get(shift_id)
+    shift = db.session.get(Shift, shift_id)
     if not shift:
         return error("Shift not found", 404)
     
     data = request.get_json() or {}
     
     name = (data.get("name") or "").strip()
+    code = (data.get("code") or "").strip().upper()
+    if not code and name:
+        code = name[:2].upper()
     start_time = (data.get("start_time") or "").strip()
     end_time = (data.get("end_time") or "").strip()
     
@@ -5914,6 +5930,7 @@ def update_shift(shift_id):
         Shift.query.filter(Shift.id != shift_id).update({"is_default": False})
     
     shift.name = name
+    shift.code = code
     shift.start_time = start_time
     shift.end_time = end_time
     shift.grace_minutes = int(data.get("grace_minutes", 10))
@@ -5925,6 +5942,7 @@ def update_shift(shift_id):
     return success({
         "id": shift.id,
         "name": shift.name,
+        "code": shift.code,
         "start_time": shift.start_time,
         "end_time": shift.end_time,
         "grace_minutes": shift.grace_minutes,
@@ -5938,7 +5956,7 @@ def update_shift(shift_id):
 @admin_required
 def delete_shift(shift_id):
     """Delete a shift"""
-    shift = Shift.query.get(shift_id)
+    shift = db.session.get(Shift, shift_id)
     if not shift:
         return error("Shift not found", 404)
     

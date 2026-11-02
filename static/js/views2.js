@@ -538,9 +538,10 @@ function openShiftModal(shift, onSaved) {
   const isEdit = !!shift;
   openFormModal({
     title: isEdit ? "Edit Shift Configuration" : "Create New Operational Shift",
-    sub: isEdit ? "Update shift parameters for " + (shift.name || "Shift") : "Define shift working hours, grace period, and overtime multiplier",
+    sub: isEdit ? "Update shift parameters for " + (shift.name || "Shift") : "Define shift code/letter, working hours, grace period, and overtime multiplier",
     submitLabel: isEdit ? "Update Shift" : "Create Shift",
     values: shift || {
+      code: "",
       name: "",
       start_time: "08:30",
       end_time: "17:30",
@@ -549,7 +550,8 @@ function openShiftModal(shift, onSaved) {
       is_default: false,
     },
     fields: [
-      { name: "name", label: "Shift Name", required: true, placeholder: "e.g. Standard Day, Morning Shift, Night Front Desk" },
+      { name: "code", label: "Shift Code / Letter", required: true, placeholder: "e.g. M, A, E, N, D", hint: "Short letter/code (e.g. M for Mid, A for Afternoon, E for Early, N for Night)" },
+      { name: "name", label: "Shift Name", required: true, placeholder: "e.g. Mid Shift, Afternoon Shift, Early Morning, Night Shift" },
       { name: "start_time", label: "Start Time (HH:MM)", required: true, placeholder: "08:30", hint: "24-hour format HH:MM (e.g. 08:30, 07:00, 22:00)" },
       { name: "end_time", label: "End Time (HH:MM)", required: true, placeholder: "17:30", hint: "24-hour format HH:MM (e.g. 17:30, 16:00, 06:00)" },
       { name: "grace_minutes", label: "Grace Period (Minutes)", type: "number", default: 10, required: true, hint: "Allowed delay after start time before clock-in is marked late" },
@@ -559,6 +561,7 @@ function openShiftModal(shift, onSaved) {
     onSubmit: async (data) => {
       const payload = {
         name: (data.name || "").trim(),
+        code: (data.code || "").trim().toUpperCase(),
         start_time: (data.start_time || "").trim(),
         end_time: (data.end_time || "").trim(),
         grace_minutes: parseInt(data.grace_minutes, 10) || 10,
@@ -613,6 +616,11 @@ Views.shifts = async function (root, params) {
         id: "shifts-table",
         exportName: "hotel-shifts",
         columns: [
+          {
+            label: "Code",
+            sortKey: "code",
+            render: r => '<span class="chip blue mono" style="font-weight:700;font-size:13px;padding:3px 9px;min-width:32px;display:inline-block;text-align:center">' + esc(r.code || "—") + '</span>'
+          },
           {
             label: "Shift Name",
             sortKey: "name",
@@ -693,7 +701,8 @@ Views.shifts = async function (root, params) {
             }
 
             return '<div style="display:flex;align-items:center;gap:12px;">'
-              + '<div style="width:160px;min-width:160px;font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + esc(s.name) + '">'
+              + '<div style="width:180px;min-width:180px;font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + esc(s.name) + '">'
+              + (s.code ? '<span class="chip blue mono tiny" style="font-weight:700;margin-right:6px;padding:2px 6px">' + esc(s.code) + '</span>' : '')
               + (s.is_default ? '<span class="chip teal tiny" style="margin-right:6px">Default</span>' : '')
               + esc(s.name)
               + '</div>'
@@ -840,6 +849,7 @@ Views.shifts = async function (root, params) {
         try {
           await API.put("/shifts/" + s.id, {
             name: s.name,
+            code: s.code,
             start_time: s.start_time,
             end_time: s.end_time,
             grace_minutes: s.grace_minutes,
