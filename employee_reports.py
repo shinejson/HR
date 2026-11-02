@@ -15,6 +15,7 @@ from models import (
     db, Company, Department, Employee, Attendance, LeaveBalance, LeaveRequest,
     Payslip, PayrollRun, Appraisal, AppraisalCycle, Goal, Training, TrainingEnrolment, Contract, Document,
     Loan, LoanRepayment, LeaveEncashment, LeaveType, Shift, ShiftAssignment,
+    HotelWorkOrder, MaintenanceWork, MaintenanceCategory,
 )
 
 reports_bp = Blueprint("employee_reports", __name__, url_prefix="/api/v1/employee-reports")
@@ -77,6 +78,10 @@ REPORT_TYPES = [
     {"key": "documents", "title": "Document register", "icon": "file", "group": "People",
      "description": "Document titles, categories and expiry dates. Attached files are not included.",
      "scope": "both", "date_field": "expires_at", "date_label": "Document expiry"},
+    {"key": "hotel-workorders", "title": "Hotel work orders & maintenance SLA audit", "icon": "building", "group": "Hotel operations",
+     "description": "Room readiness, guest work orders, maintenance SLA turnaround times, wing backlogs and repair costs.",
+     "scope": "both", "date_field": "created_at", "date_label": "Reported date",
+     "status_label": "Work order status", "statuses": ["open", "in_progress", "completed", "cancelled", "on_hold"]},
 ]
 TYPE_MAP = {item["key"]: item for item in REPORT_TYPES}
 
@@ -164,7 +169,7 @@ def register_report_routes(app, login_required, error, audit):
             employees = [e for e in employees if is_self(e.id) or role() in FINANCE_HR_ROLES]
         elif report_type == "leave-encashment":
             employees = [e for e in employees if is_self(e.id) or role() in ENCASHMENT_ROLES]
-        elif report_type == "shift-roster":
+        elif report_type in ("shift-roster", "hotel-workorders"):
             employees = [e for e in employees if is_self(e.id) or role() in ORGANISATION_ROLES or role() == "manager"]
         elif report_type == "documents":
             employees = [e for e in employees if is_self(e.id) or role() in HR_ROLES or role() == "manager"]
@@ -179,7 +184,7 @@ def register_report_routes(app, login_required, error, audit):
             return is_self(employee.id) or role() in FINANCE_HR_ROLES
         if report_type == "leave-encashment":
             return is_self(employee.id) or role() in ENCASHMENT_ROLES
-        if report_type == "shift-roster":
+        if report_type in ("shift-roster", "hotel-workorders"):
             return is_self(employee.id) or role() in ORGANISATION_ROLES or role() == "manager"
         if report_type == "documents":
             return is_self(employee.id) or role() in HR_ROLES or role() == "manager"
@@ -190,7 +195,7 @@ def register_report_routes(app, login_required, error, audit):
             return role() in FINANCE_HR_ROLES
         if key == "leave-encashment":
             return role() in ENCASHMENT_ROLES
-        if key == "shift-roster":
+        if key in ("shift-roster", "hotel-workorders"):
             return role() in ORGANISATION_ROLES | {"manager"}
         if key == "documents":
             return role() in HR_ROLES | {"manager"}
@@ -802,6 +807,188 @@ def register_report_routes(app, login_required, error, audit):
                 "Register only; confidential document attachments must be opened from the Documents module.")
             summary = [{"label": "Documents", "value": str(len(rows))},
                        {"label": "With expiry date", "value": str(sum(r["expires_at"] != "—" for r in rows))}]
+        elif report_type == "hotel-workorders":
+            wo_query = HotelWorkOrder.query
+            if filters["employee_id"]:
+                wo_query = wo_query.filter(HotelWorkOrder.assigned_to_id == filters["employee_id"])
+            elif filters["department_id"] is not None:
+                wo_query = wo_query.filter(HotelWorkOrder.assigned_to_id.in_(ids))
+            else:
+                wo_query = wo_query.filter(or_(HotelWorkOrder.assigned_to_id.in_(ids), HotelWorkOrder.assigned_to_id.is_(None)))
+
+            if filters["date_from"]:
+                wo_query = wo_query.filter(HotelWorkOrder.created_at >= datetime.combine(filters["date_from"], datetime.min.time()))
+            if filters["date_to"]:
+                wo_query = wo_query.filter(HotelWorkOrder.created_at <= datetime.combine(filters["date_to"], datetime.max.time()))
+
+            orders = wo_query.order_by(HotelWorkOrder.created_at.desc(), HotelWorkOrder.id.desc()).all()
+            now_dt = datetime.utcnow()
+
+            def _fmt_hours(hrs):
+                if hrs < 1:
+                    return f"{max(1, int(hrs * 60))} mins"
+                if hrs < 24:
+                    return f"{hrs:.1f} hrs"
+                return f"{(hrs / 24):.1f} days"
+
+            sla_map = {"emergency": 2, "high": 12, "medium": 24, "low": 48}
+            sla_met_count = 0
+            completed_count = 0
+            wing_stats = {}
+
+            wo_rows = []
+            for o in orders:
+                emp = o.assigned_to or by_id.get(o.assigned_to_id)
+                emp_name = emp.full_name if emp else "Unassigned"
+                emp_no = emp.employee_no if emp else "—"
+
+                created_dt = o.created_at or now_dt
+                if o.completed_at:
+                    elapsed = (o.completed_at - created_dt).total_seconds() / 3600
+                    is_done = True
+                else:
+                    elapsed = (now_dt - created_dt).total_seconds() / 3600
+                    is_done = False
+
+                limit_hrs = sla_map.get((o.priority or "medium").lower(), 24)
+
+                if is_done:
+                    completed_count += 1
+                    if elapsed <= limit_hrs:
+                        sla_str = f"✓ Within SLA ({_fmt_hours(elapsed)})"
+                        sla_met_count += 1
+                        sla_tag = "completed"
+                    else:
+                        over = elapsed - limit_hrs
+                        sla_str = f"⚠ Breached (+{_fmt_hours(over)})"
+                        sla_tag = "late"
+                else:
+                    if elapsed > limit_hrs:
+                        over = elapsed - limit_hrs
+                        sla_str = f"⚠ Overdue (+{_fmt_hours(over)})"
+                        sla_tag = "absent"
+                    else:
+                        left = limit_hrs - elapsed
+                        sla_str = f"In SLA ({_fmt_hours(left)} left)"
+                        sla_tag = "scheduled"
+
+                wing_key = o.wing or "Central Facility"
+                if wing_key not in wing_stats:
+                    wing_stats[wing_key] = {"total": 0, "completed": 0, "open": 0, "sla_met": 0, "total_hrs": 0}
+                wing_stats[wing_key]["total"] += 1
+                if is_done:
+                    wing_stats[wing_key]["completed"] += 1
+                    wing_stats[wing_key]["total_hrs"] += elapsed
+                    if elapsed <= limit_hrs:
+                        wing_stats[wing_key]["sla_met"] += 1
+                else:
+                    wing_stats[wing_key]["open"] += 1
+
+                wo_rows.append({
+                    "order_no": o.order_no,
+                    "wing": o.wing or "Central Facility",
+                    "floor": o.floor or "—",
+                    "location": o.location,
+                    "title": o.title,
+                    "category": o.category,
+                    "priority": (o.priority or "medium").title(),
+                    "employee_name": emp_name,
+                    "employee_no": emp_no,
+                    "reported_at": _display(o.created_at, "datetime"),
+                    "turnaround": _fmt_hours(elapsed) if is_done else f"Open ({_fmt_hours(elapsed)})",
+                    "sla_status": sla_str,
+                    "status": o.status or "open",
+                    "_sla_tag": sla_tag,
+                })
+
+            wo_rows = add("Hotel work orders & turnaround SLA register", _columns(
+                ("order_no", "Order no.", "text"),
+                ("wing", "Wing", "text"),
+                ("floor", "Floor", "text"),
+                ("location", "Room / Area", "text"),
+                ("title", "Work Order Title", "text"),
+                ("category", "Category", "text"),
+                ("priority", "Priority", "text"),
+                ("employee_name", "Technician", "text"),
+                ("reported_at", "Reported", "text"),
+                ("turnaround", "Turnaround", "text"),
+                ("sla_status", "SLA Performance", "text"),
+                ("status", "Status", "status"),
+            ), wo_rows, "Audited record of guest and facility work orders, room repairs, and SLA response times.")
+
+            # Section 2: Wing & Floor Backlog Summary
+            wing_rows = []
+            for w, ws in sorted(wing_stats.items(), key=lambda x: x[0]):
+                comp_pct = round((ws["completed"] / ws["total"]) * 100) if ws["total"] > 0 else 0
+                sla_pct = round((ws["sla_met"] / ws["completed"]) * 100) if ws["completed"] > 0 else 0
+                avg_hrs = (ws["total_hrs"] / ws["completed"]) if ws["completed"] > 0 else 0
+                wing_rows.append({
+                    "wing": w,
+                    "total_orders": str(ws["total"]),
+                    "open_orders": str(ws["open"]),
+                    "completed_orders": str(ws["completed"]),
+                    "completion_rate": f"{comp_pct}%",
+                    "avg_turnaround": _fmt_hours(avg_hrs) if ws["completed"] > 0 else "—",
+                    "sla_compliance": f"{sla_pct}% within SLA" if ws["completed"] > 0 else "Pending",
+                    "status": "completed" if comp_pct >= 90 else ("active" if comp_pct >= 50 else "probation"),
+                })
+
+            wing_rows = add("Hotel wing & area maintenance backlog summary", _columns(
+                ("wing", "Hotel Wing / Zone", "text"),
+                ("total_orders", "Total Orders", "text"),
+                ("open_orders", "Backlog (Open)", "text"),
+                ("completed_orders", "Completed", "text"),
+                ("completion_rate", "Resolution Rate", "text"),
+                ("avg_turnaround", "Avg Turnaround", "text"),
+                ("sla_compliance", "SLA Compliance", "text"),
+                ("status", "Status", "status"),
+            ), wing_rows, "Consolidated resolution and backlog health across hotel wings.")
+
+            # Section 3: Scheduled Maintenance & Contractor Cost Ledger
+            mw_query = MaintenanceWork.query
+            if filters["employee_id"]:
+                mw_query = mw_query.filter(MaintenanceWork.worker_id == filters["employee_id"])
+            if filters["date_from"]:
+                mw_query = mw_query.filter(MaintenanceWork.scheduled_at >= datetime.combine(filters["date_from"], datetime.min.time()))
+            if filters["date_to"]:
+                mw_query = mw_query.filter(MaintenanceWork.scheduled_at <= datetime.combine(filters["date_to"], datetime.max.time()))
+
+            mw_records = mw_query.order_by(MaintenanceWork.scheduled_at.desc(), MaintenanceWork.id.desc()).all()
+            mw_rows = [{
+                "reference_no": m.reference_no,
+                "title": m.title,
+                "category": m.category,
+                "location": m.location,
+                "scheduled_at": _display(m.scheduled_at, "date"),
+                "worker_name": m.worker_name or (m.worker.full_name if m.worker else "In-house team"),
+                "amount": _display(m.amount, "money").replace("GHS", currency),
+                "status": m.status,
+                "remarks": m.remarks or m.description or "—",
+                "_amount": float(m.amount or 0),
+            } for m in mw_records]
+
+            mw_rows = add("Scheduled maintenance & contractor repair cost ledger", _columns(
+                ("reference_no", "Reference", "text"),
+                ("title", "Maintenance Job", "text"),
+                ("category", "Trade / System", "text"),
+                ("location", "Plant / Location", "text"),
+                ("scheduled_at", "Date", "text"),
+                ("worker_name", "Service Provider / Tech", "text"),
+                ("amount", "Cost / Amount", "text"),
+                ("status", "Status", "status"),
+                ("remarks", "Scope & Remarks", "text"),
+            ), mw_rows, "Audited expenditure for scheduled preventive maintenance, plant servicing, and contractor repairs.")
+
+            total_maint_cost = sum(r["_amount"] for r in mw_rows)
+            overall_sla_pct = round((sla_met_count / completed_count) * 100) if completed_count > 0 else 0
+
+            summary = [
+                {"label": "Total work orders", "value": str(len(wo_rows))},
+                {"label": "Completed repairs", "value": str(completed_count)},
+                {"label": "Active backlog", "value": str(sum(r["status"] in ("open", "in_progress") for r in wo_rows))},
+                {"label": "SLA compliance rate", "value": f"{overall_sla_pct}%" if completed_count > 0 else "—"},
+                {"label": "Maintenance cost", "value": f"{currency} {total_maint_cost:,.2f}"},
+            ]
 
         scope_name = employee.full_name if employee else (department.name if department else ("Unassigned" if filters["department_id"] == 0 else "All accessible departments"))
         period = "All dates"
