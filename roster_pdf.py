@@ -20,7 +20,7 @@ from reportlab.platypus import (
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 
-from models import db, Company, Employee, Department, Shift, ShiftAssignment
+from models import db, Company, Employee, Department, Shift, ShiftAssignment, BrandingAsset
 
 
 def _esc(val):
@@ -160,17 +160,64 @@ def get_roster_data_for_export(week_start_date, dept_param="all"):
     }
 
 
-def _get_logo_path():
-    """Locate available company logo file on disk"""
-    candidates = [
-        "uploads/branding/logo_clean_trans.png",
-        "uploads/branding/logo_clean_bw.png",
-        "uploads/branding/logo_crop_test.png",
-    ]
-    for c in candidates:
-        if os.path.exists(c):
-            return c
-    return None
+def _get_logo_source():
+    """
+    Locates the official company logo uploaded in Settings / Branding.
+    Returns:
+      (reportlab_image_source, html_img_src)
+      - reportlab_image_source: a BytesIO or file path usable by ReportLab Image(...)
+      - html_img_src: relative URL for <img src="..."> in HTML print
+    """
+    try:
+        comp = Company.query.first()
+    except Exception:
+        comp = None
+
+    logo_url = (comp.logo_url if comp and comp.logo_url else "").strip()
+
+    # 1. Look up BrandingAsset matching stored_name
+    asset = None
+    if logo_url and logo_url.startswith("/uploads/branding/"):
+        stored_name = logo_url.replace("/uploads/branding/", "").strip()
+        try:
+            asset = BrandingAsset.query.filter_by(stored_name=stored_name).first()
+        except Exception:
+            asset = None
+
+    # Fallback to latest uploaded logo asset
+    if not asset:
+        try:
+            asset = BrandingAsset.query.filter_by(kind="logo").order_by(BrandingAsset.id.desc()).first()
+        except Exception:
+            asset = None
+
+    if asset and asset.content:
+        # Ensure cached to uploads/branding on disk
+        try:
+            os.makedirs("uploads/branding", exist_ok=True)
+            cached_disk = os.path.join("uploads", "branding", asset.stored_name)
+            if not os.path.exists(cached_disk):
+                with open(cached_disk, "wb") as f:
+                    f.write(asset.content)
+        except Exception:
+            pass
+        return io.BytesIO(asset.content), f"/uploads/branding/{asset.stored_name}"
+
+    # 2. Direct file on disk
+    if logo_url:
+        disk_path = logo_url.lstrip("/")
+        if os.path.exists(disk_path):
+            return disk_path, logo_url
+
+    # 3. Fallback to any valid logo image in uploads/branding
+    if os.path.exists("uploads/branding"):
+        for fname in os.listdir("uploads/branding"):
+            if "gold" in fname.lower() or "logo" in fname.lower():
+                if fname.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+                    fpath = os.path.join("uploads", "branding", fname)
+                    return fpath, f"/uploads/branding/{fname}"
+
+    return None, None
 
 
 # =============================================================================
@@ -208,7 +255,7 @@ def build_roster_pdf(week_start_date, dept_param="all", orientation="landscape")
     comp = Company.query.first()
     company_name = comp.name if comp else "Airport West Hotel"
 
-    logo_path = _get_logo_path()
+    logo_source, _ = _get_logo_source()
     header_rows = []
 
     title_p = Paragraph(
@@ -225,9 +272,9 @@ def build_roster_pdf(week_start_date, dept_param="all", orientation="landscape")
         ParagraphStyle("HeaderMeta", parent=styles["Normal"], alignment=TA_RIGHT, leading=11)
     )
 
-    if logo_path:
+    if logo_source:
         try:
-            logo_img = Image(logo_path, width=1.4 * 72, height=0.55 * 72, kind="proportional")
+            logo_img = Image(logo_source, width=1.4 * 72, height=0.55 * 72, kind="proportional")
             logo_img.hAlign = "LEFT"
             header_table = Table([[logo_img, title_p, meta_p]], colWidths=[1.5 * 72, usable_w - 3.2 * 72, 1.7 * 72])
         except Exception:
@@ -409,10 +456,10 @@ def build_roster_html(week_start_date, dept_param="all", orientation="landscape"
     comp = Company.query.first()
     company_name = comp.name if comp else "Airport West Hotel"
 
-    logo_path = _get_logo_path()
+    _, logo_html_src = _get_logo_source()
     logo_img_tag = ""
-    if logo_path:
-        logo_img_tag = f'<img src="/uploads/branding/logo_clean_trans.png" alt="Company Logo" style="height:48px;max-width:180px;object-fit:contain">'
+    if logo_html_src:
+        logo_img_tag = f'<img src="{logo_html_src}" alt="{html.escape(company_name)} Logo" style="height:52px;max-width:180px;object-fit:contain">'
 
     week_start_str = data["week_start"].isoformat()
     dept_val = str(dept_param)
