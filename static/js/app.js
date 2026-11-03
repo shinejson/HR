@@ -386,7 +386,7 @@ const SessionActivityManager = (() => {
         if (logoutBtn) {
           logoutBtn.onclick = () => {
             closeWarningModal();
-            logout();
+            logout(true);
           };
         }
 
@@ -501,7 +501,49 @@ const SessionActivityManager = (() => {
   };
 })();
 
-function logout() {
+function logout(force = false) {
+  if (!force) {
+    const user = Store.user || {};
+    const userName = user.employee_name || user.full_name || user.username || user.email || "User";
+    const userEmail = user.email || "";
+    const compName = (Store.meta && Store.meta.company && Store.meta.company.name) || "Airport West Hotel";
+
+    // Close any open user dropdown before opening modal
+    const userDropdown = document.getElementById("user-dropdown");
+    if (userDropdown) userDropdown.classList.add("hidden");
+
+    openModal({
+      title: "Sign out confirmation",
+      sub: compName + " HR Portal",
+      narrow: true,
+      body: ''
+        + '<div style="display:flex;flex-direction:column;align-items:center;text-align:center;padding:12px 6px 8px">'
+        + '  <div style="width:52px;height:52px;border-radius:50%;background:#fef3c7;display:flex;align-items:center;justify-content:center;color:#d97706;margin-bottom:14px;box-shadow:0 2px 8px rgba(217,119,6,0.18)">'
+        +      icon("logout", 26)
+        + '  </div>'
+        + '  <h4 style="font-family:var(--serif);font-size:18px;font-weight:600;margin:0 0 8px;color:var(--text)">Sign out of your account?</h4>'
+        + '  <p style="font-size:13px;color:var(--muted);line-height:1.6;margin:0 0 14px;max-width:320px">'
+        + '    You are currently signed in as <b>' + esc(userName) + '</b>' + (userEmail ? ' (' + esc(userEmail) + ')' : '') + '. Any unsaved draft changes will be discarded.'
+        + '  </p>'
+        + '  <div style="font-size:11.5px;color:var(--muted);background:var(--paper-2);padding:9px 14px;border-radius:6px;border:1px solid var(--line);width:100%">'
+        +      icon("shield", 13) + ' <span style="vertical-align:middle">Your session token and credentials will be safely cleared.</span>'
+        + '  </div>'
+        + '</div>',
+      footer: '<button class="btn btn-ghost" data-close-modal>Stay signed in</button>'
+        + '<button class="btn btn-danger" id="confirm-logout-btn">' + icon("logout", 14) + ' Sign out</button>',
+      onMount(card) {
+        const btn = card.querySelector("#confirm-logout-btn");
+        if (btn) {
+          btn.onclick = () => {
+            closeModal();
+            logout(true);
+          };
+        }
+      }
+    });
+    return;
+  }
+
   if (typeof SessionActivityManager !== "undefined") {
     SessionActivityManager.stop();
   }
@@ -516,6 +558,7 @@ function logout() {
     const mfaForm = document.getElementById("login-form");
     if (mfaForm) mfaForm.classList.remove("hidden");
     if (typeof MfaUI !== "undefined") MfaUI.resetPrompt();
+    toast("You have been signed out successfully", "info");
   });
 }
 
@@ -736,8 +779,15 @@ function bindChrome() {
     document.getElementById("user-dropdown").classList.add("hidden");
     go(el.dataset.go);
   });
-  document.getElementById("dd-logout").onclick = logout;
-  document.getElementById("logout-btn").onclick = logout;
+  document.getElementById("dd-logout").onclick = (e) => {
+    e.stopPropagation();
+    document.getElementById("user-dropdown").classList.add("hidden");
+    logout();
+  };
+  document.getElementById("logout-btn").onclick = (e) => {
+    e.stopPropagation();
+    logout();
+  };
   document.getElementById("help-btn").onclick = () => openModal({
     title: "Help & support",
     body: '<div class="stack"><p class="small muted">Airport West Hotel HR Management System (AWH HR). Use the Helpdesk module to raise HR queries, or contact your HR administrator.</p>'
