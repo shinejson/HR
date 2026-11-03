@@ -446,6 +446,21 @@ function openHrEmployeeEditModal(e, onSaved) {
       { name: "linkedin_url", label: "LinkedIn URL", full: true },
       { name: "bio", label: "Professional bio", type: "textarea", full: true },
     ],
+    onMount(card) {
+      const deptEl = card.querySelector('[name="department_id"]');
+      const hodEl = card.querySelector('[name="hod_id"]');
+      const mgrEl = card.querySelector('[name="manager_id"]');
+      if (!deptEl) return;
+      deptEl.addEventListener("change", () => {
+        const deptId = deptEl.value;
+        if (!deptId) return;
+        const targetHod = typeof resolveHodForDepartment === "function" ? resolveHodForDepartment(deptId, e.id) : null;
+        if (targetHod) {
+          if (hodEl) hodEl.value = String(targetHod);
+          if (mgrEl && !mgrEl.value) mgrEl.value = String(targetHod);
+        }
+      });
+    },
     onSubmit: async (data) => {
       const payload = { ...data };
       ["department_id", "designation_id", "branch_id", "manager_id", "grade_id", "hod_id", "accountant_id", "md_id"].forEach(k => { if (!payload[k]) payload[k] = null; });

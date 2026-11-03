@@ -2893,6 +2893,8 @@ def _create(resource, model):
         fields.setdefault("company_id", 1)
         fields.setdefault("status", "active")
         fields.setdefault("contract_type", "permanent")
+        if not fields.get("hod_id") and fields.get("manager_id"):
+            fields["hod_id"] = fields["manager_id"]
     if hasattr(model, "created_by"):
         fields["created_by"] = request.user.id
     obj = model(**fields)
@@ -3131,6 +3133,11 @@ def update_resource(resource, rid):
                     lu.email = obj.email.strip().lower()
     if hasattr(obj, "updated_by"):
         obj.updated_by = request.user.id
+    if model is Employee:
+        if ("department_id" in fields or "manager_id" in fields) and not fields.get("hod_id"):
+            target_hod = get_employee_hod(obj)
+            if target_hod:
+                obj.hod_id = target_hod.id
     if model is DepartmentHead:
         if obj.department_id:
             if obj.role_type == "head":

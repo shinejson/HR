@@ -513,6 +513,117 @@ function desigOptions() { return optionsFrom((Store.meta && Store.meta.designati
 function gradeOptions() { return optionsFrom((Store.meta && Store.meta.grades) || [], "name", "id"); }
 function branchOptions() { return optionsFrom((Store.meta && Store.meta.branches) || [], "name", "id"); }
 
+function hodOptions(currentManagerId) {
+  const depts = (Store.meta && Store.meta.departments) || [];
+  const heads = (Store.meta && Store.meta.department_heads) || [];
+  const employees = (Store.meta && Store.meta.employees) || [];
+  const empMap = new Map((employees || []).map(emp => [Number(emp.id), emp]));
+
+  const hodMap = new Map();
+
+  // 1. MD from fixed_officers
+  if (Store.meta && Store.meta.fixed_officers && Store.meta.fixed_officers.md) {
+    const md = Store.meta.fixed_officers.md;
+    hodMap.set(Number(md.id), {
+      id: Number(md.id),
+      name: md.name,
+      deptNames: new Set([md.department || "Executive"]),
+      titles: new Set([md.title || "Managing Director"]),
+      isMd: true,
+    });
+  }
+
+  // 2. Department heads table (role_type === "head" or "md")
+  heads.filter(h => h.status !== "inactive" && (h.role_type === "head" || h.role_type === "md")).forEach(h => {
+    const hid = Number(h.employee_id);
+    let entry = hodMap.get(hid);
+    if (!entry) {
+      const emp = empMap.get(hid);
+      entry = {
+        id: hid,
+        name: h.name || (emp ? emp.name : "Employee #" + hid),
+        deptNames: new Set(),
+        titles: new Set(),
+        isMd: h.role_type === "md",
+      };
+      hodMap.set(hid, entry);
+    }
+    if (h.role_type === "md") entry.isMd = true;
+    if (h.dept_name) entry.deptNames.add(h.dept_name);
+    if (h.title) entry.titles.add(h.title);
+  });
+
+  // 3. Departments table (head_id)
+  depts.forEach(d => {
+    if (d.head_id) {
+      const hid = Number(d.head_id);
+      let entry = hodMap.get(hid);
+      if (!entry) {
+        const emp = empMap.get(hid);
+        entry = {
+          id: hid,
+          name: emp ? emp.name : "Employee #" + hid,
+          deptNames: new Set(),
+          titles: new Set(),
+          isMd: false,
+        };
+        hodMap.set(hid, entry);
+      }
+      if (d.name) entry.deptNames.add(d.name);
+    }
+  });
+
+  const opts = [];
+  const sorted = Array.from(hodMap.values()).sort((a, b) => {
+    if (a.isMd && !b.isMd) return -1;
+    if (!a.isMd && b.isMd) return 1;
+    return (a.name || "").localeCompare(b.name || "");
+  });
+
+  sorted.forEach(h => {
+    const deptStr = Array.from(h.deptNames).join(", ");
+    const roleTag = h.isMd ? " [MD / Leadership]" : " [HOD]";
+    const label = h.name + (deptStr ? " — " + deptStr : "") + roleTag;
+    opts.push({ value: h.id, label: label });
+  });
+
+  // If existing manager is assigned and wasn't in HOD list, keep it visible
+  if (currentManagerId && !hodMap.has(Number(currentManagerId))) {
+    const emp = empMap.get(Number(currentManagerId));
+    opts.unshift({
+      value: Number(currentManagerId),
+      label: (emp ? emp.name : "Manager #" + currentManagerId) + " [Current Manager]",
+    });
+  }
+
+  return opts;
+}
+
+function resolveHodForDepartment(deptId, excludeEmpId) {
+  if (!deptId) return null;
+  const depts = (Store.meta && Store.meta.departments) || [];
+  const heads = (Store.meta && Store.meta.department_heads) || [];
+  const mdId = (Store.meta && Store.meta.fixed_officers && Store.meta.fixed_officers.md) ? Store.meta.fixed_officers.md.id : 1;
+
+  const d = depts.find(x => String(x.id) === String(deptId));
+  if (d && d.head_id) {
+    if (excludeEmpId && Number(d.head_id) === Number(excludeEmpId)) {
+      return Number(excludeEmpId) === Number(mdId) ? "" : mdId;
+    }
+    return d.head_id;
+  }
+
+  const dh = heads.find(x => String(x.department_id) === String(deptId) && x.status !== "inactive" && (x.role_type === "head" || x.role_type === "md"));
+  if (dh && dh.employee_id) {
+    if (excludeEmpId && Number(dh.employee_id) === Number(excludeEmpId)) {
+      return Number(excludeEmpId) === Number(mdId) ? "" : mdId;
+    }
+    return dh.employee_id;
+  }
+
+  return mdId;
+}
+
 function spinners(n) {
   return '<div class="loading-block">' + Array.from({ length: n || 3 }).map(() => '<div class="skeleton" style="height:42px"></div>').join("") + '</div>';
 }

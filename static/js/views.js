@@ -668,7 +668,7 @@ function openEmployeeForm(existing) {
     { name: "department_id", label: "Department", type: "select", options: deptOptions(), value: e.department_id, required: true, placeholder: "Select…" },
     { name: "designation_id", label: "Designation / Job Title", type: "select", options: designationOptions(), value: e.designation_id, placeholder: "Select…" },
     { name: "branch_id", label: "Branch", type: "select", options: optionsFrom(Store.meta.branches, "name", "id"), value: e.branch_id },
-    { name: "manager_id", label: "Reports to", type: "select", options: employeeOptions(), value: e.manager_id, placeholder: "No manager" },
+    { name: "manager_id", label: "Reports to (Head of Department)", type: "select", options: hodOptions(e.manager_id), value: e.manager_id, placeholder: "Select HOD / Manager…", hint: "Auto-matched to selected department's Head of Department (HOD)" },
     { name: "grade_id", label: "Pay Grade", type: "select", options: optionsFrom(Store.meta.grades, "name", "id"), value: e.grade_id },
     { name: "contract_type", label: "Employment Category (determines Employment Letter)", type: "select", options: catOpts, value: e.contract_type || "permanent", required: true },
     { name: "staff_category", label: "Staff Category / Cadre", type: "select", options: staffCatOpts, value: e.staff_category || "General / Junior Staff" },
@@ -703,10 +703,40 @@ function openEmployeeForm(existing) {
     submitLabel: existing ? "Save changes" : "Create employee & send credentials",
     successMessage: existing ? "Employee updated" : "Employee created & onboarding prepared",
     fields: baseFields,
+    onMount(card) {
+      const deptEl = card.querySelector('[name="department_id"]');
+      const mgrEl = card.querySelector('[name="manager_id"]');
+      if (!deptEl || !mgrEl) return;
+
+      function updateReportsTo(force) {
+        const deptId = deptEl.value;
+        if (!deptId) return;
+        const targetHodId = resolveHodForDepartment(deptId, existing ? existing.id : null);
+        if (targetHodId !== null && targetHodId !== undefined) {
+          if (force || (!existing && (!mgrEl.value || mgrEl.value === ""))) {
+            mgrEl.value = String(targetHodId);
+            mgrEl.style.transition = "background-color 0.3s ease, border-color 0.3s ease";
+            mgrEl.style.backgroundColor = "var(--surface-sunken, #f0f7f4)";
+            mgrEl.style.borderColor = "var(--teal, #0f766e)";
+            setTimeout(() => {
+              mgrEl.style.backgroundColor = "";
+              mgrEl.style.borderColor = "";
+            }, 600);
+          }
+        }
+      }
+
+      deptEl.addEventListener("change", () => updateReportsTo(true));
+
+      if (!existing && deptEl.value && !mgrEl.value) {
+        updateReportsTo(false);
+      }
+    },
     onSubmit: async (data) => {
       const payload = { ...data };
       ["department_id", "designation_id", "branch_id", "manager_id", "grade_id", "role_id"].forEach(k => { if (!payload[k]) delete payload[k]; });
       if (payload.basic_salary === null || payload.basic_salary === "") payload.basic_salary = 0;
+      if (payload.manager_id) payload.hod_id = payload.manager_id;
       let savedRes = null;
       if (existing) {
         savedRes = await API.put("/employees/" + existing.id, payload);
