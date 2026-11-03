@@ -125,7 +125,7 @@ Views.operations = async function (root, params) {
         + avatarHTML((Store.user && Store.user.name) || "Emma Johnson", "avatar-md")
         + '<div>'
         + '<h2>Good morning, ' + esc(userName) + ' <span style="font-style:normal">👋</span></h2>'
-        + '<div class="sub">Here\'s what\'s happening with hotel operations today · Grand Meridian Hotel</div>'
+        + '<div class="sub">Here\'s what\'s happening with hotel operations today · Airport West Hotel</div>'
         + '</div></div>'
         + '<div class="controls">'
         + '<div class="ops-period-select">' + icon("calendar", 13)

@@ -415,7 +415,7 @@ async function drawEmployees(root) {
       dateField: "hire_date",
       dateLabel: "Joined",
       selectable: canEdit,
-      exportName: "meridian-employees-directory",
+      exportName: "awh-employees-directory",
       filters: [
         { key: "department_name", label: "Department" },
         { key: "branch_name", label: "Location" },
@@ -1348,7 +1348,7 @@ function openDeptForm(existing, headcount) {
       { name: "branch_id", label: "Branch / Location", type: "select", options: optionsFrom(Store.meta.branches, "name", "id"), value: d.branch_id },
       { name: "head_id", label: "Department head (HOD / MD)", type: "select", options: deptHeadOptions(d.head_id), value: d.head_id, placeholder: "Select designated HOD or MD…", hint: "Only designated heads & MD appear here (manage in Department heads tab)" },
       { name: "assistant_head_id", label: "Department assistant / Deputy", type: "select", options: deptAssistantOptions(d.assistant_head_id), value: d.assistant_head_id, placeholder: "Select designated assistant…", hint: "Reusable across departments and units" },
-      { name: "email", label: "Shared inbox", type: "email", value: d.email, placeholder: "operations@meridian.gh" },
+      { name: "email", label: "Shared inbox", type: "email", value: d.email, placeholder: "operations@airportwesthotel.com" },
       { name: "phone", label: "Phone", value: d.phone },
       { name: "cost_centre", label: "Cost centre", value: d.cost_centre, placeholder: "CC-OPS" },
       { name: "target_headcount", label: "Target headcount", type: "number", value: d.target_headcount, min: 0 },

@@ -88,14 +88,14 @@ CONFIG_DEFAULTS = {
     "smtp_port": "587",
     "smtp_encryption": "starttls",
     "smtp_username": "",
-    "smtp_from_email": "notifications@meridian.gh",
-    "smtp_from_name": "Meridian HR",
-    "smtp_reply_to": "hr@meridian.gh",
-    "email_subject_prefix": "[Meridian HR]",
+    "smtp_from_email": "notifications@airportwesthotel.gh",
+    "smtp_from_name": "Airport West Hotel HR",
+    "smtp_reply_to": "hr@airportwesthotel.com.gh",
+    "email_subject_prefix": "[Airport West Hotel HR]",
     "sms_enabled": "1",
     "sms_provider": "sandbox",
-    "sms_sender_id": "MeridianHR",
-    "sms_prefix": "Meridian HR: ",
+    "sms_sender_id": "AWH-HR",
+    "sms_prefix": "AWH HR: ",
     "ann_default_in_app": "1",
     "ann_default_email": "1",
     "ann_default_sms": "0",
@@ -265,10 +265,10 @@ def send_email(to_email, subject, text_body, html_body=None):
         return {"ok": False, "status": "skipped", "error": "Recipient has no valid email address"}
     mode = (cfg.get("email_mode") or "smtp").lower()
     full_subject = format_subject(subject, cfg)
-    from_email = cfg.get("smtp_from_email") or cfg.get("smtp_username") or "notifications@meridian.gh"
+    from_email = cfg.get("smtp_from_email") or cfg.get("smtp_username") or "notifications@airportwesthotel.gh"
     msg = EmailMessage()
     msg["Subject"] = full_subject
-    msg["From"] = formataddr((cfg.get("smtp_from_name") or "Meridian HR", from_email))
+    msg["From"] = formataddr((cfg.get("smtp_from_name") or "Airport West Hotel HR", from_email))
     msg["To"] = to_email
     if cfg.get("smtp_reply_to"):
         msg["Reply-To"] = cfg["smtp_reply_to"]
@@ -337,7 +337,7 @@ def _custom_send(cfg, to_number, body):
     payload = json.dumps({
         "to": to_number,
         "message": body,
-        "sender": cfg.get("sms_sender_id") or "MeridianHR",
+        "sender": cfg.get("sms_sender_id") or "AWH-HR",
     }).encode()
     req = urllib.request.Request(cfg.get("sms_webhook_url"), data=payload, method="POST", headers=headers)
     with urllib.request.urlopen(req, timeout=10) as resp:
@@ -395,7 +395,7 @@ def _brand_info():
         comp = Company.query.first()
     except Exception:
         comp = None
-    name = (comp.name if comp and comp.name else "Meridian HR").strip()
+    name = (comp.name if comp and comp.name else "Airport West Hotel").strip()
     legal = (comp.legal_name if comp and comp.legal_name else "").strip()
     tagline = (comp.tagline if comp and comp.tagline else "People Operations").strip()
     address = (comp.address if comp and comp.address else "").strip()

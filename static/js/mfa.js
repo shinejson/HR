@@ -47,7 +47,7 @@ const MfaUI = (() => {
 
   function downloadCodes(codes) {
     const text = [
-      "Meridian HR — two-factor recovery codes",
+      ((typeof Store !== "undefined" && Store.meta && Store.meta.company && Store.meta.company.name) || "Airport West Hotel HR") + " — two-factor recovery codes",
       "Account: " + ((Store.user && Store.user.email) || ""),
       "Generated: " + new Date().toLocaleString(),
       "",
@@ -60,7 +60,7 @@ const MfaUI = (() => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "meridian-2fa-recovery-codes.txt";
+    a.download = "awh-hr-2fa-recovery-codes.txt";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -435,12 +435,12 @@ const MfaUI = (() => {
   function showSuccess(codes, opts) {
     openModal({
       title: "Two-Factor Authentication is Active",
-      sub: "Your Meridian account is now fully secured",
+      sub: "Your account is now fully secured",
       body: '<div class="stack">'
         + '<div class="mfa-intro success">' + icon("checkCircle", 18) + '<div><b>Success!</b> Two-Factor Authentication is activated. Save your recovery codes below somewhere safe — they can be used to recover access if you ever lose your phone or email.</div></div>'
         + codesBlock(codes)
         + '</div>',
-      footer: '<button class="btn btn-accent" id="mfa-success-done" style="width:100%">' + icon("check", 14) + ' Enter Meridian Portal &rarr;</button>',
+      footer: '<button class="btn btn-accent" id="mfa-success-done" style="width:100%">' + icon("check", 14) + ' Enter HR Portal &rarr;</button>',
       onMount(card) {
         bindCodesBlock(card, codes);
         const doneBtn = card.querySelector("#mfa-success-done");
@@ -678,7 +678,7 @@ const MfaUI = (() => {
     openSetup({
       mandatory: true,
       onDone: () => {
-        toast("Two-factor authentication successfully configured. Welcome to Meridian HR!", "success");
+        toast("Two-factor authentication successfully configured. Welcome to Airport West Hotel HR!", "success");
       }
     });
   }

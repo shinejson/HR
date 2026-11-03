@@ -284,7 +284,7 @@ async function renderRoute() {
     return;
   }
   document.getElementById("crumb-current").textContent = PAGES[section];
-  const brandName = (Store.meta && Store.meta.company && Store.meta.company.name) || "Meridian HR";
+  const brandName = (Store.meta && Store.meta.company && Store.meta.company.name) || "Airport West Hotel";
   document.title = brandName + " — " + PAGES[section];
   setActiveNav(section);
   window.scrollTo({ top: 0 });
@@ -515,14 +515,12 @@ function logout() {
     if (step) step.classList.add("hidden");
     const mfaForm = document.getElementById("login-form");
     if (mfaForm) mfaForm.classList.remove("hidden");
-    const demoList = document.querySelector(".demo-list");
-    if (demoList) demoList.classList.remove("hidden");
     if (typeof MfaUI !== "undefined") MfaUI.resetPrompt();
   });
 }
 
 function buildDefaultFaviconHref(initial) {
-  const ch = encodeURIComponent((initial || "M").trim().charAt(0).toUpperCase() || "M");
+  const ch = encodeURIComponent((initial || "A").trim().charAt(0).toUpperCase() || "A");
   const svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
     + "<rect width='64' height='64' rx='14' fill='%2310201f'/>"
     + "<text x='32' y='44' font-family='Georgia' font-size='34' fill='%23c2703d' text-anchor='middle'>" + ch + "</text>"
@@ -564,7 +562,7 @@ function renderGlyphElement(el, logoUrl, initial, altText) {
 
 function applyBrand(brand) {
   if (!brand) return;
-  const name = (brand.name || "Meridian HR").trim();
+  const name = (brand.name || "Airport West Hotel").trim();
   const tagline = (brand.tagline || "People operations").trim();
   const initial = (name.charAt(0) || "M").toUpperCase();
 
@@ -574,6 +572,8 @@ function applyBrand(brand) {
   if (loginBrandName) loginBrandName.textContent = name;
   const crumbCompany = document.getElementById("crumb-company");
   if (crumbCompany) crumbCompany.textContent = name;
+  const loginSubmit = document.getElementById("login-submit");
+  if (loginSubmit) loginSubmit.textContent = "Sign in to " + name;
 
   const brandSubEl = document.getElementById("brand-sub");
   if (brandSubEl) brandSubEl.textContent = tagline;
@@ -740,9 +740,8 @@ function bindChrome() {
   document.getElementById("logout-btn").onclick = logout;
   document.getElementById("help-btn").onclick = () => openModal({
     title: "Help & support",
-    body: '<div class="stack"><p class="small muted">Meridian HR demo environment. Use the Helpdesk module to raise HR queries, or contact your administrator.</p>'
-      + '<div class="card card-pad"><div class="section-title">Demo accounts</div><dl class="kv"><dt>Super Admin</dt><dd>ama.mensah@meridian.gh / Admin@123</dd><dt>HR Admin</dt><dd>kwame.boateng@meridian.gh / Hr@123</dd><dt>Manager</dt><dd>kofi.adjei@meridian.gh / Manager@123</dd><dt>Employee</dt><dd>abena.sarpong@meridian.gh / Employee@123</dd><dt>Payroll</dt><dd>akosua.darko@meridian.gh / Payroll@123</dd></dl></div>'
-      + '<p class="tiny muted">Data is stored in a local SQLite database. All create, update and delete actions are written to the audit log.</p></div>',
+    body: '<div class="stack"><p class="small muted">Airport West Hotel HR Management System (AWH HR). Use the Helpdesk module to raise HR queries, or contact your HR administrator.</p>'
+      + '<p class="tiny muted">All actions are securely recorded in the system audit log.</p></div>',
     footer: '<button class="btn btn-accent" data-close-modal>Got it</button>',
   });
   document.addEventListener("click", (e) => {
@@ -776,7 +775,6 @@ function bindLogin() {
   const errorBox = document.getElementById("login-error");
   const btn = document.getElementById("login-submit");
   const mfaStep = document.getElementById("mfa-step");
-  const demoList = document.querySelector(".demo-list");
   const mfaCodeInput = document.getElementById("mfa-code");
   const mfaError = document.getElementById("mfa-error");
   const mfaSubmit = document.getElementById("mfa-submit");
@@ -901,7 +899,8 @@ function bindLogin() {
       errorBox.classList.remove("hidden");
     } finally {
       btn.disabled = false;
-      btn.textContent = "Sign in to Meridian";
+      const bName = (Store.meta && Store.meta.company && Store.meta.company.name) || (document.getElementById("login-brand-name")?.textContent) || "Airport West Hotel";
+      btn.textContent = "Sign in to " + bName.trim();
     }
   };
 
@@ -969,12 +968,15 @@ function bindLogin() {
       }
     };
   }
-  document.querySelectorAll(".demo-item").forEach(item => item.onclick = () => {
-    document.getElementById("login-email").value = item.dataset.email;
-    document.getElementById("login-password").value = item.dataset.pass;
-    errorBox.classList.add("hidden");
-    document.getElementById("login-password").focus();
-  });
+  const demoItems = document.querySelectorAll(".demo-item");
+  if (demoItems.length) {
+    demoItems.forEach(item => item.onclick = () => {
+      document.getElementById("login-email").value = item.dataset.email;
+      document.getElementById("login-password").value = item.dataset.pass;
+      errorBox.classList.add("hidden");
+      document.getElementById("login-password").focus();
+    });
+  }
 }
 
 async function boot() {

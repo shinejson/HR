@@ -85,7 +85,7 @@ window.openDeliveryPreviewModal = async function (deliveryId, onRetried) {
         + '</div>'
         + (d.status === "simulated"
             ? '<div class="callout-banner amber">'
-              + '<div><b>Sandbox Simulation Mode Active:</b> This exact email was generated and recorded safely in Meridian HR. To deliver live emails directly to external inboxes (such as Gmail or company mail), configure your SMTP credentials in <b>Settings → Email & SMS Gateways</b> and click <b>Resend via SMTP</b>.</div>'
+              + '<div><b>Sandbox Simulation Mode Active:</b> This exact email was generated and recorded safely in Airport West Hotel HR. To deliver live emails directly to external inboxes (such as Gmail or company mail), configure your SMTP credentials in <b>Settings → Email & SMS Gateways</b> and click <b>Resend via SMTP</b>.</div>'
               + '<button class="btn btn-sm btn-accent" id="prev-goto-smtp">Configure SMTP</button>'
               + '</div>'
             : '')

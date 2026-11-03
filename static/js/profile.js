@@ -747,8 +747,8 @@ async function viewEmployeeDetail(root, id, initialTab) {
               + '</div>'
             ).join("")
           + '<div class="career-node confirmation"><span class="dot"></span>'
-          + '<div class="row-between"><b style="font-size:13px">Joined Meridian Ghana Ltd</b><span class="tiny mono muted">' + fmtDate(e.hire_date) + '</span></div>'
-          + '<div class="small muted" style="margin-top:3px">Initial appointment as ' + esc(e.designation_title || "Team Member") + ' in ' + esc(e.department_name || "Meridian") + '.</div></div>'
+          + '<div class="row-between"><b style="font-size:13px">Joined Airport West Hotel Ltd</b><span class="tiny mono muted">' + fmtDate(e.hire_date) + '</span></div>'
+          + '<div class="small muted" style="margin-top:3px">Initial appointment as ' + esc(e.designation_title || "Team Member") + ' in ' + esc(e.department_name || "Hotel Operations") + '.</div></div>'
           + '</div></div></div></div>';
       }
 

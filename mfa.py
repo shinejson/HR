@@ -16,7 +16,7 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 import models
 
-ISSUER = "Meridian HR"
+ISSUER = "Airport West Hotel HR"
 SECRET_BYTES = 20           # 160-bit secret, as recommended by RFC 4226
 STEP_SECONDS = 30
 DIGITS = 6
@@ -297,17 +297,17 @@ def get_user_phone(user):
 def send_mfa_code_email(user, code):
     """Dispatch verification code via email."""
     import messaging
-    subject = f"Your Meridian HR 2FA Verification Code: {code}"
+    subject = f"Your Airport West Hotel HR 2FA Verification Code: {code}"
     text_body = (
         f"Hello {user.username or user.email},\n\n"
-        f"Your Meridian HR two-factor verification code is: {code}\n\n"
+        f"Your Airport West Hotel HR two-factor verification code is: {code}\n\n"
         f"This code will expire in {OTP_EXPIRY_MINUTES} minutes.\n"
         f"If you did not initiate this sign-in request, please secure your account immediately.\n\n"
-        f"Meridian HR Security Team"
+        f"Airport West Hotel HR Security Team"
     )
     html_body = f"""
     <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px;border:1px solid #e2e8f0;border-radius:12px;background:#ffffff">
-      <div style="font-size:18px;font-weight:700;color:#0f766e;margin-bottom:12px">Meridian HR — Security Verification</div>
+      <div style="font-size:18px;font-weight:700;color:#0f766e;margin-bottom:12px">Airport West Hotel HR — Security Verification</div>
       <p style="color:#334155;font-size:14px;line-height:1.5">Your two-factor authentication verification code is:</p>
       <div style="background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:8px;padding:16px;text-align:center;margin:18px 0">
         <span style="font-size:28px;font-weight:700;letter-spacing:6px;color:#0f172a;font-family:monospace">{code}</span>
@@ -325,7 +325,7 @@ def send_mfa_code_whatsapp(user, code, target_phone=None):
     if not phone:
         return {"ok": False, "error": "No phone number registered for WhatsApp delivery."}
     body = (
-        f"*Meridian HR Security*\n"
+        f"*Airport West Hotel HR Security*\n"
         f"Your 2FA verification code is: *{code}*\n"
         f"Valid for {OTP_EXPIRY_MINUTES} minutes. Do not share this code."
     )

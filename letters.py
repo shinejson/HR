@@ -725,7 +725,7 @@ def render_department_template_preview(dept_id, template_data=None, emp_id=None)
             department=dept or SimpleNamespace(id=1, name="Hotel Operations"),
             designation=SimpleNamespace(id=1, title="Executive Sous Chef"),
             grade=SimpleNamespace(id=1, name="Grade B2"),
-            branch=SimpleNamespace(id=1, name="Grand Meridian Airport Hotel"),
+            branch=SimpleNamespace(id=1, name="Airport West Hotel"),
             manager=SimpleNamespace(id=99, full_name="Sarah Mensah", designation=SimpleNamespace(title="General Manager")),
         )
 
@@ -933,7 +933,7 @@ def build_letter_payload(emp, letter=None, standalone=False, auto_print=False, t
             tpl["use_custom_body"] = True
 
     currency = (comp.currency if comp and comp.currency else "GHS") or "GHS"
-    company_name = (comp.name if comp and comp.name else "Meridian HR").strip()
+    company_name = (comp.name if comp and comp.name else "Airport West Hotel").strip()
     company_legal = (comp.legal_name if comp and comp.legal_name else company_name).strip()
     company_tagline = (comp.tagline if comp and comp.tagline else "Human Resource Directorate").strip()
     company_address = (comp.address if comp and comp.address else f"{comp.city or 'Accra'}, {comp.country or 'Ghana'}").strip()

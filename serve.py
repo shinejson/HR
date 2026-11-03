@@ -1,5 +1,5 @@
 """
-Meridian Ghana Ltd - HRMS Production Server Runner (Windows / On-Premise)
+Airport West Hotel Ltd (AWH HR) - Production Server Runner (Windows / On-Premise)
 Uses Waitress (multi-threaded production WSGI server)
 """
 
@@ -37,7 +37,7 @@ if __name__ == "__main__":
     hostname = socket.gethostname()
 
     print("=" * 65)
-    print("  MERIDIAN GHANA LTD — HOTEL HRMS & OPERATIONS SYSTEM")
+    print("  AIRPORT WEST HOTEL LTD (AWH HR) — HOTEL HRMS & OPERATIONS SYSTEM")
     print("  Production Server (Waitress WSGI)")
     print("=" * 65)
     print(f"  * Hostname       : {hostname}")
@@ -58,5 +58,5 @@ if __name__ == "__main__":
         threads=threads,
         channel_timeout=120,
         cleanup_interval=30,
-        ident="Meridian-HRMS/1.0",
+        ident="AWH-HRMS/1.0",
     )

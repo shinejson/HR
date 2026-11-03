@@ -88,7 +88,7 @@ async function renderUserNotifPreferences(container) {
       + '</div>'
 
       + '<div class="card">'
-      + '  <div class="card-head"><div><h3>Personal Channel Matrix</h3><div class="sub">Choose how Meridian HR notifies you for announcements, company events, approvals & payslips</div></div>'
+      + '  <div class="card-head"><div><h3>Personal Channel Matrix</h3><div class="sub">Choose how Airport West Hotel HR notifies you for announcements, company events, approvals & payslips</div></div>'
       + '    <div class="right">'
       + '      <button class="btn btn-sm btn-ghost" id="pref-test-self">' + icon("send", 13) + ' Send test alert</button>'
       + '      <button class="btn btn-sm btn-accent" id="pref-save">' + icon("check", 13) + ' Save preferences</button>'
@@ -524,7 +524,7 @@ Views.settings = async function (root, params) {
           + '</form></div></div>'
 
           + ((u.role_slug === "super_admin" || u.role === "Super Admin")
-              ? '<div class="card" style="grid-column:1/-1;border-left:4px solid var(--accent, #0f766e)"><div class="card-head"><div><h3>Organization 2FA Security Policy</h3><div class="sub">Require all users across Meridian HR to configure Two-Factor Authentication</div></div>'
+              ? '<div class="card" style="grid-column:1/-1;border-left:4px solid var(--accent, #0f766e)"><div class="card-head"><div><h3>Organization 2FA Security Policy</h3><div class="sub">Require all users across Airport West Hotel HR to configure Two-Factor Authentication</div></div>'
                 + '<div class="right"><label class="switch">'
                 + '<input type="checkbox" id="mfa-org-enforce-toggle" ' + (u.mfa_enforced ? 'checked' : '') + '>'
                 + '<span class="switch-track"></span>'
@@ -613,7 +613,7 @@ Views.settings = async function (root, params) {
     }
 
     function renderBrandingUploaderHTML(c, includeFormControls) {
-      const name = (c.name || "Meridian HR").trim();
+      const name = (c.name || "Airport West Hotel").trim();
       const tagline = (c.tagline || "People operations").trim();
       const initial = (name.charAt(0) || "M").toUpperCase();
       const logoUrl = (c.logo_url || "").trim();
@@ -695,7 +695,7 @@ Views.settings = async function (root, params) {
 
     function bindBrandingUploader(container, initialCompany) {
       const state = {
-        name: (initialCompany && initialCompany.name) || "Meridian HR",
+        name: (initialCompany && initialCompany.name) || "Airport West Hotel",
         tagline: (initialCompany && initialCompany.tagline) || "People operations",
         logo_url: (initialCompany && initialCompany.logo_url) || "",
         favicon_url: (initialCompany && initialCompany.favicon_url) || "",
@@ -749,10 +749,10 @@ Views.settings = async function (root, params) {
         const tabIcon = container.querySelector("[data-brand-tab-icon]");
         if (tabIcon && favSrc) tabIcon.src = favSrc;
         const tabTitle = container.querySelector("[data-brand-tab-title]");
-        if (tabTitle) tabTitle.textContent = (state.name || "Meridian HR") + " — Dashboard";
+        if (tabTitle) tabTitle.textContent = (state.name || "Airport West Hotel") + " — Dashboard";
 
         const liveName = container.querySelector("[data-brand-live-name]");
-        if (liveName) liveName.textContent = state.name || "Meridian HR";
+        if (liveName) liveName.textContent = state.name || "Airport West Hotel";
         const liveTagline = container.querySelector("[data-brand-live-tagline]");
         if (liveTagline) liveTagline.textContent = state.tagline || "People operations";
 
@@ -1050,7 +1050,7 @@ Views.settings = async function (root, params) {
           + '      <div><b>' + ((cfg.email_mode || "sandbox") === "smtp" ? "Live SMTP Mode Enabled" : "Sandbox Simulation Mode Active") + ':</b> '
           +        ((cfg.email_mode || "sandbox") === "smtp"
                      ? "Employee credentials and employment letters are delivered directly via your configured SMTP mail server."
-                     : "Emails are safely logged inside Meridian HR. Click a quick provider preset below and enter your SMTP / Gmail App Password to send real emails to external addresses (e.g. @gmail.com).")
+                     : "Emails are safely logged inside Airport West Hotel HR. Click a quick provider preset below and enter your SMTP / Gmail App Password to send real emails to external addresses (e.g. @gmail.com).")
           + '      </div>'
           + '      <div class="row" style="gap:6px;flex-wrap:wrap">'
           + '        <button class="btn btn-sm btn-soft" type="button" data-smtp-preset="gmail">Gmail Preset</button>'
@@ -1063,9 +1063,9 @@ Views.settings = async function (root, params) {
           + '        <option value="sandbox"' + ((cfg.email_mode || "sandbox") === "sandbox" ? " selected" : "") + '>Sandbox / Simulated (Safe offline logging)</option>'
           + '        <option value="smtp"' + (cfg.email_mode === "smtp" ? " selected" : "") + '>Live SMTP Server (Send real emails to inboxes)</option>'
           + '      </select></div>'
-          + '      <div class="field"><label>Subject Prefix</label><input class="input" name="email_subject_prefix" value="' + esc(cfg.email_subject_prefix || "[Meridian HR]") + '" placeholder="[AWH HR]"></div>'
-          + '      <div class="field"><label>Sender Display Name</label><input class="input" name="smtp_from_name" value="' + esc(cfg.smtp_from_name || "Meridian HR") + '"></div>'
-          + '      <div class="field"><label>Sender Email Address</label><input class="input" type="email" name="smtp_from_email" value="' + esc(cfg.smtp_from_email || "notifications@meridian.gh") + '"></div>'
+          + '      <div class="field"><label>Subject Prefix</label><input class="input" name="email_subject_prefix" value="' + esc(cfg.email_subject_prefix || "[Airport West Hotel HR]") + '" placeholder="[AWH HR]"></div>'
+          + '      <div class="field"><label>Sender Display Name</label><input class="input" name="smtp_from_name" value="' + esc(cfg.smtp_from_name || "Airport West Hotel HR") + '"></div>'
+          + '      <div class="field"><label>Sender Email Address</label><input class="input" type="email" name="smtp_from_email" value="' + esc(cfg.smtp_from_email || "notifications@airportwesthotel.gh") + '"></div>'
           + '      <div class="field full"><label>Reply-To Address (optional)</label><input class="input" type="email" name="smtp_reply_to" value="' + esc(cfg.smtp_reply_to || "") + '" placeholder="hr@company.com"></div>'
           + '    </div>'
           + '    <div id="smtp-fields-wrap" class="channel-box ' + ((cfg.email_mode || "sandbox") === "smtp" ? "" : "hidden") + '">'
@@ -1105,8 +1105,8 @@ Views.settings = async function (root, params) {
           + '        <option value="twilio"' + (cfg.sms_provider === "twilio" ? " selected" : "") + '>Twilio Programmable SMS</option>'
           + '        <option value="custom"' + (cfg.sms_provider === "custom" ? " selected" : "") + '>Custom HTTP JSON Webhook (Hubtel / Arkesel / mNotify)</option>'
           + '      </select></div>'
-          + '      <div class="field"><label>Alphanumeric Sender ID</label><input class="input mono" name="sms_sender_id" value="' + esc(cfg.sms_sender_id || "MeridianHR") + '" placeholder="MeridianHR"></div>'
-          + '      <div class="field full"><label>SMS Message Prefix</label><input class="input" name="sms_prefix" value="' + esc(cfg.sms_prefix || "Meridian HR: ") + '" placeholder="Meridian HR: "></div>'
+          + '      <div class="field"><label>Alphanumeric Sender ID</label><input class="input mono" name="sms_sender_id" value="' + esc(cfg.sms_sender_id || "AWH-HR") + '" placeholder="AWH-HR"></div>'
+          + '      <div class="field full"><label>SMS Message Prefix</label><input class="input" name="sms_prefix" value="' + esc(cfg.sms_prefix || "AWH HR: ") + '" placeholder="AWH HR: "></div>'
           + '    </div>'
 
           // Twilio fields
@@ -1249,7 +1249,7 @@ Views.settings = async function (root, params) {
         const { events, routing } = res.data;
 
         stage.innerHTML = '<div class="card">'
-          + '<div class="card-head"><div><h3>Organisation-Wide Event & Announcement Channel Matrix</h3><div class="sub">Control which channels fire across Meridian HR when announcements, company events, approvals, and payslips occur</div></div>'
+          + '<div class="card-head"><div><h3>Organisation-Wide Event & Announcement Channel Matrix</h3><div class="sub">Control which channels fire across Airport West Hotel HR when announcements, company events, approvals, and payslips occur</div></div>'
           + '<div class="right"><button class="btn btn-accent" id="save-routing-btn">' + icon("check", 14) + ' Save routing rules</button></div></div>'
           + '<div class="table-wrap">'
           + '<table><thead><tr><th>System Event</th><th>Module</th><th class="right">In-App Bell</th><th class="right">Email</th><th class="right">SMS</th></tr></thead><tbody>'
@@ -1491,7 +1491,7 @@ function openEventComposer(existing, gwStatus, onSaved) {
       + '  <div class="field"><label>Start Date & Time *</label><input class="input" type="datetime-local" name="start_at" required value="' + esc(existing ? toLocalDT(existing.start_at) : todayISO() + "T10:00") + '"></div>'
       + '  <div class="field"><label>End Date & Time</label><input class="input" type="datetime-local" name="end_at" value="' + esc(existing ? toLocalDT(existing.end_at) : todayISO() + "T11:30") + '"></div>'
       + '  <div class="field"><label>Venue / Physical Location</label><input class="input" name="location" value="' + esc(existing ? existing.location || "" : "") + '" placeholder="Accra HQ Auditorium"></div>'
-      + '  <div class="field"><label>Virtual Meeting Link (optional)</label><input class="input" name="meeting_url" value="' + esc(existing ? existing.meeting_url || "" : "") + '" placeholder="https://meet.meridian.gh/…"></div>'
+      + '  <div class="field"><label>Virtual Meeting Link (optional)</label><input class="input" name="meeting_url" value="' + esc(existing ? existing.meeting_url || "" : "") + '" placeholder="https://meet.airportwesthotel.com/…"></div>'
       + '  <div class="field full"><label>Agenda & Description</label><textarea class="textarea" name="description" rows="3" placeholder="Event agenda, speakers, and preparation notes…">' + esc(existing ? existing.description || "" : "") + '</textarea></div>'
       + '</div>'
 

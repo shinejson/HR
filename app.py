@@ -240,7 +240,7 @@ def ensure_demo_enrichment():
         return
     emp_by_id = {e.id: e for e in employees}
     bios = {
-        1: "Chief Executive leading Meridian Ghana's strategic expansion across West Africa, governance and board alignment.",
+        1: "Chief Executive leading Airport West Hotel's strategic expansion, guest hospitality excellence, governance and board alignment.",
         2: "People & Culture leader overseeing talent strategy, statutory compliance, compensation architecture and employee relations.",
         3: "HR Generalist managing onboarding, employee lifecycle records, policy compliance and helpdesk operations.",
         4: "Finance executive responsible for corporate treasury, statutory tax governance, audit readiness and payroll sign-off.",
@@ -259,7 +259,7 @@ def ensure_demo_enrichment():
     changed = False
     for idx, emp in enumerate(employees):
         if not emp.bio:
-            emp.bio = bios.get(emp.id, f"{emp.designation.title if emp.designation else 'Team member'} in {emp.department.name if emp.department else 'Meridian Ghana'}, committed to operational excellence.")
+            emp.bio = bios.get(emp.id, f"{emp.designation.title if emp.designation else 'Team member'} in {emp.department.name if emp.department else 'Airport West Hotel'}, committed to hospitality excellence.")
             changed = True
         if not emp.blood_group:
             emp.blood_group = blood_groups[idx % len(blood_groups)]
@@ -411,7 +411,7 @@ def ensure_demo_enrichment():
                 announcement_id=first_ann.id if first_ann else None,
                 user_id=su.id, event_key="announcement", channel="email",
                 recipient=su.email,
-                subject="[Meridian HR] " + (first_ann.title if first_ann else "Q4 town hall"),
+                subject="[Airport West Hotel HR] " + (first_ann.title if first_ann else "Q4 town hall"),
                 body=first_ann.body if first_ann else "Company-wide announcement",
                 status="simulated", provider_ref=f"sim-mail-seed0{idx + 1}",
                 sent_at=datetime.utcnow() - timedelta(hours=3),
@@ -424,7 +424,7 @@ def ensure_demo_enrichment():
                     user_id=su.id, event_key="event_published", channel="sms",
                     recipient=phone,
                     subject=first_ev.title,
-                    body=f"Meridian HR: Event Invitation: {first_ev.title} at {first_ev.location}",
+                    body=f"AWH HR: Event Invitation: {first_ev.title} at {first_ev.location}",
                     status="simulated", provider_ref=f"sim-sms-seed0{idx + 1}",
                     sent_at=datetime.utcnow() - timedelta(hours=2),
                 ))
@@ -1282,7 +1282,7 @@ def provision_employee_onboarding(emp, data=None, actor=None, portal_base=None,
     """Create or update portal login account, employment letter, contract & dispatch welcome email."""
     data = data or {}
     comp = Company.query.first()
-    company_name = (comp.name if comp and comp.name else "Meridian HR").strip()
+    company_name = (comp.name if comp and comp.name else "Airport West Hotel").strip()
     company_legal = (comp.legal_name if comp and comp.legal_name else company_name).strip()
 
     if not emp.staff_category:
@@ -2935,7 +2935,7 @@ def _create(resource, model):
         send_creds = data.get("send_credentials")
         if send_creds is None or str(send_creds).lower() not in ("0", "false", "no", "off"):
             comp = Company.query.first()
-            comp_name = (comp.legal_name or comp.name) if comp else "Meridian HR"
+            comp_name = (comp.legal_name or comp.name) if comp else "Airport West Hotel"
             portal_link = public_app_link("/")
             subj = f"Your {comp_name} Portal Login Credentials"
             body_txt = (
@@ -5620,7 +5620,7 @@ def send_employee_letter_email(eid):
     letter_obj = letters.ensure_letter_for_employee(emp)
     payload = letters.build_letter_payload(emp, letter=letter_obj, standalone=False)
     comp = Company.query.first()
-    comp_legal = (comp.legal_name or comp.name) if comp else "Meridian HR"
+    comp_legal = (comp.legal_name or comp.name) if comp else "Airport West Hotel Ltd"
     portal_link = public_app_link("/employment-letters")
     subj = f"{payload['letter_title']} — {emp.full_name} ({letter_obj.reference_no})"
     body_txt = (
@@ -7244,7 +7244,7 @@ def pay_payroll(rid):
     dispatch_event(
         "payroll_paid", paid_users,
         f"Payslip available — {period_label}",
-        f"Your payslip for {period_label} has been released and is ready to view in Meridian HR.",
+        f"Your payslip for {period_label} has been released and is ready to view in Airport West Hotel HR.",
         "/payroll",
     )
     db.session.commit()
@@ -8510,7 +8510,7 @@ def send_self_test_notification():
     }
     counts = dispatch_event(
         "announcement", [request.user],
-        "Test notification from Meridian HR",
+        "Test notification from Airport West Hotel HR",
         "Your notification channels are active and routed to your account.",
         "/notifications",
         channels=channels,
@@ -8615,7 +8615,7 @@ def test_email_gateway():
     data = request.get_json(silent=True) or {}
     to_email = (data.get("to") or request.user.email or "").strip()
     subject = data.get("subject") or "Gateway Verification Test"
-    body = data.get("body") or "This is a test email from Meridian HR confirming your SMTP / Sandbox email configuration."
+    body = data.get("body") or "This is a test email from Airport West Hotel HR confirming your SMTP / Sandbox email configuration."
     html_doc = messaging.html_email(
         subject, body, public_app_link("/settings"),
         meta_rows=[("Initiated by", request.user.email), ("Mode", messaging.config().get("email_mode", "smtp").upper())],
@@ -8637,7 +8637,7 @@ def test_sms_gateway():
     data = request.get_json(silent=True) or {}
     emp = employee_of(request.user)
     to_number = (data.get("to") or (emp.phone if emp else "") or "").strip()
-    body = data.get("body") or "Test SMS confirming your Meridian HR SMS gateway is active."
+    body = data.get("body") or "Test SMS confirming your Airport West Hotel HR SMS gateway is active."
     res = messaging.send_sms(to_number, body)
     _record_delivery(res, request.user, "test_sms", "sms", to_number, "SMS Gateway Test", body=body)
     db.session.commit()
@@ -8709,13 +8709,13 @@ def retry_delivery(did):
     rec = db.session.get(NotificationDelivery, did)
     if not rec:
         return error("Not found", 404)
-    body = rec.body or rec.subject or "Meridian HR notification"
+    body = rec.body or rec.subject or "Airport West Hotel HR notification"
     if rec.channel == "email":
         html_content = rec.html_body or messaging.html_email(
             rec.subject or "Notification", body, public_app_link("/notifications")
         )
         res = messaging.send_email(
-            rec.recipient, rec.subject or "Meridian HR Notification", body, html_content,
+            rec.recipient, rec.subject or "Airport West Hotel HR Notification", body, html_content,
         )
     else:
         res = messaging.send_sms(rec.recipient, body)
@@ -8847,7 +8847,7 @@ def upload_branding_asset():
     url = f"/uploads/branding/{stored_name}"
     comp = Company.query.first()
     if not comp:
-        comp = Company(name="Meridian Ghana Ltd")
+        comp = Company(name="Airport West Hotel")
         db.session.add(comp)
 
     attr = "logo_url" if kind == "logo" else "favicon_url"
@@ -8897,7 +8897,7 @@ def update_company_settings():
     plat_in = data.get("platform") or {}
     comp = Company.query.first()
     if not comp:
-        comp = Company(name=comp_in.get("name") or "Meridian Ghana Ltd")
+        comp = Company(name=comp_in.get("name") or "Airport West Hotel")
         db.session.add(comp)
     old_logo = comp.logo_url
     old_favicon = comp.favicon_url
@@ -9650,7 +9650,7 @@ def _brand_template_ctx():
         comp = Company.query.first()
     except Exception:
         comp = None
-    name = (comp.name if comp and comp.name else "Meridian HR").strip()
+    name = (comp.name if comp and comp.name else "Airport West Hotel").strip()
     tagline = (comp.tagline if comp and comp.tagline else "People operations").strip()
     initial = (name[:1] or "M").upper()
     svg = (
@@ -9691,7 +9691,7 @@ def spa(path=None):
 def public_brand():
     comp = Company.query.first()
     out = {
-        "name": comp.name if comp else "Meridian HR",
+        "name": comp.name if comp else "Airport West Hotel",
         "tagline": (comp.tagline if comp else None) or "People operations",
         "city": (comp.city if comp else None) or "Accra",
         "location_name": (comp.location_name if comp else None) or "Accra HQ",

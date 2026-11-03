@@ -1208,7 +1208,7 @@ function openUserDrawer(user) {
     + '<div class="drawer-section">Account details</div>'
     + '<div class="drawer-grid">'
     + drawerField("du-employee", "Linked employee", drawerSelect("du-employee", empOpts, isEdit ? (user.employee_id || "") : "", "No employee link"), "Ties this login to an HR record.", true)
-    + drawerField("du-email", "Login email", '<input class="input" type="email" id="du-email" value="' + esc(isEdit ? user.email : "") + '" placeholder="name@meridian.gh" autocomplete="off">')
+    + drawerField("du-email", "Login email", '<input class="input" type="email" id="du-email" value="' + esc(isEdit ? user.email : "") + '" placeholder="name@airportwesthotel.com" autocomplete="off">')
     + drawerField("du-username", "Username", '<input class="input" type="text" id="du-username" value="' + esc(isEdit && user.username ? user.username : "") + '" placeholder="Auto-generated when blank">')
     + drawerField("du-role", "Role", drawerSelect("du-role", roleOpts, isEdit ? user.role_id : (defaultRole ? defaultRole.id : "")))
     + drawerField("du-status", "Status", drawerSelect("du-status", [{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }], isEdit ? user.status : "active"))

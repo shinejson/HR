@@ -272,7 +272,7 @@ INITIAL_INVENTORY_ITEMS = [
         "supplier": "SecureKey Hospitality Systems",
         "status": "in_stock",
         "icon": "key",
-        "notes": "Gold debossed Meridian crest for Bell Captain desk.",
+        "notes": "Gold debossed Airport West Hotel crest for Bell Captain desk.",
     },
     {
         "name": "Microfiber Flat Mop Pads & Sanitizing Cloths",
@@ -290,7 +290,7 @@ INITIAL_INVENTORY_ITEMS = [
         "notes": "Color-coded: blue for bedroom, red for bathroom tiles.",
     },
     {
-        "name": "Meridian Sparkling & Still Mineral Water 500ml",
+        "name": "Airport West Hotel Sparkling & Still Mineral Water 500ml",
         "sku": "FNB-WTR-15",
         "category": "Food & Beverage",
         "location": "F&B & Bar Storeroom",

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Meridian HR — Enterprise Interactive DataTable & Modern HR Command Palette
+   Airport West Hotel HR (AWH HR) — Enterprise Interactive DataTable & Command Palette
    Zero-dependency sorting, multi-facet filtering, date ranges, pagination,
    page-size control, column visibility, density toggle, bulk actions & CSV/Print
    ========================================================================== */
@@ -664,15 +664,15 @@ function printDtTable(inst) {
   const cols = vm.cols
     .map((c, idx) => ({ col: c, idx }))
     .filter(x => !inst.state.hiddenCols.has(x.idx) && String(x.col.label || "").trim());
-  const title = inst.cfg.title || (document.getElementById("crumb") && document.getElementById("crumb").textContent) || "Meridian HR Report";
+  const title = inst.cfg.title || (document.getElementById("crumb") && document.getElementById("crumb").textContent) || ((typeof Store !== "undefined" && Store.meta && Store.meta.company && Store.meta.company.name) ? Store.meta.company.name + " Report" : "Airport West Hotel Report");
   const rowsHtml = vm.matched.map(({ row, origIdx }) =>
     "<tr>" + cols.map(x => "<td>" + esc(getColumnCellText(x.col, row, origIdx) || "—") + "</td>").join("") + "</tr>"
   ).join("");
   const win = window.open("", "_blank", "width=980,height=720");
   if (!win) return toast("Allow pop-ups to print table", "error");
-  win.document.write('<!doctype html><html><head><title>' + esc(title) + ' — Meridian HR</title>'
+  win.document.write('<!doctype html><html><head><title>' + esc(title) + ' — ' + esc((typeof Store !== 'undefined' && Store.meta && Store.meta.company && Store.meta.company.name) || 'Airport West Hotel') + '</title>'
     + '<style>body{font-family:Inter,-apple-system,sans-serif;padding:32px;color:#14201d}h1{font-size:22px;margin:0 0 4px}.meta{color:#5a6561;font-size:12px;margin-bottom:20px}table{width:100%;border-collapse:collapse;font-size:12px}th{text-align:left;background:#f4f1ea;padding:9px 10px;border-bottom:2px solid #d5cfc3;font-size:11px;text-transform:uppercase;letter-spacing:.04em}td{padding:8px 10px;border-bottom:1px solid #e9e4d9}@media print{body{padding:12px}}</style>'
-    + '</head><body><h1>' + esc(title) + '</h1><div class="meta">Meridian HR · Printed ' + esc(fmtDateTime(new Date().toISOString())) + ' · ' + vm.matched.length + ' record(s)</div>'
+    + '</head><body><h1>' + esc(title) + '</h1><div class="meta">' + esc((typeof Store !== 'undefined' && Store.meta && Store.meta.company && Store.meta.company.name) || 'Airport West Hotel') + ' · Printed ' + esc(fmtDateTime(new Date().toISOString())) + ' · ' + vm.matched.length + ' record(s)</div>'
     + '<table><thead><tr>' + cols.map(x => '<th>' + esc(x.col.label) + '</th>').join("") + '</tr></thead><tbody>' + rowsHtml + '</tbody></table>'
     + '<script>window.onload=function(){window.print();}<\/script></body></html>');
   win.document.close();
@@ -1057,7 +1057,7 @@ function openCommandPalette(initialQuery) {
     + '<span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span>'
     + '<span><kbd>↵</kbd> Open</span>'
     + '<span><kbd>ESC</kbd> Close</span>'
-    + '<span style="margin-left:auto">Meridian HR Quick Jump</span>'
+    + '<span style="margin-left:auto">AWH HR Quick Jump</span>'
     + '</div></div>';
   overlay.classList.add("open");
 

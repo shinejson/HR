@@ -1,5 +1,5 @@
 """
-Meridian Ghana Ltd / Airport West Hotel
+Airport West Hotel Ltd (AWH HR)
 Official Employees' Leave Request Form Generator (PDF & Interactive Preview)
 Dynamically reads:
  - Company logo from uploaded company logo / branding

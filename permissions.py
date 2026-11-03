@@ -1,5 +1,5 @@
 """
-Meridian Ghana Ltd - HRMS & Operations
+Airport West Hotel Ltd - HRMS & Operations
 Granular Permissions & Privileges System
 Defines system modules, granular privileges, and access check helpers.
 """
