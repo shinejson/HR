@@ -1337,6 +1337,8 @@ def provision_employee_onboarding(emp, data=None, actor=None, portal_base=None,
     # Ensure standard leave balances exist for current year
     yr = date.today().year
     for lt in LeaveType.query.all():
+        if lt.gender_restriction and emp.gender and lt.gender_restriction.lower() != emp.gender.lower():
+            continue
         if not LeaveBalance.query.filter_by(employee_id=emp.id, leave_type_id=lt.id, year=yr).first():
             db.session.add(LeaveBalance(
                 employee_id=emp.id, leave_type_id=lt.id, year=yr,
@@ -4929,21 +4931,26 @@ def employee_profile(eid):
     ]
 
     balances = []
+    anl_bal_item = None
     for b in LeaveBalance.query.filter_by(employee_id=eid, year=date.today().year).all():
+        if b.leave_type and b.leave_type.gender_restriction and emp.gender and b.leave_type.gender_restriction.lower() != emp.gender.lower():
+            continue
         item = serialize(b, "leave-balances")
         ent = float(b.entitled or 0)
         carr = float(b.carried_over or 0)
         tk = float(b.taken or 0)
         pd = float(b.pending or 0)
+        enc = float(getattr(b, "encashed", 0) or 0)
         tot = ent + carr
-        rem = max(0.0, tot - tk - pd)
-        avail = max(0.0, tot - tk)
+        rem = max(0.0, tot - tk - pd - enc)
+        avail = max(0.0, tot - tk - enc)
         carry_next = rem
         item["entitled"] = ent
         item["carried_over"] = carr
         item["total_allocation"] = tot
         item["taken"] = tk
         item["pending"] = pd
+        item["encashed"] = enc
         item["remaining"] = rem
         item["available"] = avail
         item["carry_over_next_year"] = carry_next
@@ -4952,8 +4959,12 @@ def employee_profile(eid):
             item["code"] = b.leave_type.code
             item["paid"] = bool(b.leave_type.paid)
             item["leave_type_name"] = b.leave_type.name
+            item["gender_restriction"] = b.leave_type.gender_restriction
+            if b.leave_type.code == "ANL":
+                anl_bal_item = item
         balances.append(item)
     data["leave_balances"] = balances
+    data["leave_available"] = anl_bal_item["remaining"] if anl_bal_item else 30.0
     data["leave_requests"] = [serialize(l, "leave-requests") for l in
                               LeaveRequest.query.filter_by(employee_id=eid).order_by(LeaveRequest.id.desc()).limit(15)]
 
@@ -6763,8 +6774,11 @@ def leave_summary():
 
     # Ensure default balances exist for this employee for this year
     types = LeaveType.query.all()
+    emp_rec = Employee.query.get(emp_id)
     created_any = False
     for lt in types:
+        if lt.gender_restriction and emp_rec and emp_rec.gender and lt.gender_restriction.lower() != emp_rec.gender.lower():
+            continue
         b = LeaveBalance.query.filter_by(employee_id=emp_id, leave_type_id=lt.id, year=year).first()
         if not b:
             days = 30.0 if lt.code == "ANL" else float(lt.days_per_year or 0)

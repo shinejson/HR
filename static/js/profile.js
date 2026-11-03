@@ -507,7 +507,15 @@ async function viewEmployeeDetail(root, id, initialTab) {
       const canReveal = !!e.can_view_sensitive;
       const comp = e.completeness || { percent: 85, missing: [] };
 
-      const paidLeaveRemaining = (e.leave_balances || []).reduce((acc, b) => acc + Math.max(0, Number(b.entitled || 0) - Number(b.taken || 0) - Number(b.pending || 0)), 0);
+      // Statutory Annual Leave Available
+      const anlBal = (e.leave_balances || []).find(b => b.code === "ANL" || (b.leave_type_name && b.leave_type_name.toLowerCase().includes("annual"))) || (e.leave_balances || [])[0] || {};
+      const anlEntitled = Number(anlBal.entitled !== undefined ? anlBal.entitled : (e.leave_available !== undefined ? e.leave_available : 30));
+      const anlCarried = Number(anlBal.carried_over || 0);
+      const anlTaken = Number(anlBal.taken || 0);
+      const anlPending = Number(anlBal.pending || 0);
+      const anlEncashed = Number(anlBal.encashed || 0);
+      const anlTotal = anlEntitled + anlCarried;
+      const paidLeaveRemaining = Math.max(0, anlTotal - anlTaken - anlPending - anlEncashed);
       const attSummary = e.attendance_summary || { present: 0, late: 0, rate: 100, overtime_minutes: 0 };
       const latestAppraisal = (e.appraisals && e.appraisals.length) ? e.appraisals[0] : null;
       const activeAssets = e.assets || [];
@@ -901,7 +909,8 @@ async function viewEmployeeDetail(root, id, initialTab) {
         const anlTotal = anlEntitled + anlCarried;
         const anlTaken = Number(anlBal.taken || 0);
         const anlPending = Number(anlBal.pending || 0);
-        const anlRemaining = Math.max(0, anlTotal - anlTaken - anlPending);
+        const anlEncashed = Number(anlBal.encashed || 0);
+        const anlRemaining = Math.max(0, anlTotal - anlTaken - anlPending - anlEncashed);
         const anlCarryNext = anlRemaining;
 
         const kpiRow = '<div class="grid grid-4" style="margin-bottom:18px">'
@@ -919,7 +928,11 @@ async function viewEmployeeDetail(root, id, initialTab) {
           + kpiRow
           + '<div class="grid grid-4" style="margin-bottom:18px">'
           + ((e.leave_balances && e.leave_balances.length)
-              ? e.leave_balances.map(b => {
+              ? e.leave_balances.filter(b => {
+                  const g = (e.gender || "").toLowerCase().trim();
+                  if (b.gender_restriction && g && b.gender_restriction.toLowerCase() !== g) return false;
+                  return true;
+                }).map(b => {
                   const alloc = Number(b.entitled || 0);
                   const carried = Number(b.carried_over || 0);
                   const totalAlloc = alloc + carried;
@@ -1141,7 +1154,7 @@ async function viewEmployeeDetail(root, id, initialTab) {
         // 5-KPI Strip
         + '<div class="grid grid-5" style="margin-bottom:18px">'
         + '  <div class="kpi"><div class="label">Service Tenure</div><div class="value" style="font-size:22px">' + esc(e.tenure_label || "New") + '</div><div class="sub">Hired ' + fmtDate(e.hire_date) + '</div></div>'
-        + '  <div class="kpi"><div class="label">Leave Available</div><div class="value" style="font-size:22px">' + fmtNumber(paidLeaveRemaining) + ' <span class="tiny muted">days</span></div><div class="sub">Across active entitlements</div></div>'
+        + '  <div class="kpi" style="cursor:pointer" onclick="document.querySelector(\'[data-tab=\\\'time\\\']\')?.click()" title="Click to view full leave position"><div class="label">Leave Available</div><div class="value" style="font-size:22px">' + fmtNumber(paidLeaveRemaining) + ' <span class="tiny muted">days</span></div><div class="sub">Annual leave balance</div></div>'
         + '  <div class="kpi"><div class="label">Attendance (30d)</div><div class="value" style="font-size:22px">' + fmtNumber(attSummary.rate) + '%</div><div class="sub">' + fmtNumber(attSummary.present) + ' present · ' + fmtNumber(attSummary.late) + ' late</div></div>'
         + '  <div class="kpi"><div class="label">Latest Appraisal</div><div class="value" style="font-size:22px">' + (latestAppraisal && latestAppraisal.final_rating ? latestAppraisal.final_rating + " / 5" : "—") + '</div><div class="sub">' + (e.goals || []).length + ' active goal(s)</div></div>'
         + '  <div class="kpi"><div class="label">Compliance & Assets</div><div class="value" style="font-size:22px">' + ackedCount + '/' + policyList.length + '</div><div class="sub">' + activeAssets.length + ' asset(s) in custody</div></div>'
