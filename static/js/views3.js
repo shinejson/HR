@@ -775,18 +775,12 @@ Views.documents = async function (root) {
     const today = todayISO();
     const docsTable = renderTable({
       columns: [
-          Records.column("documents"),
-        { label: "Document", render: r => '<div class="row">' + icon("file", 16) + '<div><b>' + esc(r.title) + '</b><div class="tiny muted mono">' + esc(r.file_name || "—") + '</div></div></div>' },
-        { label: "Employee", render: r => esc(r.employee_name || "Company") },
+        { label: "Document", render: r => '<div class="row" style="gap:10px;align-items:center">' + icon("file", 18) + '<div><b>' + esc(r.title) + '</b><div class="tiny muted mono">' + esc(r.file_name || "—") + '</div></div></div>' },
+        { label: "Employee", render: r => esc(r.employee_name || "Company-wide") },
         { label: "Category", render: r => '<span class="pill-tag">' + esc((r.category || "").replace(/_/g, " ")) + '</span>' },
         { label: "Expires", render: r => r.expires_at ? fmtDate(r.expires_at) + (r.expires_at < today ? ' <span class="chip chip-red">Expired</span>' : "") : "—" },
         { label: "Added", render: r => fmtDate(r.created_at) },
-        {
-          label: "", class: "right", sortable: false,
-          render: r => (r.category === "employment_letter" && r.employee_id)
-            ? '<button class="btn btn-sm btn-accent" data-doc-open-letter="' + r.employee_id + '">' + icon("printer", 12) + ' View / Print</button>'
-            : "",
-        },
+        Records.column("documents", { align: "right", label: "Actions" }),
       ], rows: docs, emptyTitle: "No documents", emptyText: "Upload contracts, IDs and certificates.",
     });
     const acks = await Promise.all(policies.map(p => API.get("/policies/" + p.id + "/acks").then(r => r.data).catch(() => ({ count: 0, employee_ids: [] }))));
