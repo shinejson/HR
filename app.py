@@ -1,4 +1,3 @@
-import hr_crud
 import os
 import re
 import json
@@ -39,13 +38,11 @@ from models import (
     DepartmentHead,
 )
 import models
-import mfa
-import messaging
-import letters
-import hotel_ops
-import permissions
-from permissions import PERMISSION_MODULES, has_permission, user_permissions
-from employee_reports import register_report_routes
+
+# Import modules from the modules folder
+from modules import hr_crud, mfa, messaging, letters, hotel_ops, permissions
+from modules.permissions import PERMISSION_MODULES, has_permission, user_permissions
+from modules.employee_reports import register_report_routes
 from seed import seed, _paye
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
