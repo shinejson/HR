@@ -9749,6 +9749,8 @@ def server_error(e):
 
 
 register_report_routes(app, login_required, error, audit)
+from shift_management import register_shift_routes
+register_shift_routes(app, login_required, error)
 
 bootstrap_database()
 

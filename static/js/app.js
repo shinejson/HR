@@ -30,7 +30,11 @@ const NAV = [
     label: "Time & absence", icon: "clock",
     items: [
       { id: "attendance", label: "Attendance", icon: "clock" },
+<<<<<<< HEAD
       { id: "roster", label: "Shift Roster", icon: "calendar", roles: ["super_admin", "hr_admin", "hr_officer", "manager", "department_head", "employee"] },
+=======
+      { id: "shift-planner", label: "Shift schedules", icon: "calendar" },
+>>>>>>> 0f1d0c01b226d81b7623e50ec97d443f7cee20f8
       { id: "leave", label: "Leave", icon: "calendar" },
       { id: "leave", label: "Sell Leaves", icon: "dollar", subTab: "encashment" },
       { id: "shifts", label: "Shift Management", icon: "clock", roles: ["super_admin", "hr_admin", "hr_officer"] },
@@ -99,6 +103,7 @@ const NAV = [
 ];
 
 const PAGES = {
+  "shift-planner": "Shift schedules",
   dashboard: "Overview", approvals: "Approvals Inbox", employees: "Employees",
   "employment-letters": "Employment Letters", organisation: "Organisation", recruitment: "Recruitment",
   onboarding: "Onboarding", documents: "Documents", attendance: "Attendance", leave: "Leave",
