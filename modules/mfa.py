@@ -296,7 +296,10 @@ def get_user_phone(user):
 
 def send_mfa_code_email(user, code):
     """Dispatch verification code via email."""
-    import messaging
+    try:
+        from modules import messaging
+    except ImportError:
+        import messaging
     subject = f"Your Airport West Hotel HR 2FA Verification Code: {code}"
     text_body = (
         f"Hello {user.username or user.email},\n\n"
@@ -320,7 +323,10 @@ def send_mfa_code_email(user, code):
 
 def send_mfa_code_whatsapp(user, code, target_phone=None):
     """Dispatch verification code via WhatsApp/SMS gateway."""
-    import messaging
+    try:
+        from modules import messaging
+    except ImportError:
+        import messaging
     phone = target_phone or get_user_phone(user)
     if not phone:
         return {"ok": False, "error": "No phone number registered for WhatsApp delivery."}

@@ -1,6 +1,6 @@
 @echo off
 title Meridian HRMS - Production Server
-cd /d "%~dp0"
+cd /d "%~dp0\.."
 
 echo ==========================================================
 echo Starting Meridian HRMS Production Server...

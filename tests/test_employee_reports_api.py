@@ -11,7 +11,7 @@ from app import (
     app, db, User, Employee, Department, Company, Attendance, LeaveBalance,
     LeaveRequest, LeaveType, Contract, Document, Payslip, PayrollRun, AuditLog,
 )
-from employee_reports import REPORT_TYPES
+from modules.employee_reports import REPORT_TYPES
 
 
 class EmployeeReportsApiTest(unittest.TestCase):

@@ -1195,25 +1195,3 @@ class MaintenanceWork(db.Model, TimestampMixin):
     completed_at = db.Column(db.DateTime)
     worker = db.relationship("Employee")
 
-
-class DepartmentShift(db.Model, TimestampMixin):
-    __tablename__ = 'department_shifts'
-    id = db.Column(db.Integer, primary_key=True)
-    department_id = db.Column(db.Integer, db.ForeignKey('departments.id'), nullable=False, index=True)
-    name = db.Column(db.String(80), nullable=False)
-    start_time = db.Column(db.String(5), nullable=False)
-    end_time = db.Column(db.String(5), nullable=False)
-    enabled = db.Column(db.Boolean, nullable=False, default=True)
-
-
-class ShiftAssignment(db.Model, TimestampMixin):
-    __tablename__ = 'shift_assignments'
-    __table_args__ = (db.UniqueConstraint('employee_id', 'work_date', name='uq_shift_employee_date'),)
-    id = db.Column(db.Integer, primary_key=True)
-    department_id = db.Column(db.Integer, db.ForeignKey('departments.id'), nullable=False, index=True)
-    employee_id = db.Column(db.Integer, db.ForeignKey('employees.id'), nullable=False, index=True)
-    work_date = db.Column(db.Date, nullable=False, index=True)
-    shift_name = db.Column(db.String(80), nullable=False)
-    start_time = db.Column(db.String(5), nullable=False)
-    end_time = db.Column(db.String(5), nullable=False)
-    note = db.Column(db.Text, default='')

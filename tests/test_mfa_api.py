@@ -19,7 +19,7 @@ def memory_init(self, application):
 
 with patch.object(SQLAlchemy, 'init_app', memory_init):
     from app import app, db, User, MfaTrustedDevice, LoginHistory
-    import mfa
+    from modules import mfa
 
 
 class TotpUnitTest(unittest.TestCase):

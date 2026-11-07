@@ -521,7 +521,7 @@ async function drawEmployees(root) {
           render: r => '<div class="row" style="justify-content:flex-end;gap:4px">'
             + '<div class="dropdown-container" style="position:relative">'
             + '<button class="btn btn-sm btn-ghost" data-emp-actions="' + r.id + '" title="Actions menu">' + icon("more", 14) + ' Actions</button>'
-            + '<div class="dropdown-menu" data-emp-menu="' + r.id + '" style="display:none;position:absolute;right:0;top:100%;z-index:10;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow-lg);min-width:180px;margin-top:4px">'
+            + '<div class="dropdown-menu" data-emp-menu="' + r.id + '" data-no-rowclick style="display:none;position:fixed;z-index:99999;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow-lg);min-width:180px;padding:4px;max-height:calc(100vh - 24px);overflow-y:auto">'
             + '<button class="dropdown-item" data-emp-reports="' + r.id + '">' + icon("chart", 14) + ' Reports</button>'
             + '<button class="dropdown-item" data-emp-letter="' + r.id + '">' + icon("printer", 14) + ' Letter</button>'
             + (canManage ? '<button class="dropdown-item" data-emp-status="' + r.id + '">' + icon("refresh", 14) + ' Change Status</button>' : '')
@@ -589,47 +589,106 @@ async function drawEmployees(root) {
     drawEmployees(root);
   });
   
-  // Dropdown menu toggle
+  root._empRows = rows;
+
+  const closeEmpMenus = () => {
+    document.querySelectorAll('[data-emp-menu]').forEach(m => {
+      m.style.display = 'none';
+    });
+  };
+
+  // Dropdown menu toggle with viewport bounding and auto-flip
   onDelegate(root, "click", "[data-emp-actions]", (el, ev) => {
     ev.stopPropagation();
+    ev.preventDefault();
     const menu = root.querySelector('[data-emp-menu="' + el.dataset.empActions + '"]');
-    const allMenus = root.querySelectorAll('[data-emp-menu]');
-    allMenus.forEach(m => { if (m !== menu) m.style.display = 'none'; });
-    if (menu) menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-  });
-  
-  // Close dropdown when clicking outside
-  document.addEventListener('click', (e) => {
-    if (!e.target.closest('[data-emp-actions]')) {
-      root.querySelectorAll('[data-emp-menu]').forEach(m => m.style.display = 'none');
+    if (!menu) return;
+
+    const isOpen = menu.style.display === 'block';
+    closeEmpMenus();
+    if (isOpen) return;
+
+    // Display first so offsetWidth and offsetHeight can be measured
+    menu.style.display = 'block';
+    menu.style.position = 'fixed';
+    menu.style.zIndex = '99999';
+
+    const rect = el.getBoundingClientRect();
+    const menuWidth = menu.offsetWidth || 185;
+    const menuHeight = menu.offsetHeight || 225;
+
+    // Determine vertical placement: check room below vs above
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+
+    if (spaceBelow < menuHeight + 10 && spaceAbove > spaceBelow) {
+      // Flip upwards above the button
+      menu.style.top = 'auto';
+      menu.style.bottom = Math.max(8, window.innerHeight - rect.top + 4) + 'px';
+    } else {
+      // Open downwards below the button
+      menu.style.bottom = 'auto';
+      menu.style.top = (rect.bottom + 4) + 'px';
+    }
+
+    // Determine horizontal placement: align right edge with button right edge
+    let rightPos = window.innerWidth - rect.right;
+    if (rightPos < 8) rightPos = 8;
+    if (rect.right - menuWidth < 8) {
+      menu.style.right = 'auto';
+      menu.style.left = Math.max(8, rect.left) + 'px';
+    } else {
+      menu.style.left = 'auto';
+      menu.style.right = rightPos + 'px';
     }
   });
-  
+
+  // Global listeners for scroll, resize, and outside click (bound once)
+  if (!window._empDropdownBound) {
+    window._empDropdownBound = true;
+    window.addEventListener('scroll', closeEmpMenus, true);
+    window.addEventListener('resize', closeEmpMenus, { passive: true });
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('[data-emp-actions]')) {
+        closeEmpMenus();
+      }
+    });
+  }
+
   onDelegate(root, "click", "[data-open-emp]", (el, ev) => {
     ev.stopPropagation();
+    closeEmpMenus();
     go("employees/" + el.dataset.openEmp);
   });
   onDelegate(root, "click", "[data-emp-reports]", (el, ev) => {
     ev.stopPropagation();
+    closeEmpMenus();
     go("reports/employee/" + el.dataset.empReports);
   });
   onDelegate(root, "click", "[data-emp-letter]", (el, ev) => {
     ev.stopPropagation();
+    closeEmpMenus();
     openEmploymentLetterModal(Number(el.dataset.empLetter), () => drawEmployees(root));
   });
   onDelegate(root, "click", "[data-emp-creds]", (el, ev) => {
     ev.stopPropagation();
-    const row = rows.find(x => Number(x.id) === Number(el.dataset.empCreds));
+    closeEmpMenus();
+    const curRows = root._empRows || rows;
+    const row = curRows.find(x => Number(x.id) === Number(el.dataset.empCreds));
     if (row) openSendCredentialsModal(row, () => drawEmployees(root));
   });
   onDelegate(root, "click", "[data-emp-status]", (el, ev) => {
     ev.stopPropagation();
-    const row = rows.find(x => Number(x.id) === Number(el.dataset.empStatus));
+    closeEmpMenus();
+    const curRows = root._empRows || rows;
+    const row = curRows.find(x => Number(x.id) === Number(el.dataset.empStatus));
     if (row) openStatusForm(row, () => drawEmployees(root));
   });
   onDelegate(root, "click", "[data-emp-del]", (el, ev) => {
     ev.stopPropagation();
-    const row = rows.find(x => Number(x.id) === Number(el.dataset.empDel));
+    closeEmpMenus();
+    const curRows = root._empRows || rows;
+    const row = curRows.find(x => Number(x.id) === Number(el.dataset.empDel));
     if (row) deleteEmployee(row, () => drawEmployees(root));
   });
   const add = root.querySelector("#emp-add");

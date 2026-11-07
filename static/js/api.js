@@ -61,6 +61,13 @@ const API = (() => {
       if (body.data && body.data.token) setToken(body.data.token);
       return body.data;
     },
+    async register(first_name, last_name, email, phone) {
+      const body = await request("/auth/register", {
+        method: "POST",
+        body: JSON.stringify({ first_name, last_name, email, phone }),
+      });
+      return body.data;
+    },
     async verifyMfa(challenge, code, rememberDevice) {
       const body = await request("/auth/mfa/verify", {
         method: "POST",

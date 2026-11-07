@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Shift Management - Location Guide
 
 ## Current Status
@@ -205,7 +204,6 @@ VALUES ('Evening Shift', '16:00', '00:00', 10, 2.0, 0);
 4. Create modal forms for add/edit
 
 Would you like me to implement the complete Shift Management UI for you?
-=======
 # Shift schedules
 
 Under **Time & absence → Shift schedules**, employees can view and print their own assignments. A user linked to an active employee who is the department's configured head (either Department head or an active `head` leadership record) can select that department's **Manage** schedule. Other users, including administrators who are not the department head, cannot open or modify that department's planner.
@@ -216,4 +214,3 @@ Under **Time & absence → Shift schedules**, employees can view and print their
 4. Filter by date if needed and print the displayed schedule. Employees use the same page to see and print only their own sheet.
 
 Assignments retain the shift name and times in effect when saved, even if the configuration is changed later. Employees who move departments no longer see the former department's assignments, and the former head cannot manage them.
->>>>>>> 0f1d0c01b226d81b7623e50ec97d443f7cee20f8

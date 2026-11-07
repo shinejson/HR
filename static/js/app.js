@@ -30,11 +30,7 @@ const NAV = [
     label: "Time & absence", icon: "clock",
     items: [
       { id: "attendance", label: "Attendance", icon: "clock" },
-<<<<<<< HEAD
       { id: "roster", label: "Shift Roster", icon: "calendar", roles: ["super_admin", "hr_admin", "hr_officer", "manager", "department_head", "employee"] },
-=======
-      { id: "shift-planner", label: "Shift schedules", icon: "calendar" },
->>>>>>> 0f1d0c01b226d81b7623e50ec97d443f7cee20f8
       { id: "leave", label: "Leave", icon: "calendar" },
       { id: "leave", label: "Sell Leaves", icon: "dollar", subTab: "encashment" },
       { id: "shifts", label: "Shift Management", icon: "clock", roles: ["super_admin", "hr_admin", "hr_officer"] },
@@ -830,9 +826,19 @@ function bindLogin() {
   const errorBox = document.getElementById("login-error");
   const btn = document.getElementById("login-submit");
   const mfaStep = document.getElementById("mfa-step");
+  const demoList = document.querySelector(".demo-list");
   const mfaCodeInput = document.getElementById("mfa-code");
   const mfaError = document.getElementById("mfa-error");
   const mfaSubmit = document.getElementById("mfa-submit");
+  const regNote = document.getElementById("login-register-note");
+  const regLink = document.getElementById("login-register-link");
+  const regBtn = document.getElementById("login-register-btn");
+  const regForm = document.getElementById("register-form");
+  const regError = document.getElementById("register-error");
+  const regCancel = document.getElementById("reg-cancel");
+  const regSuccess = document.getElementById("register-success");
+  const regSuccessEmail = document.getElementById("register-success-email");
+  const regSuccessSignin = document.getElementById("reg-success-signin");
   let challenge = null;
   let mfaMethod = "app";
   let mfaPhone = null;
@@ -952,12 +958,106 @@ function bindLogin() {
     } catch (err) {
       errorBox.textContent = err.message;
       errorBox.classList.remove("hidden");
+      // Offer self-registration when the credentials are not recognised
+      if (err.status === 401 && regNote) regNote.classList.remove("hidden");
     } finally {
       btn.disabled = false;
       const bName = (Store.meta && Store.meta.company && Store.meta.company.name) || (document.getElementById("login-brand-name")?.textContent) || "Airport West Hotel";
       btn.textContent = "Sign in to " + bName.trim();
     }
   };
+
+  /* ============================================================ self-register */
+  const openRegister = (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    errorBox.classList.add("hidden");
+    form.classList.add("hidden");
+    if (demoList) demoList.classList.add("hidden");
+    if (regSuccess) regSuccess.classList.add("hidden");
+    if (regForm) regForm.classList.remove("hidden");
+    if (regError) regError.classList.add("hidden");
+    setTimeout(() => {
+      const el = document.getElementById("reg-first-name");
+      if (el) el.focus();
+    }, 60);
+  };
+
+  const closeRegister = (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (regForm) regForm.classList.add("hidden");
+    if (regSuccess) regSuccess.classList.add("hidden");
+    if (regError) regError.classList.add("hidden");
+    form.classList.remove("hidden");
+    if (demoList) demoList.classList.remove("hidden");
+    const pw = document.getElementById("login-password");
+    if (pw) pw.focus();
+  };
+
+  if (regLink) regLink.onclick = openRegister;
+  if (regBtn) regBtn.onclick = openRegister;
+  if (regCancel) regCancel.onclick = closeRegister;
+
+  const regSubmit = document.getElementById("reg-submit");
+  const handleRegisterSubmit = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (regError) regError.classList.add("hidden");
+
+    const fn = (document.getElementById("reg-first-name")?.value || "").trim();
+    const ln = (document.getElementById("reg-last-name")?.value || "").trim();
+    const em = (document.getElementById("reg-email")?.value || "").trim();
+
+    if (!fn || !ln) {
+      if (regError) {
+        regError.textContent = "Please enter both first and last name.";
+        regError.classList.remove("hidden");
+      }
+      return;
+    }
+    if (!em || !em.includes("@") || !em.includes(".")) {
+      if (regError) {
+        regError.textContent = "Please enter a valid email address.";
+        regError.classList.remove("hidden");
+      }
+      return;
+    }
+
+    if (regSubmit) {
+      regSubmit.disabled = true;
+      regSubmit.textContent = "Registering & sending email…";
+    }
+    try {
+      const data = await API.register(fn, ln, em);
+      if (regForm) regForm.classList.add("hidden");
+      if (regSuccessEmail) regSuccessEmail.textContent = em;
+      if (regSuccess) regSuccess.classList.remove("hidden");
+      const loginEmailInput = document.getElementById("login-email");
+      if (loginEmailInput) loginEmailInput.value = em;
+      toast("Account registered! Your temporary password was emailed to " + em, "success");
+    } catch (err) {
+      if (regError) {
+        regError.textContent = err.message || "Registration failed. Please try again.";
+        regError.classList.remove("hidden");
+      }
+    } finally {
+      if (regSubmit) {
+        regSubmit.disabled = false;
+        regSubmit.textContent = "Register & Email My Password";
+      }
+    }
+  };
+
+  if (regForm) regForm.onsubmit = handleRegisterSubmit;
+  if (regSubmit && regSubmit.type !== "submit") regSubmit.onclick = handleRegisterSubmit;
+
+  if (regSuccessSignin) {
+    regSuccessSignin.onclick = () => {
+      if (regSuccess) regSuccess.classList.add("hidden");
+      form.classList.remove("hidden");
+      if (demoList) demoList.classList.remove("hidden");
+      const pwInput = document.getElementById("login-password");
+      if (pwInput) pwInput.focus();
+    };
+  }
 
   if (mfaSubmit) {
     const verify = async () => {

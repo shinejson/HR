@@ -2034,6 +2034,166 @@ def login():
     return issue_session(user, mfa_used=mfa_is_active(user))
 
 
+@app.post("/api/v1/auth/register")
+def register():
+    """Public self-registration for employees not yet in the system.
+
+    Collects basic required fields (first name, last name, email), auto-generates
+    a secure temporary password, creates the employee record & linked portal account
+    (with must_change_password=True), and dispatches the temporary login credentials
+    to the employee's email address so they can sign in from their inbox.
+    """
+    data = request.get_json(silent=True) or {}
+    first_name = (data.get("first_name") or "").strip()
+    last_name = (data.get("last_name") or "").strip()
+    email = (data.get("email") or "").strip().lower()
+    phone = (data.get("phone") or "").strip() or None
+
+    if not first_name or not last_name:
+        return error("First name and last name are required", 422)
+    if not email or "@" not in email or "." not in email.rsplit("@", 1)[-1]:
+        return error("Enter a valid email address", 422)
+
+    already = (
+        Employee.query.filter(
+            func.lower(Employee.email) == email, Employee.deleted_at.is_(None)
+        ).first()
+        or User.query.filter(func.lower(User.email) == email).first()
+    )
+    if already:
+        return error("An account with this email address already exists. Please sign in instead.", 409)
+
+    emp_role = Role.query.filter_by(slug="employee").first()
+    if not emp_role:
+        return error("Employee role is not configured", 500)
+
+    comp = Company.query.first()
+    company_name = (comp.name if comp and comp.name else "Airport West Hotel").strip()
+    company_legal = (comp.legal_name if comp and comp.legal_name else company_name).strip()
+
+    # Auto-generate a secure temporary password
+    plain_password = generate_temp_password(comp)
+
+    mail_res = {"ok": False, "status": "pending"}
+    try:
+        emp = Employee(
+            employee_no=next_employee_no(),
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+            phone=phone,
+            status="active",
+            contract_type="permanent",
+            staff_category="General / Junior Staff",
+            work_location="Office",
+            nationality="Ghanaian",
+            company_id=comp.id if comp else 1,
+            hire_date=date.today(),
+        )
+        db.session.add(emp)
+        db.session.flush()
+
+        username = generate_unique_username(emp=emp, email=email)
+        user = User(
+            username=username,
+            email=email,
+            password_hash=generate_password_hash(plain_password),
+            employee_id=emp.id,
+            role_id=emp_role.id,
+            status="active",
+            must_change_password=True,
+        )
+        db.session.add(user)
+        db.session.flush()
+
+        # Initialize onboarding contract, leave balances & appointment letter
+        try:
+            provision_employee_onboarding(
+                emp,
+                data={
+                    "username": username,
+                    "password": plain_password,
+                    "must_change_password": True,
+                },
+                reset_existing=False,
+                send_email_flag=False,
+            )
+        except Exception as prov_err:
+            logging.getLogger("hrms").warning(f"Self-registration onboarding provisioning note: {prov_err}")
+
+        # Send welcome email containing generated credentials
+        portal_link = public_app_link("/")
+        subject = f"Welcome to {company_legal} — Your Portal Login Credentials"
+        body_text = (
+            f"Dear {emp.full_name},\n\n"
+            f"Welcome to {company_legal}! Your employee self-service account has been created successfully.\n\n"
+            f"Please use the generated login credentials below to sign in to the portal:\n"
+            f"  • Portal URL: {portal_link}\n"
+            f"  • Username: {user.username}\n"
+            f"  • Registered Email: {user.email}\n"
+            f"  • Employee ID: {emp.employee_no}\n"
+            f"  • Temporary Password: {plain_password}\n\n"
+            f"Note: You can sign in using your Username ({user.username}), Registered Email ({user.email}), "
+            f"or Employee ID ({emp.employee_no}).\n\n"
+            f"For security, you will be prompted to choose a new private password upon your first sign-in."
+        )
+        meta_rows = [
+            ("Employee Name", emp.full_name),
+            ("Employee ID", emp.employee_no),
+            ("Username", user.username),
+            ("Registered Email", user.email),
+            ("Temporary Password", plain_password),
+            ("Portal Sign-In URL", portal_link),
+        ]
+        html_doc = messaging.html_email(
+            f"Welcome aboard, {emp.first_name}!",
+            f"Your employee self-service account at {company_legal} is ready. Use your temporary password below to sign in to the portal.",
+            link=portal_link,
+            meta_rows=meta_rows,
+            badge="Employee Registration",
+            action_label="Sign In to Employee Portal",
+        )
+
+        notif = Notification(
+            user_id=user.id,
+            title=f"Welcome to {company_name}",
+            body="Your account has been registered. Your temporary password was emailed to you.",
+            link="/profile",
+            category="Onboarding",
+            event_key="account_credentials",
+        )
+        db.session.add(notif)
+        db.session.flush()
+
+        mail_res = messaging.send_email(user.email, subject, body_text, html_doc)
+        _record_delivery(
+            mail_res, user, "account_credentials", "email", user.email, subject,
+            body=body_text, html_body=html_doc, notification_id=notif.id,
+        )
+
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return error("Unable to create account. Please try again.", 500)
+
+    audit(None, "employee_self_register", "employees", emp.id, new={
+        "employee_no": emp.employee_no,
+        "email": email,
+        "email_delivery": mail_res.get("status") if mail_res else None,
+    })
+
+    return jsonify({
+        "data": {
+            "registered": True,
+            "email": email,
+            "username": user.username,
+            "employee_no": emp.employee_no,
+            "email_sent": bool(mail_res.get("ok")),
+            "message": f"Your account has been created successfully. We have generated a temporary password and sent your login details to {email}. Please check your inbox (and spam folder) to sign in.",
+        }
+    })
+
+
 def mask_account(email):
     """ama.mensah@meridian.gh -> a••••••••h@meridian.gh"""
     email = email or ""
@@ -6563,7 +6723,7 @@ def print_roster_view():
     if week_start.weekday() != 0:
         week_start = week_start - timedelta(days=week_start.weekday())
 
-    from roster_pdf import build_roster_html
+    from modules.roster_pdf import build_roster_html
     html_content = build_roster_html(
         week_start,
         dept_param=dept_id,
@@ -6598,7 +6758,7 @@ def download_roster_pdf():
     if week_start.weekday() != 0:
         week_start = week_start - timedelta(days=week_start.weekday())
 
-    from roster_pdf import build_roster_pdf
+    from modules.roster_pdf import build_roster_pdf
     pdf_bytes = build_roster_pdf(
         week_start,
         dept_param=dept_id,
@@ -7561,7 +7721,7 @@ def preview_loan_letter(lid):
         return error("Not found", 404)
     if role_of(request.user) == "employee" and loan.employee_id != request.user.employee_id:
         return error("Forbidden", 403)
-    import loan_and_encashment_letters
+    from modules import loan_and_encashment_letters
     html_str = loan_and_encashment_letters.build_loan_letter_html(loan, standalone=False)
     return jsonify({
         "data": {
@@ -7581,7 +7741,7 @@ def print_loan_letter(lid):
         return error("Not found", 404)
     if role_of(request.user) == "employee" and loan.employee_id != request.user.employee_id:
         return error("Forbidden", 403)
-    import loan_and_encashment_letters
+    from modules import loan_and_encashment_letters
     auto_p = str(request.args.get("auto_print", "1")).lower() in ("1", "true", "yes")
     html_page = loan_and_encashment_letters.build_loan_letter_html(loan, standalone=True, auto_print=auto_p)
     resp = app.make_response(html_page)
@@ -7597,7 +7757,7 @@ def download_loan_letter_pdf(lid):
         return error("Not found", 404)
     if role_of(request.user) == "employee" and loan.employee_id != request.user.employee_id:
         return error("Forbidden", 403)
-    import loan_and_encashment_letters
+    from modules import loan_and_encashment_letters
     pdf_bytes = loan_and_encashment_letters.build_loan_letter_pdf(loan)
     buffer = io.BytesIO(pdf_bytes)
     filename = f"Loan_Agreement_{loan.reference_no or loan.id}.pdf"
@@ -7814,7 +7974,7 @@ def preview_leave_encashment_letter(eid):
         return error("Not found", 404)
     if role_of(request.user) == "employee" and enc_obj.employee_id != request.user.employee_id:
         return error("Forbidden", 403)
-    import loan_and_encashment_letters
+    from modules import loan_and_encashment_letters
     html_str = loan_and_encashment_letters.build_encashment_letter_html(enc_obj, standalone=False)
     return jsonify({
         "data": {
@@ -7834,7 +7994,7 @@ def print_leave_encashment_letter(eid):
         return error("Not found", 404)
     if role_of(request.user) == "employee" and enc_obj.employee_id != request.user.employee_id:
         return error("Forbidden", 403)
-    import loan_and_encashment_letters
+    from modules import loan_and_encashment_letters
     auto_p = str(request.args.get("auto_print", "1")).lower() in ("1", "true", "yes")
     html_page = loan_and_encashment_letters.build_encashment_letter_html(enc_obj, standalone=True, auto_print=auto_p)
     resp = app.make_response(html_page)
@@ -7850,7 +8010,7 @@ def download_leave_encashment_letter_pdf(eid):
         return error("Not found", 404)
     if role_of(request.user) == "employee" and enc_obj.employee_id != request.user.employee_id:
         return error("Forbidden", 403)
-    import loan_and_encashment_letters
+    from modules import loan_and_encashment_letters
     pdf_bytes = loan_and_encashment_letters.build_encashment_letter_pdf(enc_obj)
     buffer = io.BytesIO(pdf_bytes)
     filename = f"Leave_Encashment_{enc_obj.reference_no or enc_obj.id}.pdf"
@@ -9729,7 +9889,7 @@ def health():
 
 @app.errorhandler(404)
 def not_found(e):
-    if request.path.startswith("/api/") or request.path.startswith("/uploads/"):
+    if request.path.startswith("/api/") or request.path.startswith("/uploads/") or request.path.startswith("/static/"):
         return error("Not found", 404)
     return render_template("index.html", brand=_brand_template_ctx())
 
@@ -9746,8 +9906,6 @@ def server_error(e):
 
 
 register_report_routes(app, login_required, error, audit)
-from shift_management import register_shift_routes
-register_shift_routes(app, login_required, error)
 
 bootstrap_database()
 

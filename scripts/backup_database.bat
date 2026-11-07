@@ -1,9 +1,9 @@
 @echo off
 setlocal enabledelayedexpansion
 title Meridian HRMS - Database Backup
-cd /d "%~dp0"
+cd /d "%~dp0\.."
 
-set BACKUP_DIR=%~dp0backups
+set BACKUP_DIR=%~dp0..\backups
 if not exist "%BACKUP_DIR%" mkdir "%BACKUP_DIR%"
 
 for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value') do set dt=%%I
